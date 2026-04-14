@@ -1,0 +1,11 @@
+{
+  "name": "atelier",
+  "description": "Design-automation plugin suite for Claude Code.",
+  "owner": "EthanY33",
+  "plugins": [
+    {
+      "name": "atelier",
+      "source": "./plugins/atelier"
+    }
+  ]
+}
