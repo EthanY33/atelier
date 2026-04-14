@@ -2,8 +2,8 @@
  * Preflight helpers for atelier skills.
  * Checks that required binaries and Node modules are available before running.
  */
-import { spawn } from 'child_process';
-import { createRequire } from 'module';
+import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 
 /**
  * Check whether a CLI binary is available and reachable.
@@ -19,15 +19,15 @@ export function checkBinary(cmd, args = ['--version']) {
     let stdout = '';
     let stderr = '';
 
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.stdout?.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
 
     child.on('error', (err) => {
       resolve({ ok: false, error: err.message });
     });
 
     child.on('close', (code) => {
-      if (code === 0 || stdout.trim().length > 0) {
+      if (code === 0) {
         const version = (stdout.trim() || stderr.trim()).split('\n')[0].trim();
         resolve({ ok: true, version });
       } else {
@@ -40,9 +40,9 @@ export function checkBinary(cmd, args = ['--version']) {
 /**
  * Check whether a Node module can be resolved from the current project.
  * @param {string} name - Module name (e.g. 'vitest').
- * @returns {{ ok: boolean, error?: string }}
+ * @returns {Promise<{ ok: boolean, error?: string }>}
  */
-export function checkNodeModule(name) {
+export async function checkNodeModule(name) {
   const require = createRequire(import.meta.url);
   try {
     require.resolve(name);
@@ -55,28 +55,34 @@ export function checkNodeModule(name) {
 /**
  * Run a batch of preflight checks and throw an aggregated error if any fail.
  * @param {Array<{ kind: 'bin'|'module', cmd?: string, name?: string, args?: string[], install?: string }>} checks
- * @returns {Promise<void>}
+ * @returns {Promise<Array<object>>} per-check results on success.
  */
 export async function runPreflight(checks) {
+  const results = [];
   const failures = [];
 
   for (const check of checks) {
     if (check.kind === 'bin') {
       const result = await checkBinary(check.cmd, check.args);
+      results.push({ ...check, ...result });
       if (!result.ok) {
         const hint = check.install ? `  Install: ${check.install}` : '';
         failures.push(`Missing binary: ${check.cmd}${hint ? '\n' + hint : ''}`);
       }
     } else if (check.kind === 'module') {
-      const result = checkNodeModule(check.name);
+      const result = await checkNodeModule(check.name);
+      results.push({ ...check, ...result });
       if (!result.ok) {
         const hint = check.install ? `  Install: ${check.install}` : '';
         failures.push(`Missing module: ${check.name}${hint ? '\n' + hint : ''}`);
       }
+    } else {
+      failures.push(`Unknown preflight check kind: ${check.kind}`);
     }
   }
 
   if (failures.length > 0) {
     throw new Error(`Preflight failed:\n${failures.join('\n')}`);
   }
+  return results;
 }
