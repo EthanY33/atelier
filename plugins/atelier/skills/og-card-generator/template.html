@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1200" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 1200px;
+      height: 630px;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 72px;
+      background: var(--bg, #111);
+      color: var(--fg, #fff);
+      font-family: var(--font-body, system-ui), system-ui, sans-serif;
+    }
+    .title {
+      font-family: var(--font-display, var(--font-body, system-ui)), system-ui, sans-serif;
+      font-size: 88px;
+      font-weight: 700;
+      line-height: 1.05;
+      max-width: 900px;
+      word-break: break-word;
+    }
+    .subtitle {
+      font-size: 36px;
+      opacity: 0.7;
+      margin-top: 24px;
+      max-width: 900px;
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      font-size: 24px;
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <div>
+    <div class="title" id="title"></div>
+    <div class="subtitle" id="subtitle"></div>
+  </div>
+  <div class="footer">
+    <span id="studio"></span>
+    <span id="slug"></span>
+  </div>
+</body>
+</html>
