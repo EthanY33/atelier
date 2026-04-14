@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.atelier/log/
+*.log
+.env
+.env.local
+.DS_Store
+Thumbs.db
+# Test artifacts
+tests/**/tmp/
+examples/fixtures/output/
+# OS + editor
+.vscode/
+.idea/
+*.swp
