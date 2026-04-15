@@ -7,11 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Initial scaffold: plugin manifest, 7 skills, unit tests, CI matrix, JSON-Schema-validated brand config.
+## [0.1.0] - 2026-04-14
 
-### Removed
-- svgo dependency (unused — sharp's SVG rasterization is sufficient for Phase 1).
+### Added
+- Initial public release of atelier — Claude Code plugin with 7 design-automation skills: `brand-memory`, `design-token-sync`, `og-card-generator`, `responsive-image-pipeline`, `brand-asset-pipeline`, `accessibility-design-audit`, `html-to-video`.
+- JSON-Schema-validated `.atelier/brand.json` (Ajv 8).
+- `/atelier-demo` end-to-end pipeline slash command.
+- `/brand-init`, `/brand-get`, `/brand-set`, `/brand-audit` slash commands.
+- Vitest unit tests (52 passing, 86% coverage) + integration chain test.
+- GitHub Actions CI matrix (ubuntu-latest + windows-latest, Node 20).
+- Dependabot config (weekly security, monthly minor/patch, grouped PRs).
+- Launch-grade README with embedded demo GIF.
+- `scripts/build-demo-gif.mjs` — automated storyboard → GIF pipeline using `html-to-video` + ffmpeg palettegen/paletteuse.
+- MIT license.
 
 ### Notes
-- Dependency pins deviate from the original spec (plan): `vitest` bumped from `2.2.0` → `3.1.2` (major), `sharp` `0.34.1` → `0.34.5`, `playwright` `1.52.0` → `1.51.1`, `@axe-core/playwright` `4.10.2` → `4.10.1`. All substitutions are exact pins. Vitest 3 is API-compatible with the plan's usage (`defineConfig`, `test.include`, `coverage.provider: 'v8'`, `coverage.thresholds`).
+- Dependency pins deviate from the original spec: `vitest` `2.2.0` → `3.1.2` (major), `sharp` `0.34.1` → `0.34.5`, `playwright` `1.52.0` → `1.51.1`, `@axe-core/playwright` `4.10.2` → `4.10.1`. All substitutions are exact pins. Vitest 3 is API-compatible with the plan's usage (`defineConfig`, `test.include`, `coverage.provider: 'v8'`, `coverage.thresholds`).
+- `svgo` dependency from the original spec was dropped — sharp's SVG rasterization is sufficient for Phase 1.
+
+[Unreleased]: https://github.com/EthanY33/atelier/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/EthanY33/atelier/releases/tag/v0.1.0

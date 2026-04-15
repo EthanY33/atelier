@@ -1,6 +1,6 @@
 {
   "name": "atelier",
-  "version": "0.1.0-dev",
+  "version": "0.1.0",
   "description": "Design-automation plugin for Claude Code — seven skills around a shared brand source of truth.",
   "type": "module",
   "private": false,
