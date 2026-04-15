@@ -25,31 +25,31 @@ afterEach(() => {
 // load / save
 // ---------------------------------------------------------------------------
 describe('load/save', () => {
-  it('saveBrand writes and loadBrand reads roundtrip', async () => {
+  it('saveBrand writes and loadBrand reads roundtrip', () => {
     tmp = mkdtempSync(join(tmpdir(), 'atelier-test-'));
     const cfg = {
       brand: { studio: 'goneIdle' },
       palette: { bg: '#110f1b' },
       typography: { body: 'Silkscreen, monospace' },
     };
-    await saveBrand(tmp, cfg);
-    const loaded = await loadBrand(tmp);
+    saveBrand(tmp, cfg);
+    const loaded = loadBrand(tmp);
     expect(loaded).toEqual(cfg);
   });
 
-  it('saveBrand rejects invalid config (missing brand.studio)', async () => {
+  it('saveBrand throws on invalid config (missing brand.studio)', () => {
     tmp = mkdtempSync(join(tmpdir(), 'atelier-test-'));
     const bad = {
       brand: {},
       palette: { bg: '#110f1b' },
       typography: { body: 'Silkscreen' },
     };
-    await expect(saveBrand(tmp, bad)).rejects.toThrow('invalid brand config');
+    expect(() => saveBrand(tmp, bad)).toThrow('invalid brand config');
   });
 
-  it('loadBrand throws helpful error when file is missing', async () => {
+  it('loadBrand throws helpful error when file is missing', () => {
     tmp = mkdtempSync(join(tmpdir(), 'atelier-test-'));
-    await expect(loadBrand(tmp)).rejects.toThrow(/brand\.json not found.*run \/brand-init/);
+    expect(() => loadBrand(tmp)).toThrow(/brand\.json not found.*run \/brand-init/);
   });
 });
 
@@ -101,9 +101,9 @@ describe('get/set', () => {
 // init / audit
 // ---------------------------------------------------------------------------
 describe('init/audit', () => {
-  it('initBrand creates a minimal valid file', async () => {
+  it('initBrand creates a minimal valid file', () => {
     tmp = mkdtempSync(join(tmpdir(), 'atelier-test-'));
-    const cfg = await initBrand(tmp, {
+    const cfg = initBrand(tmp, {
       studio: 'goneIdle',
       bodyFont: 'Silkscreen, monospace',
       primaryColor: '#110f1b',
@@ -113,7 +113,7 @@ describe('init/audit', () => {
     expect(cfg.typography.body).toBe('Silkscreen, monospace');
 
     // File should be loadable
-    const loaded = await loadBrand(tmp);
+    const loaded = loadBrand(tmp);
     expect(loaded).toEqual(cfg);
   });
 

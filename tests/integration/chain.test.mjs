@@ -91,12 +91,12 @@ describe('integration chain', () => {
       // ------------------------------------------------------------------
       // 1. brand-memory: init → load → assert
       // ------------------------------------------------------------------
-      await initBrand(stage, {
+      initBrand(stage, {
         studio: 'ChainTest',
         bodyFont: 'Inter',
         primaryColor: '#110f1b',
       });
-      const cfg = await loadBrand(stage);
+      const cfg = loadBrand(stage);
       expect(cfg.brand.studio).toBe('ChainTest');
 
       // ------------------------------------------------------------------
