@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>atelier — overview</title>
+<style>
+  :root {
+    --bg: #110f1b;
+    --bg2: #16132a;
+    --fg: #f5f2ea;
+    --muted: #9aa0b4;
+    --terra: #e07a5f;
+    --sage: #81b29a;
+    --sand: #f2cc8f;
+    --cyan: #67e8f9;
+    --purp: #a78bfa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 1280px; height: 720px;
+    background: var(--bg); color: var(--fg);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+  }
+  .stage { position: relative; width: 1280px; height: 720px; }
+  .panel {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 80px;
+    opacity: 0;
+    animation: panelCycle 17.5s linear forwards;
+  }
+  .panel h1 {
+    font-size: 56px; font-weight: 700;
+    margin-bottom: 24px;
+    letter-spacing: -0.02em;
+  }
+  .panel p.tagline {
+    font-size: 22px; color: var(--muted);
+    margin-bottom: 48px;
+  }
+  /* Each panel is visible for 2.5s starting at N * 2.5s */
+  .panel:nth-child(1) { animation-delay: 0s; }
+  .panel:nth-child(2) { animation-delay: 2.5s; }
+  .panel:nth-child(3) { animation-delay: 5s; }
+  .panel:nth-child(4) { animation-delay: 7.5s; }
+  .panel:nth-child(5) { animation-delay: 10s; }
+  .panel:nth-child(6) { animation-delay: 12.5s; }
+  .panel:nth-child(7) { animation-delay: 15s; }
+  @keyframes panelCycle {
+    0%   { opacity: 0; transform: translateY(12px); }
+    4%   { opacity: 1; transform: translateY(0); }
+    12%  { opacity: 1; transform: translateY(0); }
+    14.3% { opacity: 0; transform: translateY(-12px); }
+    100% { opacity: 0; }
+  }
+  /* Panel 1: brand-memory — palette + typography */
+  .p1 .swatches { display: flex; gap: 24px; margin-top: 24px; }
+  .p1 .swatch {
+    width: 140px; height: 140px; border-radius: 20px;
+    display: flex; align-items: flex-end; padding: 14px;
+    color: #fff; font-size: 14px; font-weight: 600;
+    font-family: monospace;
+  }
+  .p1 .type {
+    margin-top: 48px; display: flex; gap: 32px; align-items: baseline;
+  }
+  .p1 .type-display { font-size: 48px; font-weight: 800; }
+  .p1 .type-body { font-size: 20px; color: var(--muted); font-family: monospace; }
+  /* Panel 2: design-token-sync — fan-out diagram */
+  .p2 .fanout { display: flex; align-items: center; gap: 48px; margin-top: 24px; }
+  .p2 .source {
+    background: var(--bg2); border: 2px solid var(--terra);
+    padding: 24px 32px; border-radius: 16px;
+    font-family: monospace; font-size: 18px;
+  }
+  .p2 .arrow { color: var(--sage); font-size: 32px; }
+  .p2 .targets { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .p2 .pill {
+    background: var(--bg2); border: 1px solid var(--muted);
+    padding: 12px 20px; border-radius: 999px;
+    font-family: monospace; font-size: 16px; color: var(--sage);
+  }
+  /* Panel 3: og-card-generator — big OG card preview */
+  .p3 .og-card {
+    width: 900px; height: 473px; /* 1200x630 at 0.75 */
+    border-radius: 16px; overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+    border: 1px solid rgba(255,255,255,0.08);
+    background: #000;
+  }
+  .p3 .og-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .p3 .caption { margin-top: 24px; color: var(--muted); font-family: monospace; }
+  /* Panel 4: responsive-image-pipeline — size comparison */
+  .p4 .compare { display: flex; gap: 48px; align-items: center; margin-top: 24px; }
+  .p4 .col { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .p4 .bar { height: 120px; width: 80px; border-radius: 12px; display: flex; align-items: flex-end; justify-content: center; color: #fff; padding: 12px; font-weight: 700; font-family: monospace; }
+  .p4 .bar.before { background: var(--terra); height: 200px; }
+  .p4 .bar.after  { background: var(--sage); height: 40px; }
+  .p4 .arrow-right { font-size: 48px; color: var(--sand); }
+  .p4 .label { font-family: monospace; color: var(--muted); font-size: 18px; }
+  /* Panel 5: brand-asset-pipeline — asset grid */
+  .p5 .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; margin-top: 24px; }
+  .p5 .cell { aspect-ratio: 1; background: var(--bg2); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-family: monospace; color: var(--sand); font-size: 14px; }
+  .p5 .cover {
+    margin-top: 24px; width: 800px; height: 200px;
+    border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08);
+  }
+  .p5 .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* Panel 6: accessibility-design-audit — checklist */
+  .p6 .audit {
+    background: var(--bg2); border-radius: 16px; padding: 32px 48px;
+    margin-top: 24px; font-family: monospace; font-size: 20px;
+    min-width: 700px;
+  }
+  .p6 .audit .row { display: flex; justify-content: space-between; padding: 8px 0; }
+  .p6 .audit .pass { color: var(--sage); }
+  .p6 .audit .fail { color: var(--terra); }
+  /* Panel 7: html-to-video / outro */
+  .p7 .brand { font-size: 96px; font-weight: 800; letter-spacing: -0.04em;
+    background: linear-gradient(90deg, var(--terra), var(--sand), var(--sage));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .p7 .url { margin-top: 16px; font-family: monospace; color: var(--muted); font-size: 22px; }
+  .p7 .skills { margin-top: 32px; color: var(--muted); font-size: 18px; }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <section class="panel p1">
+    <h1>Define your brand once.</h1>
+    <p class="tagline">brand-memory — one JSON source of truth</p>
+    <div class="swatches">
+      <div class="swatch" style="background:#e07a5f">#e07a5f</div>
+      <div class="swatch" style="background:#81b29a">#81b29a</div>
+      <div class="swatch" style="background:#f2cc8f">#f2cc8f</div>
+      <div class="swatch" style="background:#67e8f9">#67e8f9</div>
+    </div>
+    <div class="type">
+      <div class="type-display">Inter</div>
+      <div class="type-body">Space&nbsp;Mono</div>
+    </div>
+  </section>
+
+  <section class="panel p2">
+    <h1>Push tokens everywhere.</h1>
+    <p class="tagline">design-token-sync — one command, four destinations</p>
+    <div class="fanout">
+      <div class="source">brand.json</div>
+      <div class="arrow">&rarr;</div>
+      <div class="targets">
+        <div class="pill">tokens.css</div>
+        <div class="pill">tailwind.config.js</div>
+        <div class="pill">tokens.d.ts</div>
+        <div class="pill">figma-variables.json</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel p3">
+    <h1>Every page, the perfect share card.</h1>
+    <p class="tagline">og-card-generator — 1200&times;630, branded, automatic</p>
+    <div class="og-card"><img src="../../examples/fixtures/output/og/home.png" alt="OG card preview" /></div>
+    <div class="caption">dist/og/home.png</div>
+  </section>
+
+  <section class="panel p4">
+    <h1>Images optimized everywhere.</h1>
+    <p class="tagline">responsive-image-pipeline — AVIF / WebP / LQIP + srcset</p>
+    <div class="compare">
+      <div class="col">
+        <div class="bar before">800&nbsp;KB</div>
+        <div class="label">photo.png</div>
+      </div>
+      <div class="arrow-right">&rarr;</div>
+      <div class="col">
+        <div class="bar after">60&nbsp;KB</div>
+        <div class="label">photo.avif</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel p5">
+    <h1>One logo, full brand kit.</h1>
+    <p class="tagline">brand-asset-pipeline — favicons, app icons, social covers</p>
+    <div class="grid">
+      <div class="cell">favicon-16</div>
+      <div class="cell">favicon-32</div>
+      <div class="cell">favicon-64</div>
+      <div class="cell">apple-180</div>
+      <div class="cell">android-192</div>
+      <div class="cell">android-512</div>
+    </div>
+    <div class="cover"><img src="../../examples/fixtures/output/brand/og-cover.png" alt="OG cover" /></div>
+  </section>
+
+  <section class="panel p6">
+    <h1>Accessibility, on by default.</h1>
+    <p class="tagline">accessibility-design-audit — WCAG AA in CI</p>
+    <div class="audit">
+      <div class="row"><span>Color contrast &ge; 4.5:1</span><span class="pass">PASS</span></div>
+      <div class="row"><span>Tap targets &ge; 44px</span><span class="pass">PASS</span></div>
+      <div class="row"><span>Image alt text</span><span class="pass">PASS</span></div>
+      <div class="row"><span>Heading hierarchy</span><span class="pass">PASS</span></div>
+      <div class="row"><span>Form labels</span><span class="pass">PASS</span></div>
+    </div>
+  </section>
+
+  <section class="panel p7">
+    <div class="brand">atelier</div>
+    <div class="url">github.com/EthanY33/atelier</div>
+    <div class="skills">seven design skills &middot; one brand source &middot; MIT</div>
+  </section>
+
+</div>
+</body>
+</html>
