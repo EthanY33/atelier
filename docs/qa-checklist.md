@@ -15,7 +15,7 @@ Run before every tag.
 - [ ] **og-card-generator** — produces a PNG at exactly 1200×630 pixels with visible brand color and text elements.
 - [ ] **responsive-image-pipeline** — outputs WebP and AVIF variants at each configured breakpoint width.
 - [ ] **brand-asset-pipeline** — generates sized PNGs, a favicon set, and social-media logo variants from the source SVG.
-- [ ] **accessibility-design-audit** — returns a JSON report with no unhandled errors and saves an annotated screenshot alongside it.
+- [ ] **accessibility-design-audit** — returns a JSON report with no unhandled errors and writes `a11y-report.md` + `a11y-raw.json` to the output directory.
 - [ ] **html-to-video** — produces a playable MP4 at the specified duration and frame rate (requires ffmpeg on PATH).
 
 ## CI
