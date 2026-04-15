@@ -41,10 +41,4 @@ node scripts/run-demo.mjs
 
 ## Preflight check
 
-Before running the full pipeline, use the preflight helper to verify your environment:
-
-```bash
-node scripts/preflight.mjs
-```
-
-This checks Node version, Playwright browser availability, and ffmpeg presence, and reports any missing dependencies before they cause a mid-run failure.
+Each skill's entry point calls into `scripts/preflight.mjs` automatically and prints install instructions if a prerequisite is missing — you don't run it directly.
