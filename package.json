@@ -18,7 +18,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint:schemas": "node scripts/validate-schemas.mjs",
-    "demo": "node scripts/run-demo.mjs"
+    "demo": "node scripts/run-demo.mjs",
+    "demo:gif": "node scripts/build-demo-gif.mjs"
   },
   "dependencies": {
     "ajv": "8.17.1",
