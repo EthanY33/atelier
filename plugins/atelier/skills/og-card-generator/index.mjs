@@ -1,6 +1,6 @@
 import { readFileSync, mkdirSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join, basename } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
+import { dirname, join } from 'path';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 import { loadBrand } from '../brand-memory/index.mjs';
@@ -105,7 +105,7 @@ export async function generateCards({ brand, pages, outDir }) {
 // ---------------------------------------------------------------------------
 
 const isMain = process.argv[1] &&
-  fileURLToPath(import.meta.url) === process.argv[1].replace(/\\/g, '/');
+  import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMain) {
   const [, , manifestPath, outDir = 'og-cards'] = process.argv;
