@@ -1,0 +1,28 @@
+{
+  "brand": {
+    "studio": "goneIdle",
+    "product": "atelier-demo",
+    "voice": ["pithy", "briny"]
+  },
+  "palette": {
+    "bg": "#110f1b",
+    "terra": "#e07a5f",
+    "sage": "#81b29a",
+    "sand": "#f2cc8f"
+  },
+  "typography": {
+    "display": "Silkscreen",
+    "body": "Inter",
+    "mono": "JetBrains Mono"
+  },
+  "logos": {
+    "mark": "./mark.svg"
+  },
+  "social": {
+    "twitter": "@goneidle"
+  },
+  "deploy": {
+    "target": "cloudflare-pages",
+    "project": "atelier-demo"
+  }
+}
