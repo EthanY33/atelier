@@ -92,6 +92,22 @@ describe('responsive-image-pipeline', { timeout: 30_000 }, () => {
     expect(html).toContain('alt="A photo"');
   });
 
+  it('buildPictureSnippet HTML-escapes alt, basename, and sizes', () => {
+    const html = buildPictureSnippet({
+      basename: 'photo',
+      widths: [480],
+      alt: 'Say "hi" <script>',
+      sizes: '(max-width: 480px) 100vw, 50vw',
+    });
+
+    // Escaped entities must appear
+    expect(html).toContain('&quot;');
+    expect(html).toContain('&lt;');
+    // Raw unescaped quotes and angle brackets must not be in the alt attribute
+    expect(html).not.toContain('alt="Say "hi"');
+    expect(html).not.toContain('<script>');
+  });
+
   it('skips unchanged sources on second run (caching)', async () => {
     tmp = mkdtempSync(join(tmpdir(), 'rip-test-'));
     const inputPath = join(tmp, 'photo.png');
