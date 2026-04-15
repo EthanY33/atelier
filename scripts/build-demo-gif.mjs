@@ -96,7 +96,7 @@ async function main() {
       '-y',
       '-i', mp4Path,
       '-i', palettePath,
-      '-lavfi', `${scaleFilter} [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`,
+      '-lavfi', `${scaleFilter}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`,
       OUT_GIF,
     ]);
 
