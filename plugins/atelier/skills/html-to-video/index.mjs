@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname, extname, basename } from 'path';
 import { pathToFileURL } from 'url';
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { chromium } from 'playwright';
 
 // ---------------------------------------------------------------------------
@@ -93,6 +93,8 @@ function sleep(ms) {
  *   format?: 'mp4'|'webm',
  *   poster?: boolean
  * }} opts
+ * @param opts.duration - number of seconds at the requested fps (total frames = duration × fps).
+ *   Actual wall-clock capture time may exceed duration depending on Playwright screenshot latency.
  * @returns {Promise<string>} resolves with outPath
  */
 export async function recordHtml({

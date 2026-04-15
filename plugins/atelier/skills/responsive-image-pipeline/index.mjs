@@ -22,6 +22,15 @@ function cacheKey(inputBuf, widths) {
     .digest('hex');
 }
 
+/** HTML-escape a string for use in a double-quoted attribute value. */
+function escapeHtmlAttr(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -112,14 +121,18 @@ export function buildPictureSnippet({
   const sorted = [...widths].sort((a, b) => a - b);
   const largest = sorted[sorted.length - 1];
 
-  const avifSrcset = sorted.map((w) => `${name}-${w}.avif ${w}w`).join(', ');
-  const webpSrcset = sorted.map((w) => `${name}-${w}.webp ${w}w`).join(', ');
+  const safeName = escapeHtmlAttr(name);
+  const safeAlt = escapeHtmlAttr(alt);
+  const safeSizes = escapeHtmlAttr(sizes);
+
+  const avifSrcset = sorted.map((w) => `${safeName}-${w}.avif ${w}w`).join(', ');
+  const webpSrcset = sorted.map((w) => `${safeName}-${w}.webp ${w}w`).join(', ');
 
   return [
     '<picture>',
-    `  <source type="image/avif" srcset="${avifSrcset}" sizes="${sizes}">`,
-    `  <source type="image/webp" srcset="${webpSrcset}" sizes="${sizes}">`,
-    `  <img src="${name}-${largest}.${fallbackFormat}" alt="${alt}" loading="lazy" decoding="async">`,
+    `  <source type="image/avif" srcset="${avifSrcset}" sizes="${safeSizes}">`,
+    `  <source type="image/webp" srcset="${webpSrcset}" sizes="${safeSizes}">`,
+    `  <img src="${safeName}-${largest}.${fallbackFormat}" alt="${safeAlt}" loading="lazy" decoding="async">`,
     '</picture>',
   ].join('\n');
 }
