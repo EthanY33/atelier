@@ -36,9 +36,9 @@ export function brandFilePath(projectRoot) {
  * Reads and parses brand.json from projectRoot/.atelier/brand.json.
  * Throws a helpful error if the file is missing.
  * @param {string} projectRoot
- * @returns {Promise<object>}
+ * @returns {object}
  */
-export async function loadBrand(projectRoot) {
+export function loadBrand(projectRoot) {
   const filePath = brandFilePath(projectRoot);
   if (!existsSync(filePath)) {
     throw new Error(
@@ -53,9 +53,9 @@ export async function loadBrand(projectRoot) {
  * Throws if validation fails.
  * @param {string} projectRoot
  * @param {object} cfg
- * @returns {Promise<void>}
+ * @returns {void}
  */
-export async function saveBrand(projectRoot, cfg) {
+export function saveBrand(projectRoot, cfg) {
   const valid = validate(cfg);
   if (!valid) {
     const messages = validate.errors
@@ -117,15 +117,15 @@ export function setPath(obj, path, value) {
  * Creates a minimal valid brand.json, saves it, and returns the config.
  * @param {string} projectRoot
  * @param {{ studio: string, bodyFont: string, primaryColor: string }} opts
- * @returns {Promise<object>}
+ * @returns {object}
  */
-export async function initBrand(projectRoot, { studio, bodyFont, primaryColor }) {
+export function initBrand(projectRoot, { studio, bodyFont, primaryColor }) {
   const cfg = {
     brand: { studio },
     palette: { bg: primaryColor },
     typography: { body: bodyFont },
   };
-  await saveBrand(projectRoot, cfg);
+  saveBrand(projectRoot, cfg);
   return cfg;
 }
 

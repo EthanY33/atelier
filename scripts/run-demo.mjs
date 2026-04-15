@@ -25,6 +25,7 @@ const repoRoot = resolve(__filename, '..', '..');
 // ---------------------------------------------------------------------------
 // Skill imports
 // ---------------------------------------------------------------------------
+import { loadBrand } from '../plugins/atelier/skills/brand-memory/index.mjs';
 import { syncTokens } from '../plugins/atelier/skills/design-token-sync/index.mjs';
 import { generateAssets } from '../plugins/atelier/skills/brand-asset-pipeline/index.mjs';
 import { processImage } from '../plugins/atelier/skills/responsive-image-pipeline/index.mjs';
@@ -126,9 +127,7 @@ async function main() {
   step('og-card-generator');
   const ogOut = join(outDir, 'og', 'home.png');
   await generateCard({
-    brand: JSON.parse(
-      (await import('node:fs')).readFileSync(join(atelierDir, 'brand.json'), 'utf8'),
-    ),
+    brand: loadBrand(stageDir),
     page: { slug: 'home', title: 'atelier-demo', subtitle: 'Design automation for indie studios' },
     outPath: ogOut,
   });

@@ -27,7 +27,7 @@ import { emitFigmaVariables } from './emitters/figma.mjs';
  */
 export async function syncTokens({ projectRoot, outDir = 'dist/tokens' }) {
   const root = resolve(projectRoot);
-  const cfg = await loadBrand(root);
+  const cfg = loadBrand(root);
 
   const outPath = join(root, outDir);
   mkdirSync(outPath, { recursive: true });
