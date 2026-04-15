@@ -41,7 +41,7 @@ const stageDir    = join(outDir, 'stage');
 const brandSrc    = join(fixturesDir, 'brand.json');
 const markSrc     = join(fixturesDir, 'mark.svg');
 const pageSrc     = join(fixturesDir, 'page.html');
-const photoPath   = join(fixturesDir, 'photo.jpg');
+const photoPath   = join(outDir, 'photo.jpg');
 
 // ---------------------------------------------------------------------------
 // Helpers

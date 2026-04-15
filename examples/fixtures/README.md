@@ -9,3 +9,5 @@ These fixtures are used by `scripts/run-demo.mjs` to exercise the full atelier p
 | `page.html` | Accessible HTML page used by accessibility-design-audit |
 
 Generated output lands in `examples/fixtures/output/` (gitignored). Re-run `npm run demo` to regenerate it.
+
+Note: `photo.jpg` is a synthetic image generated at runtime into `examples/fixtures/output/photo.jpg` — it is not a committed fixture file.
