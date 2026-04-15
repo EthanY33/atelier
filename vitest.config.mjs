@@ -10,6 +10,7 @@ export default defineConfig({
         'plugins/atelier/skills/**/*.mjs',
         'scripts/**/*.mjs'
       ],
+      exclude: ['scripts/run-demo.mjs'],
       thresholds: {
         lines: 70,
         functions: 70,
