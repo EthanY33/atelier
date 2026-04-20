@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname, extname, basename } from 'path';
 import { pathToFileURL } from 'url';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { chromium } from 'playwright';
 
 // ---------------------------------------------------------------------------
@@ -76,6 +76,18 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Returns container-appropriate ffmpeg audio codec args for mux.
+ * @param {'mp4'|'webm'} format
+ * @returns {string[]}
+ */
+function audioCodecArgs(format) {
+  if (format === 'webm') {
+    return ['-c:a', 'libopus', '-b:a', '160k'];
+  }
+  return ['-c:a', 'aac', '-b:a', '192k'];
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -91,10 +103,17 @@ function sleep(ms) {
  *   fps?: number,
  *   outPath: string,
  *   format?: 'mp4'|'webm',
- *   poster?: boolean
+ *   poster?: boolean,
+ *   audioSource?: (outWavPath: string) => void | Promise<void>,
  * }} opts
  * @param opts.duration - number of seconds at the requested fps (total frames = duration × fps).
  *   Actual wall-clock capture time may exceed duration depending on Playwright screenshot latency.
+ * @param opts.audioSource - optional caller-supplied audio generator. Receives an absolute
+ *   path where the callback must write a WAV file (48kHz 16-bit PCM recommended). After the
+ *   callback resolves, the file is muxed against the silent video with `ffmpeg -c:v copy`.
+ *   When omitted, output is silent (v0.1 behavior). Design note: headless-Chromium MediaRecorder
+ *   capture of Web Audio was considered and rejected — it drifts against video and silently
+ *   emits zeros on some Chromium versions. See spec 2026-04-15-html-to-video-v0.2-audio.md.
  * @returns {Promise<string>} resolves with outPath
  */
 export async function recordHtml({
@@ -106,6 +125,7 @@ export async function recordHtml({
   outPath,
   format,
   poster = false,
+  audioSource,
 }) {
   const resolvedFormat = resolveFormat(format, outPath);
   mkdirSync(dirname(outPath), { recursive: true });
@@ -134,17 +154,51 @@ export async function recordHtml({
     if (browser) await browser.close();
   }
 
-  // Encode frames to video
+  // Encode frames to video. When audioSource is supplied, encode to an
+  // intermediate silent file, run the caller's synth, then mux. Otherwise
+  // encode straight to outPath.
   const inputPattern = join(frameDir, `frame-%0${framePadWidth}d.png`);
+  const videoEncodeTarget = audioSource
+    ? join(frameDir, `silent-video${extname(outPath)}`)
+    : outPath;
   const encodeArgs = [
     '-y',
     '-framerate', String(fps),
     '-i', inputPattern,
     ...codecArgs(resolvedFormat),
     '-movflags', '+faststart',
-    outPath,
+    videoEncodeTarget,
   ];
   await runFfmpeg(encodeArgs);
+
+  if (audioSource) {
+    const audioWav = join(frameDir, 'audio.wav');
+    await audioSource(audioWav);
+
+    let audioStat;
+    try {
+      audioStat = statSync(audioWav);
+    } catch {
+      throw new Error(`audioSource wrote an empty or missing file: ${audioWav}`);
+    }
+    if (audioStat.size <= 44) {
+      throw new Error(`audioSource wrote an empty or missing file: ${audioWav}`);
+    }
+
+    const muxArgs = [
+      '-y',
+      '-i', videoEncodeTarget,
+      '-i', audioWav,
+      '-map', '0:v:0',
+      '-map', '1:a:0',
+      '-c:v', 'copy',
+      ...audioCodecArgs(resolvedFormat),
+      '-shortest',
+      '-movflags', '+faststart',
+      outPath,
+    ];
+    await runFfmpeg(muxArgs);
+  }
 
   // Optional: export poster (first frame as JPG)
   if (poster) {
