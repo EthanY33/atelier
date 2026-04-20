@@ -87,6 +87,58 @@ node plugins/atelier/skills/html-to-video/index.mjs https://example.com output/v
 | MP4 | H.264 (libx264) | `-preset medium -crf 20 -pix_fmt yuv420p` |
 | WebM | VP9 (libvpx-vp9) | `-b:v 2M -pix_fmt yuv420p` |
 
+## Audio capture
+
+By default, `recordHtml()` produces silent video. To include audio, supply
+an `audioSource` callback that writes a WAV file to the path you're handed;
+`recordHtml` will mux it against the silent video via ffmpeg before
+returning.
+
+```js
+await recordHtml({
+  url:        'file:///trailer.html',
+  duration:   10,
+  outPath:    'dist/trailer.mp4',
+  audioSource: async (outWavPath) => {
+    // Synthesize or copy audio into outWavPath.
+    // 48kHz 16-bit PCM mono/stereo is the recommended format.
+    const { renderAudio } = await import('./my-trailer-audio.mjs');
+    renderAudio(outWavPath);
+  },
+});
+```
+
+Contract:
+
+- Omitting `audioSource` is a no-op — output is silent (identical to v0.1).
+- The callback receives an absolute path inside the skill's temp dir; write
+  the file and resolve.
+- If the file is missing or ≤ 44 bytes (WAV header only), `recordHtml`
+  throws `audioSource wrote an empty or missing file: <path>`.
+- Video is stream-copied during mux (`-c:v copy`), so it isn't re-encoded.
+  Audio is re-encoded to `aac -b:a 192k` (MP4) or `libopus -b:a 160k`
+  (WebM).
+
+### Why not MediaRecorder / Web Audio capture in headless Chromium
+
+The obvious approach — inject `AudioContext → MediaStreamDestination →
+MediaRecorder` into the page, capture the destination stream, mux the
+result — was prototyped by the TideWane trailer pipeline and abandoned
+before shipping. Concrete failure modes:
+
+- Audio drifts 10–50 ms per minute against video even with frame-locked
+  screenshot capture. Any cut-to-SFX timing is visibly wrong.
+- `MediaRecorder` in headless silently emits zeros on some Chromium
+  versions; the browser provides no failure signal.
+- Worker-thread scheduling jitter under CI load makes the drift
+  non-deterministic.
+
+Pure-Node synthesis — which is what `audioSource` enables — is the
+replacement. Atelier doesn't ship a synth library; the caller owns that.
+Reference implementations live in `tidewane-build/scripts/trailers/render-*-audio.mjs`
+(hand-written percussive sequencing, writes 48 kHz PCM WAV). Full design
+rationale in `docs/superpowers/specs/2026-04-15-html-to-video-v0.2-audio.md`.
+
 ## Production directives for marketing trailers
 
 The basic `recordHtml()` contract is a constant-fps Playwright capture. That's
