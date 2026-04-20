@@ -87,6 +87,78 @@ node plugins/atelier/skills/html-to-video/index.mjs https://example.com output/v
 | MP4 | H.264 (libx264) | `-preset medium -crf 20 -pix_fmt yuv420p` |
 | WebM | VP9 (libvpx-vp9) | `-b:v 2M -pix_fmt yuv420p` |
 
+## Production directives for marketing trailers
+
+The basic `recordHtml()` contract is a constant-fps Playwright capture. That's
+fine for tutorial screencasts and doc animations. For **marketing trailers
+published on a store page / Steam / YouTube**, the default loses fidelity in
+ways that only show up after upload. These directives come from the goneIdle /
+TideWane trailer pipeline — every rule here was learned from a specific
+regression.
+
+### Capture at 60fps via virtual clock, not wall-clock ticks
+
+Playwright's screencast / screenshot cadence is not frame-locked; under CPU
+load it will drift to 15-30 effective fps while still producing a 60fps MP4
+with duplicated frames. Viewers read that as "stutter."
+
+Fix: drive animation from a virtual clock (`window.__vclock` or similar)
+that advances exactly `1 / fps` seconds per captured frame. Ignore wall
+time entirely — each capture tick calls a `tickFrame(t)` function the HTML
+exposes, then Playwright screenshots once, then the clock advances. The
+result is genuinely 60 per-frame-different screenshots per second of output,
+verified by hash-diffing consecutive frames.
+
+### Synthesize audio offline, not in the browser
+
+Headless Chromium's Web Audio is unreliable — output can glitch, desync from
+video, or silently emit zeros. Pre-render the trailer audio track in pure
+Node (OfflineAudioContext polyfill or a hand-rolled synth) to a `.wav`, then
+`ffmpeg -i video.mp4 -i audio.wav -c:v copy -c:a aac -shortest out.mp4`.
+The browser pass produces video only.
+
+### Validate output with ffprobe before ship
+
+Before publishing any trailer asset, probe it:
+
+```bash
+ffprobe -v error -select_streams v:0 \
+  -show_entries stream=width,height,r_frame_rate,nb_frames,duration \
+  -of json trailer.mp4
+```
+
+Gate the pipeline on: exact expected resolution, `r_frame_rate == fps/1`,
+`nb_frames == duration * fps ± 1`, audio track present (when expected),
+peak audio < −1 dBFS. A separate `trailer-tripwire` audit tool (see
+`github.com/EthanY33/trailer-tripwire`) also catches AI-default content
+tells: fade-heavy edits (>40% fades reads as slideshow), flat audio RMS
+(<3dB stdev reads as procedural drone), silent ratio, palette mono-mood.
+
+### Content guidance
+
+Pattern-level rules learned from A/B'ing trailers:
+
+- **Real mockups over bullet lists.** Five seconds of an actual UI screenshot
+  outperforms a 5-second bullet list every time. Treat the trailer as a
+  demo, not a spec sheet.
+- **Concrete numbers over vibes.** "60fps · 3 MB · zero deps" reads as real;
+  "fast, light, simple" reads as AI slop. Pull the numbers from your own
+  telemetry before writing copy.
+- **No ambient pads, ever.** Flat synth drones are the single strongest
+  "AI-generated" tell. Use percussive / rhythmic elements, even if
+  sparse. The audio RMS curve should have visible stdev > 3dB.
+- **Short outros.** >1.5 s of black-frame / logo-hold at the end reads as
+  unfinished. Cap outros at 0.8 s.
+
+### Where the production pipeline actually lives
+
+The skill's `recordHtml()` is intentionally minimal — a general-purpose
+HTML-to-video recorder. The full 60fps virtual-clock + offline-synth +
+ffprobe-gated pipeline is a separate implementation in the goneIdle repo
+(`scripts/record-trailers.mjs` + `docs/trailer-production-directive.md`).
+Atelier's v0.2 spec (`docs/superpowers/specs/2026-04-15-html-to-video-v0.2-audio.md`)
+tracks absorbing the audio-capture half of that pipeline into this skill.
+
 ## GIF conversion recipe
 
 Convert the output MP4 to a high-quality GIF using ffmpeg's two-pass palette method:
