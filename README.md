@@ -9,7 +9,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-81b29a.svg)](https://docs.claude.com/claude-code)
 [![CI](https://github.com/EthanY33/atelier/actions/workflows/ci.yml/badge.svg)](https://github.com/EthanY33/atelier/actions/workflows/ci.yml)
 
-![atelier overview](./demos/overview.gif)
+![atelier overview](./demos/overview.webp)
 
 </div>
 
