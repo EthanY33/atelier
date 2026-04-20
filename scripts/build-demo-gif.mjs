@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// Build demos/overview.gif from demos/storyboard/index.html.
-// Pipeline: ensure fixtures -> record MP4 -> ffmpeg palettegen -> ffmpeg paletteuse -> cleanup.
+// Build demos/overview.{mp4,webp,gif} from demos/storyboard/index.html.
+// Pipeline: ensure fixtures -> record MP4 -> copy MP4 to demos/ -> encode WebP -> palettegen/paletteuse GIF.
+// Three outputs so README can prefer animated WebP (best GitHub rendering) with GIF as a fallback for crawlers/forks.
 
 import { spawn, spawnSync } from 'child_process';
-import { existsSync, mkdirSync, rmSync, mkdtempSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, mkdtempSync, copyFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -16,6 +17,8 @@ const STORYBOARD_HTML = join(REPO_ROOT, 'demos', 'storyboard', 'index.html');
 const FIXTURE_OG = join(REPO_ROOT, 'examples', 'fixtures', 'output', 'og', 'home.png');
 const FIXTURE_COVER = join(REPO_ROOT, 'examples', 'fixtures', 'output', 'brand', 'og-cover.png');
 const OUT_GIF = join(REPO_ROOT, 'demos', 'overview.gif');
+const OUT_MP4 = join(REPO_ROOT, 'demos', 'overview.mp4');
+const OUT_WEBP = join(REPO_ROOT, 'demos', 'overview.webp');
 
 const DURATION_SECONDS = 17.5;
 const FPS = 15;
@@ -80,6 +83,30 @@ async function main() {
       outPath: mp4Path,
     });
     console.log(`  wrote ${mp4Path}`);
+
+    console.log(`Copying MP4 to ${OUT_MP4}...`);
+    copyFileSync(mp4Path, OUT_MP4);
+
+    // Animated WebP requires libwebp_anim + explicit -pix_fmt rgba + -r <fps>
+    // (output rate). Without those, libwebp drops to a single frame or emits
+    // a file ffmpeg itself can't re-decode. Verified 2026-04-19 on ffmpeg 8.1.
+    console.log(`Encoding animated WebP (${GIF_WIDTH}px wide @ ${FPS}fps)...`);
+    await runFfmpeg([
+      '-y',
+      '-i', mp4Path,
+      '-vf', `fps=${FPS},scale=${GIF_WIDTH}:-1:flags=lanczos`,
+      '-c:v', 'libwebp_anim',
+      '-pix_fmt', 'rgba',
+      '-lossless', '0',
+      '-compression_level', '6',
+      '-q:v', '75',
+      '-loop', '0',
+      '-preset', 'picture',
+      '-an',
+      '-r', String(FPS),
+      OUT_WEBP,
+    ]);
+    console.log(`  wrote ${OUT_WEBP}`);
 
     const scaleFilter = `fps=${FPS},scale=${GIF_WIDTH}:-1:flags=lanczos`;
 
