@@ -5,7 +5,7 @@
 **Design-automation plugin for Claude Code.** Define your brand once — every skill uses it.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-f2cc8f.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-e07a5f.svg)](https://github.com/EthanY33/atelier/releases)
+[![Version](https://img.shields.io/badge/version-0.2.0-e07a5f.svg)](https://github.com/EthanY33/atelier/releases)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-81b29a.svg)](https://docs.claude.com/claude-code)
 [![CI](https://github.com/EthanY33/atelier/actions/workflows/ci.yml/badge.svg)](https://github.com/EthanY33/atelier/actions/workflows/ci.yml)
 
