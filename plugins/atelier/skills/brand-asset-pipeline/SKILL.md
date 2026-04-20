@@ -57,6 +57,7 @@ Paste inside `<head>` after generating favicons and app-icons:
 <link rel="icon"             type="image/png" sizes="32x32"  href="/brand/favicon-32.png">
 <link rel="icon"             type="image/png" sizes="16x16"  href="/brand/favicon-16.png">
 <link rel="apple-touch-icon" sizes="180x180"                 href="/brand/apple-touch-icon.png">
+<!-- Do NOT add <link rel="icon" href="/favicon.ico"> — see "Why no .ico" below. -->
 
 <!-- Android / PWA -->
 <link rel="icon" type="image/png" sizes="192x192" href="/brand/android-chrome-192.png">
@@ -69,3 +70,24 @@ Paste inside `<head>` after generating favicons and app-icons:
 <meta name="twitter:card"        content="summary_large_image">
 <meta name="twitter:image"       content="https://yourdomain.com/brand/twitter-cover.png">
 ```
+
+## Why no `.ico`
+
+This skill intentionally emits **PNG favicons only** — no `favicon.ico`. Every
+evergreen browser since 2017 handles `<link rel="icon" type="image/png">`
+natively, and PNG gives sharper rendering on HiDPI displays.
+
+The common Node generators for `.ico` (most notably `to-ico`) produce 24-bit
+BMP-encoded `.ico` files. Chromium, Firefox, and Safari misinterpret the
+pixel layout on some of those BMPs and render the favicon as vertical RGB
+stripes instead of the mark. It looks fine locally in the OS preview but
+broken in the browser tab — a pattern repeatedly observed in 2026 goneidle
+builds before the `.ico` was removed entirely.
+
+If you must support IE / early Edge (which you do not, in 2026): build the
+`.ico` manually from 16/32/48 PNGs using `png2icojs` or ImageMagick
+`convert png:… ico:…`, and verify the result in a real browser tab — not the
+OS file preview.
+
+Safe default: ship only PNGs; drop `<link rel="icon" href="/favicon.ico">`
+from the `<head>`.

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `runtime-ux-audit` spec: four new `panels` category rules codifying backdrop-filter compositor cost, filed from the 2026-04-19 goneidle.com modal-stutter fix — `backdrop-filter-on-opaque-fill`, `backdrop-filter-on-video-modal`, `fixed-nav-backdrop-filter-under-modal`, `video-missing-gpu-hint-in-modal`. Panels section grew 22 → 26 rules (total 68 → 72).
+- `brand-asset-pipeline` SKILL.md: "Why no `.ico`" section documenting the `to-ico` 24-bit-BMP rendering pitfall observed in 2026 goneidle builds, and the safe PNG-only default this skill emits.
+- `html-to-video` SKILL.md: "Production directives for marketing trailers" — virtual-clock 60fps capture, offline audio synthesis, ffprobe validation gate, and content-level rules (mockups over bullets, concrete numbers, no ambient pads, short outros). Codified from the goneIdle / TideWane trailer pipeline.
+
 ## [0.1.0] - 2026-04-14
 
 ### Added
