@@ -22,11 +22,11 @@
     "demo:gif": "node scripts/build-demo-gif.mjs"
   },
   "dependencies": {
-    "ajv": "8.18.0",
+    "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "sharp": "0.34.5",
     "playwright": "1.59.1",
-    "@axe-core/playwright": "4.11.1"
+    "@axe-core/playwright": "4.11.2"
   },
   "devDependencies": {
     "vitest": "3.2.4",
