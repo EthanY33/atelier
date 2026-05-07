@@ -51,6 +51,19 @@ describe('load/save', () => {
     tmp = mkdtempSync(join(tmpdir(), 'atelier-test-'));
     expect(() => loadBrand(tmp)).toThrow(/brand\.json not found.*run \/brand-init/);
   });
+
+  it('loadBrand throws on a brand.json that fails schema validation', async () => {
+    const { mkdirSync, writeFileSync } = await import('fs');
+    tmp = mkdtempSync(join(tmpdir(), 'atelier-test-'));
+    mkdirSync(join(tmp, '.atelier'));
+    // Missing required brand.studio. saveBrand would refuse this; without
+    // load-side validation, downstream emitters would silently consume it.
+    writeFileSync(
+      join(tmp, '.atelier', 'brand.json'),
+      JSON.stringify({ brand: {}, palette: { bg: '#110f1b' }, typography: { body: 'Arial' } }),
+    );
+    expect(() => loadBrand(tmp)).toThrow(/invalid brand\.json/);
+  });
 });
 
 // ---------------------------------------------------------------------------

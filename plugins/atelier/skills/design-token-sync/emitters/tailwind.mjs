@@ -19,9 +19,11 @@ export function emitTailwind(cfg) {
   const palette = cfg.palette ?? {};
   const typography = cfg.typography ?? {};
 
-  // Build colors block
+  // Build colors block. JSON.stringify so values that contain quotes,
+  // backslashes, or other JS-meaningful characters cannot break out of the
+  // string literal in the generated config.
   const colorLines = Object.entries(palette).map(
-    ([name, value]) => `        ${name}: '${value}'`,
+    ([name, value]) => `        ${name}: ${JSON.stringify(value)}`,
   );
 
   // Build fontFamily block — only emit present keys
@@ -30,7 +32,7 @@ export function emitTailwind(cfg) {
     .filter((k) => typography[k])
     .map((k) => {
       const family = GENERIC_FAMILY[k] ?? 'sans-serif';
-      return `        ${k}: ['${typography[k]}', '${family}']`;
+      return `        ${k}: [${JSON.stringify(typography[k])}, ${JSON.stringify(family)}]`;
     });
 
   const lines = [
