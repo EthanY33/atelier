@@ -45,7 +45,15 @@ export function loadBrand(projectRoot) {
       `brand.json not found at ${filePath} — run /brand-init first`
     );
   }
-  return JSON.parse(readFileSync(filePath, 'utf8'));
+  const cfg = JSON.parse(readFileSync(filePath, 'utf8'));
+  const valid = validate(cfg);
+  if (!valid) {
+    const messages = validate.errors
+      .map((e) => `${e.instancePath || '(root)'} ${e.message}`)
+      .join('; ');
+    throw new Error(`invalid brand.json at ${filePath}: ${messages}`);
+  }
+  return cfg;
 }
 
 /**
