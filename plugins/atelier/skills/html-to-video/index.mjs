@@ -1,9 +1,45 @@
-import { mkdirSync, mkdtempSync, rmSync, statSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
-import { join, dirname, extname, basename } from 'path';
+import { join, dirname, extname, basename, delimiter } from 'path';
 import { pathToFileURL } from 'url';
 import { spawn, spawnSync } from 'child_process';
 import { chromium } from 'playwright';
+
+/**
+ * Resolve a binary name to an absolute path by walking PATH, with
+ * platform-appropriate extensions. Returns null when not found.
+ *
+ * Used so we can spawn ffmpeg without `shell: true`. With shell:true on
+ * Windows, metacharacters in interpolated paths (e.g. an outPath like
+ * `out.mp4 & calc.exe`) execute attached commands. With an absolute binary
+ * path and shell:false, argv is passed directly to CreateProcess and no
+ * metacharacter is honored.
+ */
+export function findOnPath(name) {
+  const exts = process.platform === 'win32'
+    ? (process.env.PATHEXT || '.EXE;.BAT;.CMD').split(';')
+    : [''];
+  const dirs = (process.env.PATH || '').split(delimiter);
+  for (const dir of dirs) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const candidate = join(dir, name + ext);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+let _ffmpegPath = null;
+function resolveFfmpeg() {
+  if (_ffmpegPath) return _ffmpegPath;
+  const found = findOnPath('ffmpeg');
+  if (!found) {
+    throw new Error('ffmpeg not found in PATH. Install ffmpeg first.');
+  }
+  _ffmpegPath = found;
+  return found;
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -41,8 +77,7 @@ function codecArgs(format) {
  */
 function runFfmpeg(args) {
   return new Promise((resolve, reject) => {
-    const isWin = process.platform === 'win32';
-    const proc = spawn('ffmpeg', args, { shell: isWin });
+    const proc = spawn(resolveFfmpeg(), args);
     const stderrChunks = [];
     proc.stderr.on('data', (chunk) => stderrChunks.push(chunk));
     proc.on('close', (code) => {
