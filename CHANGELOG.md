@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-08
+
+### Security
+
+- `html-to-video`: dropped `shell: true` from `spawn('ffmpeg', …)` and replaced it with an explicit PATH-resolved binary lookup. Closes a Windows command-injection path where shell metacharacters in the `outPath` argument (e.g. `out.mp4 & calc.exe`) would execute attached commands. ([#11](https://github.com/EthanY33/atelier/pull/11))
+- `brand-memory`: `loadBrand()` now validates the parsed `.atelier/brand.json` against the schema; previously only `saveBrand()` validated, so a hand-edited or attacker-modified file slipped through unchecked. ([#12](https://github.com/EthanY33/atelier/pull/12))
+- `design-token-sync` (Tailwind emitter): switched single-quoted interpolation of palette/typography values to `JSON.stringify`, so a free-form typography value cannot escape its string literal and execute as JS during the consumer's `npm run build`. ([#12](https://github.com/EthanY33/atelier/pull/12))
+
+### Changed
+
+- Emitted Tailwind config now uses double-quoted strings (side-effect of the `JSON.stringify` switch). Generated config remains valid JS and Tailwind consumes it identically.
+
 ## [0.2.0] - 2026-04-19
 
 ### Added
