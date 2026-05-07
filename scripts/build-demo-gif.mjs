@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, rmSync, mkdtempSync, copyFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { recordHtml } from '../plugins/atelier/skills/html-to-video/index.mjs';
+import { recordHtml, findOnPath } from '../plugins/atelier/skills/html-to-video/index.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
@@ -26,9 +26,11 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 const GIF_WIDTH = 720; // scaled down for size
 
+const FFMPEG = findOnPath('ffmpeg');
+
 function runFfmpeg(args) {
   return new Promise((resolve, reject) => {
-    const proc = spawn('ffmpeg', args, { shell: process.platform === 'win32' });
+    const proc = spawn(FFMPEG, args);
     const err = [];
     proc.stderr.on('data', (c) => err.push(c));
     proc.on('close', (code) => {
@@ -40,8 +42,7 @@ function runFfmpeg(args) {
 }
 
 function ffmpegAvailable() {
-  const r = spawnSync('ffmpeg', ['-version'], { shell: process.platform === 'win32' });
-  return r.status === 0;
+  return FFMPEG != null;
 }
 
 async function main() {
