@@ -2,7 +2,7 @@
 
 # atelier
 
-**Design-automation plugin for Claude Code.** Define your brand once — every skill uses it.
+**Design-automation plugin for Claude Code.** Define your brand once. Every skill uses it.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-f2cc8f.svg)](./LICENSE)
 [![Version](https://img.shields.io/badge/version-0.2.1-e07a5f.svg)](https://github.com/EthanY33/atelier/releases)
@@ -21,13 +21,13 @@ Seven skills, one source of truth.
 
 | Skill | What it does |
 |---|---|
-| **brand-memory** | Maintains `.atelier/brand.json` — the source of truth for palette, typography, logos, voice, and deploy targets. Every other skill reads from it. |
+| **brand-memory** | Maintains `.atelier/brand.json`, the source of truth for palette, typography, logos, voice, and deploy targets. Every other skill reads from it. |
 | **design-token-sync** | Pushes brand-memory → `tokens.css`, `tailwind.config.js`, `tokens.d.ts`, and Figma variables. One command, four destinations. |
 | **og-card-generator** | Generates 1200×630 Open Graph + Twitter card PNGs per page, rendered from a branded HTML template. |
 | **responsive-image-pipeline** | Converts source PNG/JPG → AVIF + WebP at 480/768/1280/1920px + base64 LQIP placeholder + copy-pasteable `<picture>` snippet. SHA-cached. |
 | **brand-asset-pipeline** | One `mark.svg` → full favicon set, app icons, social covers, and optional Steam capsules. |
-| **accessibility-design-audit** | Runs WCAG AA checks (axe-core + Playwright) on a URL or local HTML, emits markdown report + screenshots. CI-friendly exit codes. |
-| **html-to-video** | Records any HTML page as MP4 (H.264) or WebM (VP9) via Playwright + ffmpeg. Includes GIF recipe. This README's hero GIF was made with it. |
+| **accessibility-design-audit** | Runs WCAG 2.1 AA checks (axe-core + Playwright) on a URL or local HTML, emits a markdown report grouped by impact plus the raw axe JSON. CI-friendly exit codes. |
+| **html-to-video** | Records any HTML page as MP4 (H.264) or WebM (VP9) via Playwright + ffmpeg. Includes a GIF recipe. This README's hero clip was recorded with it. |
 
 ## Install
 
@@ -50,7 +50,7 @@ That command runs all seven skills end-to-end against bundled fixtures and print
 /brand-init
 ```
 
-Interactive bootstrap — answers a handful of prompts and writes `.atelier/brand.json` in your project. After that:
+Interactive bootstrap. It answers a handful of prompts and writes `.atelier/brand.json` in your project. After that:
 
 ```
 /brand-set palette.terra "#e07a5f"
@@ -58,11 +58,11 @@ Interactive bootstrap — answers a handful of prompts and writes `.atelier/bran
 /brand-audit
 ```
 
-Then run any skill — all of them read from the same `.atelier/brand.json`.
+Then run any skill. All of them read from the same `.atelier/brand.json`.
 
 ## Philosophy: one brand, many outputs
 
-Most design-automation tools own a slice: Tailwind has colors, sharp has images, Playwright has screenshots, axe has a11y. atelier is the layer above — it treats **brand** as a first-class persistent object (`.atelier/brand.json`), and wires every downstream artifact to it. Change a hex code once; regenerate tokens, OG cards, favicons, and audit results together.
+Most design-automation tools own a slice: Tailwind has colors, sharp has images, Playwright has screenshots, axe has a11y. atelier is the layer above: it treats **brand** as a first-class persistent object (`.atelier/brand.json`) and wires every downstream artifact to it. Change a hex code once; regenerate tokens, OG cards, favicons, and audit results together.
 
 Other design decisions:
 
@@ -83,7 +83,7 @@ Other design decisions:
 
 - **Claude Code** ≥ 1.0
 - **Node.js** ≥ 20 LTS
-- **ffmpeg** in PATH (for `html-to-video` only — `choco install ffmpeg` / `brew install ffmpeg` / `apt install ffmpeg`)
+- **ffmpeg** in PATH (for `html-to-video` only: `choco install ffmpeg` / `brew install ffmpeg` / `apt install ffmpeg`)
 - **Playwright Chromium** (installed automatically on first `npm install`)
 
 ## Development
@@ -92,7 +92,7 @@ Other design decisions:
 git clone https://github.com/EthanY33/atelier
 cd atelier
 npm install
-npm test            # vitest, 52 tests (3 skipped if ffmpeg not present)
+npm test            # vitest, 59 tests (5 require ffmpeg, skipped when it is absent)
 npm run lint:schemas
 npm run demo        # run /atelier-demo locally
 npm run demo:gif    # regenerate demos/overview.gif
