@@ -22,14 +22,14 @@
     "demo:gif": "node scripts/build-demo-gif.mjs"
   },
   "dependencies": {
-    "ajv": "8.18.0",
+    "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "sharp": "0.34.5",
-    "playwright": "1.59.1",
-    "@axe-core/playwright": "4.11.1"
+    "sharp": "0.35.3",
+    "playwright": "1.61.1",
+    "@axe-core/playwright": "4.12.1"
   },
   "devDependencies": {
-    "vitest": "3.2.4",
-    "@vitest/coverage-v8": "3.2.4"
+    "vitest": "3.2.6",
+    "@vitest/coverage-v8": "3.2.6"
   }
 }
