@@ -6,7 +6,7 @@ Public Claude Code plugin. MIT. 7 design-automation skills sharing `.atelier/bra
 
 ```
 npm install
-npm test                # vitest, ~54 tests (some skipped if ffmpeg missing)
+npm test                # vitest, 59 tests (needs `npx playwright install chromium` once, or 3 skills fail outright; ffmpeg-gated tests skip cleanly without it)
 npm run lint:schemas    # ajv-validate JSON schemas
 npm run demo            # /atelier-demo locally
 npm run demo:gif        # regenerate demos/overview.* (README embeds the animated WebP, not the GIF)
@@ -32,7 +32,7 @@ Slash commands live alongside the skills: `/atelier-demo`, `/brand-init`, `/bran
 
 - Exact dependency pins are intentional — `package.json` is the source of truth (Dependabot bumps them via grouped PRs, e.g. PR #4). 0.1.0 CHANGELOG documents the deviations from the original spec. **Don't loosen pins to ranges, and don't hand-edit versions — let Dependabot roll them.**
 - JSON, not YAML, for `.atelier/brand.json` — Claude edits it via slash commands; YAML's human ergonomics buy nothing.
-- Each skill verifies its binary deps at entry (sharp native, ffmpeg, Playwright browsers) and prints install instructions on miss.
+- Binary-dep checks aren't centralized: `html-to-video`, `og-card-generator`, and `accessibility-design-audit` all call `chromium.launch()` with no check and let Playwright throw its own "run `npx playwright install`" error; `html-to-video` additionally checks ffmpeg via PATH lookup (`resolveFfmpeg`/`findOnPath`) but only after the Playwright step succeeds, so that check is unreachable on a fresh clone. `responsive-image-pipeline` has no check at all. `scripts/preflight.mjs` (`checkBinary`/`checkNodeModule`/`runPreflight`) exists and is unit-tested but isn't called from any skill. Don't assume it's wired in.
 - **No telemetry. MIT.** Don't add metrics calls or analytics.
 
 ## Pending work
@@ -41,4 +41,4 @@ Slash commands live alongside the skills: `/atelier-demo`, `/brand-init`, `/bran
 
 ## Commit conventions
 
-Conventional Commits. PRs are how things land (see #11, #12 for the security-fix pattern).
+Conventional Commits. Most commits land directly on `main`; PRs are used for Dependabot bumps and notable fixes (see #11, #12 for the security-fix pattern).
