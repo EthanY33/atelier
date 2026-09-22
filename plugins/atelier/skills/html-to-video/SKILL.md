@@ -1,67 +1,84 @@
 ---
 name: html-to-video
-description: Record any HTML page or URL as MP4 (H.264) or WebM (VP9) at configurable resolution and frame rate via headless Playwright + ffmpeg, with optional first-frame JPG poster. Use for marketing trailers, tutorial screencasts (e.g. from a local dev server), video for docs/changelogs/social posts, archiving an animated page, or demo GIFs.
+description: Record an HTML page, local .html file or URL as an MP4 (H.264) or WebM (VP9) video with frame-exact timing (virtual clock), optional muxed audio and a JPG poster. Use for product or game trailers, animated demo clips, screencasts of a local dev server, changelog or social videos, and turning CSS/JS animations into a video or GIF.
 ---
 
-Requires Node >= 20, Playwright Chromium (via `npm install`), ffmpeg on PATH (`brew install ffmpeg`, `apt install ffmpeg`, or ffmpeg.org on Windows).
+Needs ffmpeg on PATH and Playwright Chromium (`npx playwright install chromium`; installing the plugin does not download a browser). `node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" doctor` checks both and prints the install command for anything missing.
 
 ## Run
 
-```js
-import { recordHtml } from './plugins/atelier/skills/html-to-video/index.mjs';
-await recordHtml({ url: 'http://localhost:5173/trailer.html', duration: 10, width: 1920, height: 1080, fps: 30, outPath: 'dist/trailer.mp4' });
-await recordHtml({ url, outPath: 'dist/demo.webm', format: 'webm', poster: true }); // also writes dist/demo-poster.jpg
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" video http://localhost:5173/trailer.html dist/trailer.mp4 10 --width 1920 --height 1080
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" video demo/page.html dist/demo.webm --fps 60 --poster
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" video demo/page.html dist/trailer.mp4 12 --audio score.wav
 ```
+
+JS API, for a generated `audioSource` or to reuse one browser across many clips (`pathToFileURL` keeps the import working with Windows paths):
 
 ```bash
-node plugins/atelier/skills/html-to-video/index.mjs <url> <out.mp4|out.webm> [durationSec=5]   # format from extension
+node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+const { recordHtml } = await import(pathToFileURL(String.raw`${CLAUDE_SKILL_DIR}/index.mjs`).href);
+await recordHtml({
+  url: "demo/page.html", outPath: "dist/trailer.mp4", duration: 12, fps: 60, poster: true,
+  audioSource: async (wavPath) => { /* write a 48 kHz 16-bit PCM WAV to wavPath */ },
+});
+'
 ```
 
-Options:
-- `url`: page URL or `file://` URL (local file: `pathToFileURL(path).href`)
-- `outPath`: `.mp4` or `.webm`
-- `duration` 5 (s), `width` 1280, `height` 720, `fps` 30
-- `format`: `'mp4'|'webm'`, default from extension
-- `poster`: default `false`; exports first frame as `<name>-poster.jpg`
-- `audioSource`: see below
+## Options
 
-Codecs: MP4 H.264 libx264 `-preset medium -crf 20 -pix_fmt yuv420p`; WebM VP9 libvpx-vp9 `-b:v 2M -pix_fmt yuv420p`.
+API name first, then the CLI form.
+- `url` (1st argument): http(s), `file://` or `data:` URL, or a path to a local HTML file (relative to the working directory). `localhost:5173/x` without a scheme is rejected; write `http://localhost:5173/x`.
+- `outPath` (2nd argument): `.mp4` (libx264 `-preset medium -crf 20 -pix_fmt yuv420p`, `+faststart`) or `.webm` (libvpx-vp9 2 Mbit/s). Any other extension, or none, gets `format` (default MP4).
+- `duration` (`[seconds]` or `-d, --duration`): seconds of page time, default 5. Frames = round(duration x fps), at least 1.
+- `fps` (`--fps`): default 30, max 240.
+- `width`, `height` (`--width`, `--height`): default 1280x720, integers 1 to 8192. MP4 needs even sizes, so an odd value is rounded up by 1 px and the page is laid out at that size (the CLI prints a note). WebM keeps odd sizes.
+- `format` (`-f, --format`): `mp4` or `webm`. Must agree with a `.mp4`/`.webm` extension; a mismatch is an error.
+- `poster` (`--poster`): also write `<name>-poster.jpg` (the first frame) next to the video.
+- `audioSource(wavPath)` (`--audio <file>`): see Audio below.
+- `browser` (API only): a launched Playwright Chromium to reuse. It is not closed; each call opens and closes its own context.
+- `signal` (API only): an `AbortSignal`. Aborting stops the capture or ffmpeg step, removes the temp files and rejects with the abort reason. The CLI does this on the first Ctrl+C.
 
-## Audio capture
+## Output
 
-Output is silent by default (identical to v0.1). Pass `audioSource: async (outWavPath) => {…}`; it receives an absolute path inside the skill's temp dir, must write a WAV there (48kHz 16-bit PCM mono/stereo recommended) and resolve. `recordHtml` muxes it before returning.
-- Missing file or ≤ 44 bytes (WAV header only) throws `audioSource wrote an empty or missing file: <path>`.
-- Video is stream-copied (`-c:v copy`), not re-encoded. Audio is re-encoded to `aac -b:a 192k` (MP4) or `libopus -b:a 160k` (WebM).
+- The video at `outPath` (parent directories are created) and, with `poster`, `<name>-poster.jpg` beside it. `recordHtml` resolves with `outPath`; the CLI prints `Video written to: <path>` and `Poster written to: <path>`.
+- Frames, the intermediate video and the WAV live in a temp directory that is removed on success and on every failure. The finished files are moved into place last, so a failed run never leaves a truncated video at `outPath` or overwrites an earlier one.
 
-Never capture Web Audio in headless Chromium (`AudioContext → MediaStreamDestination → MediaRecorder`). The TideWane trailer pipeline prototyped and abandoned it:
-- Audio drifts 10-50 ms/min against video even with frame-locked screenshot capture; cut-to-SFX timing is visibly wrong.
-- Headless `MediaRecorder` silently emits zeros on some Chromium versions, with no failure signal.
-- CI worker-thread jitter makes the drift non-deterministic; output can also glitch.
+## Exit codes
 
-Synthesize in pure Node instead (OfflineAudioContext polyfill or hand-rolled synth); the browser pass produces video only. Atelier ships no synth library; the caller owns it. References: `tidewane-build/scripts/trailers/render-*-audio.mjs` (hand-written percussive sequencing, 48 kHz PCM WAV); rationale in `docs/superpowers/specs/2026-04-15-html-to-video-v0.2-audio.md`. Manual mux: `ffmpeg -i video.mp4 -i audio.wav -c:v copy -c:a aac -shortest out.mp4`.
+- `0`: video written.
+- `2`: usage error (message and usage on stderr) or runtime failure (one `atelier: ...` line, plus a `Fix:` line when ffmpeg or Chromium is missing).
 
-## Production directives for marketing trailers
+## Notes
 
-`recordHtml()` is a constant-fps capture: fine for screencasts and doc animations. For trailers published to a store page, Steam, or YouTube it loses fidelity that shows only after upload. Each rule below (from the goneIdle/TideWane pipeline) came from a specific regression.
+### Timing
 
-- Capture 60fps via virtual clock, not wall-clock ticks. Playwright capture isn't frame-locked; under CPU load it drifts to 15-30 effective fps while still writing a 60fps MP4 of duplicated frames (reads as stutter). Drive animation from a virtual clock (`window.__vclock` or similar) advancing exactly `1 / fps` s per captured frame, ignoring wall time: each tick calls the page's exposed `tickFrame(t)`, Playwright screenshots once, then the clock advances. Verify by hash-diffing consecutive frames (every frame should differ).
-- Synthesize audio offline (above).
-- Validate with ffprobe before ship:
+Capture runs on a virtual clock: frame N shows the page exactly N / fps seconds after the first frame, however long each screenshot takes. The video is `duration` long and animations play at their authored speed.
+- The first frame is taken after the `load` event and `document.fonts.ready`. Page timers are frozen during load, so page time 0 is the first frame.
+- JS time (`Date`, `performance.now`, `setTimeout`, `setInterval`, `requestAnimationFrame`) runs on Playwright's fake clock, advanced 1000 / fps ms per frame.
+- CSS animations, CSS transitions and Web Animations are frozen when created and stepped by the same amount each frame, honoring `playbackRate` and page seeks. An animation the page pauses stays paused at the previous frame's value. SVG SMIL is seeked with `setCurrentTime`.
+- Not on the virtual clock: `<video>` and `<audio>` playback, Web Workers, scroll-driven animations, CSS animations inside cross-origin iframes, and `document.timeline.currentTime`. Content fetched after `load` appears at whichever frame is being captured when it arrives.
+- ffmpeg is resolved on PATH (never through a shell) before Chromium launches, so a missing ffmpeg fails immediately.
+
+### Audio
+
+Output is silent unless `audioSource` or `--audio` is given. `audioSource` receives an absolute path in the temp directory and must write a WAV there (48 kHz 16-bit PCM recommended). A missing file, or one of 44 bytes or less (header only), throws `audioSource wrote an empty or missing file: <path>`. `--audio` copies an existing file (WAV recommended; any format ffmpeg reads). The video stream is copied; audio is encoded to AAC 192k (MP4) or Opus 160k (WebM) and the output ends with the shorter stream.
+
+Do not record Web Audio in headless Chromium (`MediaRecorder`): it drifts 10 to 50 ms per minute against the video, and some Chromium versions silently record zeros. Synthesize the track in Node on the same timeline (frame N = N / fps seconds) and pass it in.
+
+### Trailers and GIFs
+
+- Record at the delivery frame rate (60 for store pages and YouTube), then check the file:
   ```bash
-  ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate,nb_frames,duration -of json trailer.mp4
+  ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=width,height,r_frame_rate,nb_read_frames -of json dist/trailer.mp4
   ```
-  Gate on: exact expected resolution, `r_frame_rate == fps/1`, `nb_frames == duration * fps ± 1`, audio track present (when expected), peak audio < -1 dBFS. `trailer-tripwire` (`github.com/EthanY33/trailer-tripwire`) also catches AI-default tells: >40% fades (reads as slideshow), audio RMS stdev <3dB (procedural drone), silent ratio, palette mono-mood.
-- Content (from A/B tests):
-  - Real UI mockups over bullet lists: a demo, not a spec sheet.
-  - Concrete numbers ("60fps · 3 MB · zero deps") over vibes ("fast, light, simple" reads as AI slop). Pull numbers from your own telemetry.
-  - No ambient pads, ever (strongest "AI-generated" tell). Use percussive/rhythmic elements, even sparse; RMS stdev > 3dB.
-  - Cap outros at 0.8 s (>1.5 s of black/logo hold reads unfinished).
+  Expect the exact size, `r_frame_rate` = fps/1 and `nb_read_frames` = round(duration x fps).
+- Show real UI rather than bullet lists, use concrete numbers, prefer percussive audio over ambient pads, and keep outros under about 0.8 s.
+- GIF (two-pass palette):
+  ```bash
+  ffmpeg -i dist/demo.mp4 -vf "fps=15,scale=640:-1:flags=lanczos,palettegen" palette.png
+  ffmpeg -i dist/demo.mp4 -i palette.png -filter_complex "fps=15,scale=640:-1:flags=lanczos[x];[x][1:v]paletteuse" dist/demo.gif
+  ```
 
-The full 60fps virtual-clock + offline-synth + ffprobe-gated pipeline lives in the goneIdle repo (`scripts/record-trailers.mjs`, `docs/trailer-production-directive.md`); `recordHtml()` stays minimal. The v0.2 spec (`docs/superpowers/specs/2026-04-15-html-to-video-v0.2-audio.md`) tracks absorbing its audio half here.
-
-## GIF (two-pass palette)
-
-```bash
-ffmpeg -i output/video.mp4 -vf "fps=15,scale=640:-1:flags=lanczos,palettegen" palette.png
-ffmpeg -i output/video.mp4 -i palette.png -filter_complex "fps=15,scale=640:-1:flags=lanczos[x];[x][1:v]paletteuse" output/demo.gif
-```
+Also exported: `runCli(argv, { stdout, stderr })` (returns the exit code) and `findOnPath`, re-exported from the shared preflight helper for v0.2 callers.
