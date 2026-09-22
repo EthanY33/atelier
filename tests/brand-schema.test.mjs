@@ -1,12 +1,11 @@
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
-import Ajv from 'ajv/dist/2020.js';
-import addFormats from 'ajv-formats';
+import { Ajv2020 as Ajv, addFormats } from './helpers/plugin-deps.mjs';
 import { describe, it, expect } from 'vitest';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const schemaPath = join(__dirname, '..', 'schemas', 'brand.schema.json');
+const schemaPath = join(__dirname, '..', 'plugins', 'atelier', 'schemas', 'brand.schema.json');
 const schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
 
 const ajv = new Ajv({ strict: false, allErrors: true });

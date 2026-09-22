@@ -9,8 +9,17 @@ coverage/
 Thumbs.db
 # Test artifacts
 tests/**/tmp/
-examples/fixtures/output/
+# `npm run demo` / `atelier demo` output
+.atelier-demo/
+atelier-demo/
 # OS + editor
 .vscode/
 .idea/
 *.swp
+# Local Claude Code settings
+.claude/settings.local.json
+
+# thryv-onboard skill scratch (recon notes, draft CLAUDE.md, onboarding questions)
+.thryv-onboard/
+# Serena MCP per-project metadata
+.serena/

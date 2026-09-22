@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkBinary, checkNodeModule, runPreflight } from '../scripts/preflight.mjs';
+import { checkBinary, checkNodeModule, runPreflight } from '../plugins/atelier/lib/preflight.mjs';
 
 describe('preflight', () => {
   it('checkBinary("node", ["--version"]) returns ok:true and a version matching /^v\\d+/', async () => {
@@ -13,8 +13,8 @@ describe('preflight', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('checkNodeModule("vitest") returns ok:true', async () => {
-    const result = await checkNodeModule('vitest');
+  it('checkNodeModule("sharp") resolves a plugin dependency', async () => {
+    const result = await checkNodeModule('sharp');
     expect(result.ok).toBe(true);
   });
 

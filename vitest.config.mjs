@@ -6,11 +6,13 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
+      // Gate the code that ships in the plugin. The demo runner and the
+      // repo-level asset-build scripts are exercised end to end, not unit
+      // tested, so they stay out of the denominator.
       include: [
         'plugins/atelier/skills/**/*.mjs',
-        'scripts/**/*.mjs'
+        'plugins/atelier/lib/**/*.mjs',
       ],
-      exclude: ['scripts/run-demo.mjs'],
       thresholds: {
         lines: 70,
         functions: 70,

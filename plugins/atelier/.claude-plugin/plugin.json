@@ -1,0 +1,17 @@
+{
+  "name": "atelier",
+  "version": "1.0.0",
+  "description": "Design automation around one brand file: tokens, social cards, icons, responsive images, video, and accessibility plus runtime-UX audits.",
+  "author": {
+    "name": "Ethan Yucetepe",
+    "url": "https://github.com/EthanY33"
+  },
+  "homepage": "https://github.com/EthanY33/atelier",
+  "repository": "https://github.com/EthanY33/atelier",
+  "license": "MIT",
+  "keywords": [
+    "design", "brand", "design-tokens", "tailwind", "figma", "open-graph",
+    "favicons", "responsive-images", "accessibility", "wcag", "core-web-vitals",
+    "inp", "playwright", "video"
+  ]
+}

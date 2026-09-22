@@ -1,11 +1,26 @@
 {
   "name": "atelier",
-  "description": "Design-automation plugin suite for Claude Code.",
-  "owner": "EthanY33",
+  "owner": {
+    "name": "Ethan Yucetepe",
+    "url": "https://github.com/EthanY33"
+  },
+  "metadata": {
+    "description": "atelier: design-automation skills for Claude Code, driven by one brand file."
+  },
   "plugins": [
     {
       "name": "atelier",
-      "source": "./plugins/atelier"
+      "source": "./plugins/atelier",
+      "description": "Eight design-automation skills that share .atelier/brand.json: tokens, OG cards, icons, responsive images, video, and accessibility plus runtime-UX audits.",
+      "author": {
+        "name": "Ethan Yucetepe",
+        "url": "https://github.com/EthanY33"
+      },
+      "homepage": "https://github.com/EthanY33/atelier",
+      "repository": "https://github.com/EthanY33/atelier",
+      "license": "MIT",
+      "category": "design",
+      "keywords": ["design", "brand", "design-tokens", "accessibility", "open-graph", "core-web-vitals"]
     }
   ]
 }

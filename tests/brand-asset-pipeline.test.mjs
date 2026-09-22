@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
-import sharp from 'sharp';
+import { sharp } from './helpers/plugin-deps.mjs';
 import { generateAssets } from '../plugins/atelier/skills/brand-asset-pipeline/index.mjs';
 
 const MARK_SVG = `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#e07a5f"/></svg>`;

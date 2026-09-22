@@ -8,7 +8,8 @@ import addFormats from 'ajv-formats';
 // Schema setup
 // ---------------------------------------------------------------------------
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const schemaPath = join(__dirname, '..', '..', '..', '..', 'schemas', 'brand.schema.json');
+// Resolved inside the plugin so it survives the marketplace install copy.
+const schemaPath = join(__dirname, '..', '..', 'schemas', 'brand.schema.json');
 const schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
 
 const ajv = new Ajv({ strict: false, allErrors: true });

@@ -1,35 +1,32 @@
 {
   "name": "atelier",
-  "version": "0.2.1",
-  "description": "Design-automation plugin for Claude Code — seven skills around a shared brand source of truth.",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Design-automation plugin for Claude Code: eight skills around one brand file.",
   "type": "module",
-  "private": false,
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/EthanY33/atelier.git"
   },
-  "author": "EthanY33",
+  "author": "Ethan Yucetepe",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22"
   },
   "scripts": {
+    "postinstall": "npm ci --prefix plugins/atelier --no-audit --no-fund",
+    "setup:browsers": "npm exec --prefix plugins/atelier -- playwright install chromium",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint:schemas": "node scripts/validate-schemas.mjs",
-    "demo": "node scripts/run-demo.mjs",
+    "check:versions": "node scripts/check-versions.mjs",
+    "smoke:plugin": "node scripts/smoke-installed-plugin.mjs",
+    "demo": "node plugins/atelier/bin/atelier demo --out .atelier-demo",
     "demo:gif": "node scripts/build-demo-gif.mjs"
   },
-  "dependencies": {
-    "ajv": "8.18.0",
-    "ajv-formats": "3.0.1",
-    "sharp": "0.34.5",
-    "playwright": "1.59.1",
-    "@axe-core/playwright": "4.11.1"
-  },
   "devDependencies": {
-    "vitest": "3.2.4",
-    "@vitest/coverage-v8": "3.2.4"
+    "@vitest/coverage-v8": "5.0.1",
+    "vitest": "5.0.1"
   }
 }

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
-import sharp from 'sharp';
+import { sharp } from './helpers/plugin-deps.mjs';
 import {
   processImage,
   buildPictureSnippet,

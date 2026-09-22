@@ -1,0 +1,86 @@
+#!/usr/bin/env node
+/**
+ * atelier: one entry point for every skill.
+ *
+ * Claude Code puts a plugin's bin/ on the Bash tool's PATH, so inside a
+ * session this runs as plain `atelier ...`. Anywhere else:
+ *   node <plugin>/bin/atelier ...
+ */
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
+
+const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const { version } = JSON.parse(readFileSync(join(pluginRoot, 'package.json'), 'utf8'));
+
+const ALIASES = {
+  brand: 'brand-memory',
+  tokens: 'design-token-sync',
+  og: 'og-card-generator',
+  images: 'responsive-image-pipeline',
+  assets: 'brand-asset-pipeline',
+  a11y: 'accessibility-design-audit',
+  video: 'html-to-video',
+  ux: 'runtime-ux-audit',
+};
+
+const USAGE = `atelier ${version}: design automation around one brand file
+
+Usage:
+  atelier doctor                 check Node, dependencies, Chromium, ffmpeg, brand.json
+  atelier demo [--out <dir>]     run every skill on bundled fixtures (default ./atelier-demo)
+  atelier <skill> [args...]      run a skill's CLI; add --help for its options
+
+Skills (alias -> skill):
+${Object.entries(ALIASES).map(([a, s]) => `  ${a.padEnd(8)} ${s}`).join('\n')}
+
+Docs: https://github.com/EthanY33/atelier`;
+
+const [cmd, ...rest] = process.argv.slice(2);
+
+async function main() {
+  if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
+    console.log(USAGE);
+    return 0;
+  }
+  if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
+    console.log(version);
+    return 0;
+  }
+  if (cmd === 'doctor') {
+    const { runDoctor, formatDoctor } = await import('../lib/doctor.mjs');
+    const { values } = parseArgs({ args: rest, options: { json: { type: 'boolean' }, 'no-browser': { type: 'boolean' } } });
+    const result = await runDoctor({ launchBrowser: !values['no-browser'] });
+    console.log(values.json ? JSON.stringify(result, null, 2) : formatDoctor(result));
+    return result.ok ? 0 : 1;
+  }
+  if (cmd === 'demo') {
+    const { runDemo } = await import('../scripts/run-demo.mjs');
+    const { values } = parseArgs({ args: rest, options: { out: { type: 'string', default: 'atelier-demo' } } });
+    await runDemo({ outDir: values.out });
+    return 0;
+  }
+
+  const skill = ALIASES[cmd] ?? cmd;
+  const entry = join(pluginRoot, 'skills', skill, 'index.mjs');
+  if (!/^[a-z0-9-]+$/.test(skill) || !existsSync(entry)) {
+    console.error(`atelier: unknown command "${cmd}"\n\n${USAGE}`);
+    return 2;
+  }
+  return await new Promise((resolve) => {
+    const child = spawn(process.execPath, [entry, ...rest], { stdio: 'inherit', shell: false });
+    child.on('error', (err) => { console.error(`atelier: ${err.message}`); resolve(1); });
+    child.on('close', (code, signal) => resolve(signal ? 1 : code ?? 1));
+  });
+}
+
+main().then(
+  (code) => process.exit(code),
+  async (err) => {
+    const { formatError } = await import('../lib/preflight.mjs');
+    console.error(formatError(err));
+    process.exit(1);
+  },
+);

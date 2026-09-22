@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/EthanY33/atelier/schemas/brand.schema.json",
+  "$id": "https://raw.githubusercontent.com/EthanY33/atelier/main/plugins/atelier/schemas/brand.schema.json",
   "title": "Atelier Brand Memory",
   "description": "Brand source of truth for the atelier design-automation plugin.",
   "type": "object",

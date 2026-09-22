@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, it, expect, afterEach } from 'vitest';
-import sharp from 'sharp';
+import { sharp } from './helpers/plugin-deps.mjs';
 import { generateCard } from '../plugins/atelier/skills/og-card-generator/index.mjs';
 
 const brand = {
