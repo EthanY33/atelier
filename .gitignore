@@ -23,3 +23,6 @@ atelier-demo/
 .thryv-onboard/
 # Serena MCP per-project metadata
 .serena/
+
+# Storyboard images are copied in by scripts/build-demo-gif.mjs
+demos/storyboard/assets/

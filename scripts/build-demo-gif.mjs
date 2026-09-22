@@ -1,140 +1,90 @@
 #!/usr/bin/env node
-// Build demos/overview.{mp4,webp,gif} from demos/storyboard/index.html.
-// Pipeline: ensure fixtures -> record MP4 -> copy MP4 to demos/ -> encode WebP -> palettegen/paletteuse GIF.
-// Three outputs so README can prefer animated WebP (best GitHub rendering) with GIF as a fallback for crawlers/forks.
+/**
+ * build-demo-gif.mjs: render the README overview clip with atelier itself.
+ *
+ *   1. `atelier demo` into a temp dir, for real skill output (OG card, icons)
+ *   2. copy demos/storyboard/ plus those images into a temp stage
+ *   3. record the stage with html-to-video (virtual clock, frame-exact)
+ *   4. write demos/overview.mp4 and an animated demos/overview.webp
+ *
+ * Usage: npm run demo:gif
+ */
+import { spawn } from 'node:child_process';
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { spawn, spawnSync } from 'child_process';
-import { existsSync, mkdirSync, rmSync, mkdtempSync, copyFileSync } from 'fs';
-import { tmpdir } from 'os';
-import { join, dirname } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
-import { recordHtml, findOnPath } from '../plugins/atelier/skills/html-to-video/index.mjs';
+import { runDemo } from '../plugins/atelier/scripts/run-demo.mjs';
+import { recordHtml } from '../plugins/atelier/skills/html-to-video/index.mjs';
+import { ensureFfmpeg, formatError } from '../plugins/atelier/lib/preflight.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = join(__dirname, '..');
-
-const STORYBOARD_HTML = join(REPO_ROOT, 'demos', 'storyboard', 'index.html');
-const FIXTURE_OG = join(REPO_ROOT, 'examples', 'fixtures', 'output', 'og', 'home.png');
-const FIXTURE_COVER = join(REPO_ROOT, 'examples', 'fixtures', 'output', 'brand', 'og-cover.png');
-const OUT_GIF = join(REPO_ROOT, 'demos', 'overview.gif');
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const STORYBOARD = join(REPO_ROOT, 'demos', 'storyboard');
 const OUT_MP4 = join(REPO_ROOT, 'demos', 'overview.mp4');
 const OUT_WEBP = join(REPO_ROOT, 'demos', 'overview.webp');
 
-const DURATION_SECONDS = 17.5;
-const FPS = 15;
-const WIDTH = 1280;
-const HEIGHT = 720;
-const GIF_WIDTH = 720; // scaled down for size
+const PANELS = 10;
+const SLOT_SECONDS = 2.4;
+const DURATION = PANELS * SLOT_SECONDS;
+const FPS = 30;
+const WEBP_FPS = 20;
+const WEBP_WIDTH = 960;
 
-const FFMPEG = findOnPath('ffmpeg');
+const IMAGES = [
+  ['og/home.png', 'og-home.png'],
+  ['brand/android-chrome-192.png', 'android-chrome-192.png'],
+  ['brand/apple-touch-icon.png', 'apple-touch-icon.png'],
+  ['brand/favicon-64.png', 'favicon-64.png'],
+  ['brand/favicon-32.png', 'favicon-32.png'],
+  ['brand/favicon-16.png', 'favicon-16.png'],
+  ['brand/twitter-cover.png', 'twitter-cover.png'],
+];
 
-function runFfmpeg(args) {
+function ffmpeg(bin, args) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(FFMPEG, args);
+    const proc = spawn(bin, args, { shell: false, windowsHide: true });
     const err = [];
     proc.stderr.on('data', (c) => err.push(c));
-    proc.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exited ${code}:\n${Buffer.concat(err).toString('utf8')}`));
-    });
     proc.on('error', reject);
+    proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}:\n${Buffer.concat(err).toString('utf8').slice(-2000)}`))));
   });
 }
 
-function ffmpegAvailable() {
-  return FFMPEG != null;
-}
-
 async function main() {
-  if (!ffmpegAvailable()) {
-    console.error('ERROR: ffmpeg not found in PATH.');
-    console.error('Install: choco install ffmpeg -y (Windows) | brew install ffmpeg (macOS) | apt install ffmpeg (Linux)');
-    process.exit(1);
-  }
-
-  if (!existsSync(STORYBOARD_HTML)) {
-    console.error(`ERROR: storyboard not found: ${STORYBOARD_HTML}`);
-    process.exit(1);
-  }
-
-  if (!existsSync(FIXTURE_OG) || !existsSync(FIXTURE_COVER)) {
-    console.log('Fixture outputs missing; running npm run demo to regenerate...');
-    const r = spawnSync('npm', ['run', 'demo'], { stdio: 'inherit', cwd: REPO_ROOT, shell: true });
-    if (r.status !== 0) {
-      console.error('ERROR: npm run demo failed.');
-      process.exit(1);
-    }
-  }
-
-  mkdirSync(dirname(OUT_GIF), { recursive: true });
-
-  const workDir = mkdtempSync(join(tmpdir(), 'atelier-gif-'));
-  const mp4Path = join(workDir, 'storyboard.mp4');
-  const palettePath = join(workDir, 'palette.png');
-
+  const bin = ensureFfmpeg();
+  const work = mkdtempSync(join(tmpdir(), 'atelier-overview-'));
   try {
-    console.log(`Recording MP4 (${DURATION_SECONDS}s @ ${FPS}fps, ${WIDTH}x${HEIGHT})...`);
-    const storyboardUrl = pathToFileURL(STORYBOARD_HTML).href;
-    await recordHtml({
-      url: storyboardUrl,
-      duration: DURATION_SECONDS,
-      width: WIDTH,
-      height: HEIGHT,
-      fps: FPS,
-      outPath: mp4Path,
-    });
-    console.log(`  wrote ${mp4Path}`);
+    const demoOut = join(work, 'demo');
+    await runDemo({ outDir: demoOut });
 
-    console.log(`Copying MP4 to ${OUT_MP4}...`);
-    copyFileSync(mp4Path, OUT_MP4);
+    const stage = join(work, 'stage');
+    cpSync(STORYBOARD, stage, { recursive: true });
+    mkdirSync(join(stage, 'assets'), { recursive: true });
+    for (const [from, to] of IMAGES) copyFileSync(join(demoOut, from), join(stage, 'assets', to));
 
-    // Animated WebP requires libwebp_anim + explicit -pix_fmt rgba + -r <fps>
-    // (output rate). Without those, libwebp drops to a single frame or emits
-    // a file ffmpeg itself can't re-decode. Verified 2026-04-19 on ffmpeg 8.1.
-    console.log(`Encoding animated WebP (${GIF_WIDTH}px wide @ ${FPS}fps)...`);
-    await runFfmpeg([
-      '-y',
-      '-i', mp4Path,
-      '-vf', `fps=${FPS},scale=${GIF_WIDTH}:-1:flags=lanczos`,
-      '-c:v', 'libwebp_anim',
-      '-pix_fmt', 'rgba',
-      '-lossless', '0',
-      '-compression_level', '6',
-      '-q:v', '75',
-      '-loop', '0',
-      '-preset', 'picture',
-      '-an',
-      '-r', String(FPS),
-      OUT_WEBP,
-    ]);
-    console.log(`  wrote ${OUT_WEBP}`);
+    const mp4 = join(work, 'overview.mp4');
+    console.log(`\nRecording ${DURATION}s at ${FPS}fps, 1280x720...`);
+    await recordHtml({ url: pathToFileURL(join(stage, 'index.html')).href, duration: DURATION, fps: FPS, width: 1280, height: 720, outPath: mp4 });
+    copyFileSync(mp4, OUT_MP4);
 
-    const scaleFilter = `fps=${FPS},scale=${GIF_WIDTH}:-1:flags=lanczos`;
-
-    console.log('Generating palette (pass 1 of 2)...');
-    await runFfmpeg([
-      '-y',
-      '-i', mp4Path,
-      '-vf', `${scaleFilter},palettegen=stats_mode=diff`,
-      palettePath,
+    // Animated WebP needs libwebp_anim, rgba and an explicit output rate, or
+    // ffmpeg writes a single frame.
+    await ffmpeg(bin, [
+      '-y', '-i', mp4,
+      '-vf', `fps=${WEBP_FPS},scale=${WEBP_WIDTH}:-1:flags=lanczos`,
+      '-c:v', 'libwebp_anim', '-pix_fmt', 'rgba', '-lossless', '0',
+      '-compression_level', '6', '-q:v', '78', '-loop', '0', '-preset', 'picture',
+      '-an', '-r', String(WEBP_FPS), OUT_WEBP,
     ]);
 
-    console.log('Rendering GIF with palette (pass 2 of 2)...');
-    await runFfmpeg([
-      '-y',
-      '-i', mp4Path,
-      '-i', palettePath,
-      '-lavfi', `${scaleFilter}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`,
-      OUT_GIF,
-    ]);
-
-    console.log(`GIF written to: ${OUT_GIF}`);
+    for (const f of [OUT_MP4, OUT_WEBP]) console.log(`wrote ${f} (${(statSync(f).size / 1024).toFixed(0)} KB)`);
   } finally {
-    rmSync(workDir, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
   }
 }
 
-main().catch((e) => {
-  console.error(e);
+main().catch((err) => {
+  console.error(formatError(err));
   process.exit(1);
 });
