@@ -1,36 +1,76 @@
 ---
 name: responsive-image-pipeline
-description: Convert source PNGs/JPGs into AVIF and WebP variants at multiple widths, emit a base64 LQIP placeholder, and generate a copy-pasteable <picture> snippet. SHA-cached, so reruns on unchanged sources are no-ops. Use for site images, gallery screenshots, hero art, srcset/page-weight work, or reprocessing after swapping an asset.
+description: Resize PNG/JPG/WebP images into AVIF and WebP srcset variants (EXIF-rotated, never upscaled), a fallback <img> file and a base64 LQIP placeholder, then print a copy-paste <picture> snippet with truthful srcset widths. Cached per source. Use for site images, hero art, gallery screenshots, srcset, page-weight or LCP work, or reprocessing after swapping an asset.
 ---
 
 ## Run
 
-No CLI entry; call the API (from a shell, via `node -e` dynamic `import()`).
+CLI (one or more files, `file://` URLs, or folders; folders are not recursive):
 
-```js
-import { processImage, buildPictureSnippet } from './plugins/atelier/skills/responsive-image-pipeline/index.mjs';
-
-const { cached, variants, lqip } = await processImage({
-  input: 'public/img/hero.png',
-  outDir: 'public/img/processed',
-  widths: [480, 768, 1280, 1920], // default
-  lqipWidth: 24,                  // default
-}); // cached === true: source unchanged, skipped
-
-const html = buildPictureSnippet({
-  basename: 'hero',
-  widths: [480, 768, 1280, 1920],
-  alt: 'TideWane hero',
-  fallbackFormat: 'png', // default
-  sizes: '100vw',        // default
-});
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" images src/hero.jpg --out public/img --alt "Harbor at dusk" --base-url /img/ --loading eager
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" images src/gallery --out public/img/gallery --widths 480,960 --json
 ```
 
-## Output files
+JS API (`pathToFileURL` + `String.raw` keep Windows paths importable):
 
-- `<name>-<w>.avif`: quality 60, effort 4
-- `<name>-<w>.webp`: quality 78
-- `<name>-lqip.txt`: `data:image/jpeg;base64,…` (24 px wide, quality 40)
-- `<name>.cache`: SHA-256 fingerprint; delete to force regeneration
+```bash
+node --input-type=module -e '
+const { pathToFileURL } = await import("node:url");
+const { processImage, buildPictureSnippet } = await import(pathToFileURL(String.raw`${CLAUDE_SKILL_DIR}/index.mjs`).href);
+const result = await processImage({ input: "src/hero.jpg", outDir: "public/img" });
+console.log(buildPictureSnippet({ ...result, alt: "Harbor at dusk", baseUrl: "/img/" }));
+'
+```
 
-Snippet: `<picture>` with AVIF then WebP `<source srcset="hero-480.avif 480w, …" sizes="100vw">` and fallback `<img src="hero-1920.png" alt="…" loading="lazy" decoding="async">`. For progressive loading, inline the LQIP data URL as the placeholder: `<img style="background-image:url(data:image/jpeg;base64,…)" ...>`.
+Always build the snippet from the `processImage` result so its widths, formats and fallback match the files on disk.
+
+## Options
+
+CLI flag / API option, default:
+
+- `--out <dir>` / `outDir`: output folder (required).
+- `--widths` / `widths`: `480,768,1280,1920`. Widths above the source are skipped and the source width becomes the top size.
+- `--formats` / `formats`: `avif,webp`. `<source>` formats, best first; also `jpg`, `png`.
+- `--fallback` / `fallback`: `auto` (png for transparent, PNG or GIF sources, jpg otherwise). Also `jpg`, `png`, `webp`, `avif`, `none` (API: `false`).
+- `--lqip-width` / `lqipWidth`: `24`.
+- `--name` / `name`: output file stem, default the input name without extension. CLI: one input only.
+- API only: `quality` `{ avif: 60, webp: 78, jpg: 80 }`; `background` `#ffffff` (transparent pixels are flattened onto it for JPEG output).
+- Snippet (`buildPictureSnippet`): `--alt` / `alt` (default empty, meaning decorative), `--sizes` / `sizes` (`100vw`), `--base-url` / `baseUrl` (URL prefix, default bare file names), `--loading` / `loading` (`lazy`; use `eager` for the hero/LCP image), `fallbackFormat` and `formats` (taken from the result).
+- `--json`: print one JSON object per input (the result plus `snippet`) instead of text.
+
+## Output
+
+For each source `<name>` in the output folder:
+
+- `<name>-<w>.avif` (quality 60, effort 4) and `<name>-<w>.webp` (quality 78) for each produced width.
+- `<name>-<top>.jpg` or `.png`: fallback at the largest produced width (skipped when the fallback format is already a variant).
+- `<name>-lqip.txt`: data URL of a tiny placeholder: JPEG, or WebP with alpha for transparent sources.
+- `<name>.cache`: JSON manifest (source, settings hash, files). Delete it to force regeneration.
+
+`processImage` resolves to `{ cached, variants, lqip, basename, widths, skippedWidths, formats, fallback, fallbackFormat, lqipPath, source: { path, format, width, height, transparent }, images: [{ path, format, width, height }] }`. `variants` lists the `<source>` files only.
+
+Snippet (a 1000 px wide `Hero Image.jpg`, default widths):
+
+```html
+<picture>
+  <source type="image/avif" srcset="Hero%20Image-480.avif 480w, Hero%20Image-768.avif 768w, Hero%20Image-1000.avif 1000w" sizes="100vw">
+  <source type="image/webp" srcset="Hero%20Image-480.webp 480w, Hero%20Image-768.webp 768w, Hero%20Image-1000.webp 1000w" sizes="100vw">
+  <img src="Hero%20Image-1000.jpg" alt="" loading="lazy" decoding="async">
+</picture>
+```
+
+## Exit codes
+
+- `0`: every input was processed or was already cached.
+- `2`: usage error (usage printed to stderr), or at least one input failed (`atelier: <reason>` on stderr; the other inputs still run).
+
+## Notes
+
+- EXIF orientation is applied before resizing. Output files carry no EXIF or GPS metadata.
+- A rerun is a cache hit only when the input bytes, every option, the pipeline version and the sharp version match and every output file still exists; otherwise it regenerates.
+- One output name per source: in a single CLI run, inputs sharing a stem get distinct names (`hero-png`, `hero-jpg`, plus a short hash when the extension matches too). Across runs, `processImage` refuses to overwrite files that belong to another existing source; pass `--name` or another `--out`.
+- File names keep the source stem, spaces included; the snippet URL-encodes them and HTML-escapes every attribute.
+- Progressive loading: put the LQIP on the `<img>` as `style="background-size:cover;background-image:url(<lqip>)"`. For transparent images, clear it once the image loads, or it shows through.
+- Only the first frame of an animated GIF or WebP is used. SVG is rasterized at its intrinsic size, so prefer brand-asset-pipeline for logos.
+- Remote URLs are not fetched: download the image first.
