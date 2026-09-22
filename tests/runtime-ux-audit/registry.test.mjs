@@ -12,7 +12,7 @@ import { AREAS, toShortRuleId } from '../../plugins/atelier/skills/runtime-ux-au
 import { REPO_ROOT, SKILL_DIR } from './helpers.mjs';
 
 const SKILL_MD = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
-const SPEC = readFileSync(join(REPO_ROOT, 'docs', 'superpowers', 'specs', '2026-04-17-runtime-ux-skill.md'), 'utf8').replace(/\r\n/g, '\n');
+const SPEC = readFileSync(join(REPO_ROOT, 'docs', 'specs', 'runtime-ux-audit.md'), 'utf8').replace(/\r\n/g, '\n');
 
 /** Rows of the per-area rule tables in SKILL.md: { id, dynamic, http, severity }. */
 function documentedRules() {

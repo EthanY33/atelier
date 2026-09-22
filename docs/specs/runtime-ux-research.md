@@ -344,4 +344,4 @@ Four themes recur across all four areas and determine the shape of the next skil
 
 4. **Measurement must be separable from prescription.** INP estimation via Playwright trace is expensive and noisy; static checks (viewport meta, `100vh` without `dvh`, `<dialog>` without label) are fast and deterministic. The skill should stratify: fast static pass runs in CI, dynamic pass opt-in.
 
-Detailed skill proposal: see `docs/superpowers/specs/2026-04-17-runtime-ux-skill.md`.
+Detailed skill proposal: see [runtime-ux-audit.md](runtime-ux-audit.md).

@@ -1,6 +1,6 @@
 # runtime-ux-audit v0.1 — Runtime-UX quality skill
 
-**Status:** Implemented in atelier 1.0 as `plugins/atelier/skills/runtime-ux-audit/`. Filed 2026-04-17. Research base: [`docs/research/2026-04-17-runtime-ux-research.md`](../../research/2026-04-17-runtime-ux-research.md). Where the shipped skill differs from this spec, see [Implementation deviations (1.0)](#implementation-deviations-10) at the end.
+**Status:** Implemented in atelier 1.0 as `plugins/atelier/skills/runtime-ux-audit/`. Filed 2026-04-17. Research base: [`runtime-ux-research.md`](runtime-ux-research.md). Where the shipped skill differs from this spec, see [Implementation deviations (1.0)](#implementation-deviations-10) at the end.
 
 ## Problem
 
@@ -68,9 +68,8 @@ different input contract (template name, not a URL).
   no infrastructure.
 - **The research doc contains ~50 concrete detectable anti-patterns.** That is
   enough work for one skill.
-- **If scaffolds are valuable later,** the natural home is inside
-  `frontend-design` (the superpowers skill that generates component code),
-  not atelier. Atelier's charter is brand consistency and artifact generation
+- **If scaffolds are valuable later,** the natural home is a
+  component-generation tool, not atelier. Atelier's charter is brand consistency and artifact generation
   *from brand*, not generic component authoring.
 
 ### Static vs dynamic checks
