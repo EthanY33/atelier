@@ -105,3 +105,22 @@ jobs:
       # 60 second budget. Nothing from the repo root is visible to the copy.
       - name: Simulate marketplace install and smoke-test every skill
         run: node scripts/smoke-installed-plugin.mjs
+
+  action:
+    name: GitHub Action self-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run the composite action against the bundled example page
+        uses: ./
+        with:
+          target: plugins/atelier/examples/page.html
+          out: action-reports
+
+      - name: Reports were written
+        run: |
+          test -s action-reports/a11y/a11y-report.md
+          test -s action-reports/ux/ux-report.md
+          test -s action-reports/ux/ux-raw.json

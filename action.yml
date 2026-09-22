@@ -1,0 +1,73 @@
+name: atelier audits
+description: Run atelier's accessibility and runtime-UX audits on a page or built HTML file and fail on critical or serious findings.
+author: Ethan Yucetepe
+branding:
+  icon: check-square
+  color: orange
+
+inputs:
+  target:
+    description: URL, file:// URL or path to an HTML file (relative to the workspace).
+    required: true
+  audits:
+    description: Comma-separated audits to run. Any of a11y, ux.
+    default: a11y,ux
+  dynamic:
+    description: Also run runtime-ux-audit's dynamic pass in Chromium (slower).
+    default: 'false'
+  brand:
+    description: Path to a brand.json whose targets and motion sections set the budgets.
+    default: ''
+  out:
+    description: Directory for the reports.
+    default: atelier-reports
+
+outputs:
+  report-dir:
+    description: Directory holding a11y-report.md, ux-report.md and their raw JSON.
+    value: ${{ inputs.out }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '22'
+
+    - name: Install atelier
+      shell: bash
+      run: |
+        npm ci --prefix "$GITHUB_ACTION_PATH/plugins/atelier" --no-audit --no-fund
+        npm exec --prefix "$GITHUB_ACTION_PATH/plugins/atelier" -- playwright install --with-deps chromium
+
+    - name: Run audits
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        AUDITS: ${{ inputs.audits }}
+        DYNAMIC: ${{ inputs.dynamic }}
+        BRAND: ${{ inputs.brand }}
+        OUT: ${{ inputs.out }}
+      run: |
+        set -u
+        cli="$GITHUB_ACTION_PATH/plugins/atelier/bin/atelier"
+        status=0
+        IFS=',' read -ra list <<< "$AUDITS"
+        for audit in "${list[@]}"; do
+          audit="$(echo "$audit" | tr -d '[:space:]')"
+          case "$audit" in
+            a11y)
+              node "$cli" a11y "$TARGET" --out "$OUT/a11y" || status=$(( $? > status ? $? : status )) ;;
+            ux)
+              args=("$TARGET" --out "$OUT/ux")
+              [ "$DYNAMIC" = "true" ] && args+=(--dynamic)
+              [ -n "$BRAND" ] && args+=(--brand "$BRAND")
+              node "$cli" ux "${args[@]}" || status=$(( $? > status ? $? : status )) ;;
+            "") ;;
+            *) echo "Unknown audit: $audit (expected a11y or ux)"; exit 2 ;;
+          esac
+        done
+        for f in "$OUT"/*/*-report.md; do
+          [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
+        done
+        exit "$status"
