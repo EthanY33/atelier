@@ -2,12 +2,13 @@
  * `atelier doctor`: check everything the skills need, in one place, and say
  * exactly how to fix what is missing.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { findOnPath, launchChromium, PreflightError } from './preflight.mjs';
+import { readJsonFile } from './io.mjs';
+import { checkBinary, ensureFfmpeg, launchChromium, PreflightError } from './preflight.mjs';
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
@@ -17,6 +18,22 @@ const MIN_NODE_MAJOR = 22;
  * @typedef {{ name: string, status: 'ok'|'warn'|'fail', detail: string, fix?: string }} Check
  */
 
+// A dependency counts as installed when either resolver finds it, so an
+// ESM-only package (no "require" export) is not reported missing.
+function resolves(name) {
+  try {
+    require.resolve(name);
+    return true;
+  } catch {
+    try {
+      import.meta.resolve(name);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 /**
  * Run every check.
  * @param {{ cwd?: string, launchBrowser?: boolean }} [opts]
@@ -24,7 +41,7 @@ const MIN_NODE_MAJOR = 22;
  * @returns {Promise<{ ok: boolean, version: string, pluginRoot: string, checks: Check[] }>}
  */
 export async function runDoctor({ cwd = process.cwd(), launchBrowser = true } = {}) {
-  const pkg = JSON.parse(readFileSync(join(pluginRoot, 'package.json'), 'utf8'));
+  const pkg = readJsonFile(join(pluginRoot, 'package.json'));
   const checks = [];
 
   const major = Number(process.versions.node.split('.')[0]);
@@ -33,14 +50,7 @@ export async function runDoctor({ cwd = process.cwd(), launchBrowser = true } = 
     : { name: 'node', status: 'fail', detail: `v${process.versions.node}; atelier needs ${MIN_NODE_MAJOR}+`, fix: 'Install Node.js 22 LTS or newer from https://nodejs.org' });
 
   const deps = Object.keys(pkg.dependencies ?? {});
-  const missing = deps.filter((d) => {
-    try {
-      require.resolve(d);
-      return false;
-    } catch {
-      return true;
-    }
-  });
+  const missing = deps.filter((d) => !resolves(d));
   checks.push(missing.length === 0
     ? { name: 'dependencies', status: 'ok', detail: `${deps.length} of ${deps.length} resolve` }
     : { name: 'dependencies', status: 'fail', detail: `missing: ${missing.join(', ')}`, fix: `Reinstall the plugin (/plugin install atelier@atelier), or run: npm ci --prefix "${pluginRoot}"` });
@@ -59,18 +69,15 @@ export async function runDoctor({ cwd = process.cwd(), launchBrowser = true } = 
       await browser.close();
       checks.push({ name: 'chromium', status: 'ok', detail: `${version} (og-card, a11y, video, ux --dynamic)` });
     } catch (err) {
-      checks.push({ name: 'chromium', status: 'warn', detail: err instanceof PreflightError ? err.message : firstLine(err), fix: err.fix ?? 'npx playwright install chromium' });
+      checks.push({ name: 'chromium', status: 'warn', detail: err instanceof PreflightError ? err.message : firstLine(err), fix: err?.fix ?? 'npx playwright install chromium' });
     }
   }
 
-  const ffmpeg = findOnPath('ffmpeg');
-  checks.push(ffmpeg
-    ? { name: 'ffmpeg', status: 'ok', detail: ffmpeg }
-    : { name: 'ffmpeg', status: 'warn', detail: 'not on PATH (only html-to-video needs it)', fix: installFfmpegHint() });
+  checks.push(await ffmpegCheck());
 
   const brandPath = join(cwd, '.atelier', 'brand.json');
   if (!existsSync(brandPath)) {
-    checks.push({ name: 'brand.json', status: 'warn', detail: `none at ${brandPath}`, fix: 'Run /brand-init in Claude Code, or: atelier brand init --help' });
+    checks.push({ name: 'brand.json', status: 'warn', detail: `none at ${brandPath}`, fix: 'Run /brand-init in Claude Code, or see: atelier brand --help' });
   } else {
     try {
       const { loadBrand } = await import(pathToFileURL(join(pluginRoot, 'skills', 'brand-memory', 'index.mjs')).href);
@@ -84,6 +91,22 @@ export async function runDoctor({ cwd = process.cwd(), launchBrowser = true } = 
   return { ok: checks.every((c) => c.status !== 'fail'), version: pkg.version, pluginRoot, checks };
 }
 
+// ffmpeg is optional (only html-to-video needs it), so problems are warnings.
+async function ffmpegCheck() {
+  let path;
+  try {
+    path = ensureFfmpeg();
+  } catch (err) {
+    return { name: 'ffmpeg', status: 'warn', detail: 'not on PATH (only html-to-video needs it)', fix: err.fix };
+  }
+  const run = await checkBinary(path, ['-version']);
+  if (!run.ok) {
+    return { name: 'ffmpeg', status: 'warn', detail: `${path} does not run: ${run.error}`, fix: 'Reinstall ffmpeg, or put a working ffmpeg first on PATH' };
+  }
+  const version = /ffmpeg version (\S+)/.exec(run.version)?.[1];
+  return { name: 'ffmpeg', status: 'ok', detail: version ? `${version} (${path})` : path };
+}
+
 /**
  * Render doctor results as aligned plain text.
  * @param {Awaited<ReturnType<typeof runDoctor>>} result
@@ -91,7 +114,7 @@ export async function runDoctor({ cwd = process.cwd(), launchBrowser = true } = 
  */
 export function formatDoctor(result) {
   const lines = [`atelier ${result.version} doctor  (${result.pluginRoot})`, ''];
-  const w = Math.max(...result.checks.map((c) => c.name.length));
+  const w = Math.max(0, ...result.checks.map((c) => c.name.length));
   for (const c of result.checks) {
     lines.push(`  ${c.status.padEnd(4)}  ${c.name.padEnd(w)}  ${c.detail}`);
     if (c.fix && c.status !== 'ok') lines.push(`  ${''.padEnd(4)}  ${''.padEnd(w)}  fix: ${c.fix}`);
@@ -102,10 +125,4 @@ export function formatDoctor(result) {
 
 function firstLine(err) {
   return String(err?.message ?? err).split(/\r?\n/)[0];
-}
-
-function installFfmpegHint() {
-  if (process.platform === 'win32') return 'winget install Gyan.FFmpeg';
-  if (process.platform === 'darwin') return 'brew install ffmpeg';
-  return 'sudo apt install ffmpeg';
 }

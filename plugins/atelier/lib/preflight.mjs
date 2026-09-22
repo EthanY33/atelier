@@ -6,9 +6,9 @@
  * actionable message instead of a stack trace.
  */
 import { spawn } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { accessSync, constants as fsConstants, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
 
 const require = createRequire(import.meta.url);
 
@@ -30,52 +30,115 @@ function isFile(p) {
   }
 }
 
+function isExecutable(p) {
+  try {
+    accessSync(p, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// A plain env object (not process.env) is case sensitive, and Windows spells
+// the variable `Path`. Prefer an exact `PATH`, as before, then any casing.
+function pathFromEnv(env, win) {
+  if (env.PATH != null) return String(env.PATH);
+  if (win) {
+    const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
+    if (key && env[key] != null) return String(env[key]);
+  }
+  return env.Path != null ? String(env.Path) : '';
+}
+
 /**
  * Resolve an executable on PATH, the way a shell would, without a shell.
  * On Windows only .exe and .com are returned: .cmd/.bat shims cannot be
- * spawned without `shell: true`, which atelier never uses.
+ * spawned without `shell: true`, which atelier never uses. On other
+ * platforms a file must carry the execute bit. Directories never match.
  *
- * @param {string} name - Bare command name (e.g. 'ffmpeg') or an absolute path.
+ * A name that contains a path separator (absolute, or relative such as
+ * `./bin/ffmpeg`) is checked directly and never searched on PATH. The
+ * current directory is never searched implicitly. `platform` selects the
+ * lookup rules (extensions, execute bit, PATH separator); the filesystem
+ * searched is always the host's.
+ *
+ * @param {string} name - Bare command name (e.g. 'ffmpeg') or a path.
  * @param {{ env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform }} [opts]
  * @returns {string|null} Absolute path, or null when not found.
  */
 export function findOnPath(name, { env = process.env, platform = process.platform } = {}) {
-  if (isAbsolute(name)) return isFile(name) ? name : null;
-  const exts = platform === 'win32' ? ['.exe', '.com', ''] : [''];
-  const pathVar = env.PATH ?? env.Path ?? '';
-  for (let dir of pathVar.split(platform === 'win32' ? ';' : delimiter)) {
-    dir = dir.trim().replace(/^"(.*)"$/, '$1');
+  if (typeof name !== 'string' || name.trim() === '') return null;
+  const win = platform === 'win32';
+  const runnable = (file) => isFile(file) && (win || isExecutable(file));
+  // On Windows a name counts as given only when it already ends in .exe/.com.
+  const candidates = (base) => (!win || /\.(exe|com)$/i.test(base) ? [base] : [`${base}.exe`, `${base}.com`]);
+  const first = (base) => candidates(base).find(runnable) ?? null;
+
+  if (isAbsolute(name)) return first(name);
+  if (win ? /[\\/]/.test(name) : name.includes('/')) return first(resolve(name));
+
+  for (let dir of pathFromEnv(env, win).split(win ? ';' : delimiter)) {
+    // Windows drops every double quote in a PATH entry ("C:\Program Files\x").
+    dir = win ? dir.replaceAll('"', '').trim() : dir.trim().replace(/^"(.*)"$/, '$1');
     if (!dir) continue;
-    for (const ext of exts) {
-      // On Windows, a bare name only counts when it already carries .exe/.com.
-      if (platform === 'win32' && ext === '' && !/\.(exe|com)$/i.test(name)) continue;
-      const candidate = join(dir, name + ext);
-      if (isFile(candidate)) return candidate;
-    }
+    const hit = first(join(dir, name));
+    if (hit) return hit;
   }
   return null;
 }
 
+const firstLine = (s) => s.trim().split(/\r?\n/)[0]?.trim() ?? '';
+const MAX_OUTPUT = 64 * 1024;
+
 /**
- * Check whether a CLI binary is available and runs.
+ * Check whether a CLI binary is available and runs. Never uses a shell:
+ * arguments reach the binary literally.
  * @param {string} cmd - Command name or absolute path (e.g. 'node', 'ffmpeg').
  * @param {string[]} [args=['--version']] - Arguments; ffmpeg wants ['-version'].
+ * @param {{ env?: NodeJS.ProcessEnv, timeoutMs?: number }} [opts]
+ *   env: environment used to resolve `cmd` and passed to the child (default process.env).
+ *   timeoutMs: kill the child and report failure after this long (default 15000).
  * @returns {Promise<{ ok: boolean, path?: string, version?: string, error?: string }>}
  */
-export function checkBinary(cmd, args = ['--version']) {
-  const path = findOnPath(cmd);
+export function checkBinary(cmd, args = ['--version'], { env = process.env, timeoutMs = 15_000 } = {}) {
+  const path = findOnPath(cmd, { env });
   if (!path) return Promise.resolve({ ok: false, error: `${cmd} not found on PATH` });
   return new Promise((resolve) => {
-    let out = '';
+    let stdout = '';
+    let stderr = '';
     let settled = false;
-    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
-    const child = spawn(path, args, { shell: false, windowsHide: true, timeout: 15_000 });
-    child.stdout?.on('data', (c) => { out += c; });
-    child.stderr?.on('data', (c) => { out += c; });
+    let timer;
+    const done = (r) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(r);
+    };
+    let child;
+    try {
+      child = spawn(path, args, { shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      // spawn throws synchronously for some inputs (e.g. EINVAL on Windows).
+      done({ ok: false, path, error: err.message });
+      return;
+    }
+    // Settle on the timeout itself: a grandchild holding the pipes open would
+    // otherwise delay 'close' indefinitely.
+    timer = setTimeout(() => {
+      child.kill();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      done({ ok: false, path, error: `timed out after ${timeoutMs} ms` });
+    }, timeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (c) => { if (stdout.length < MAX_OUTPUT) stdout += c; });
+    child.stderr.on('data', (c) => { if (stderr.length < MAX_OUTPUT) stderr += c; });
     child.on('error', (err) => done({ ok: false, path, error: err.message }));
-    child.on('close', (code) => {
-      const first = out.trim().split(/\r?\n/)[0]?.trim() ?? '';
-      done(code === 0 ? { ok: true, path, version: first } : { ok: false, path, error: first || `exited with code ${code}` });
+    child.on('close', (code, signal) => {
+      if (code === 0) return done({ ok: true, path, version: firstLine(stdout) || firstLine(stderr) });
+      const why = firstLine(stderr) || firstLine(stdout);
+      done({ ok: false, path, error: why || (signal ? `killed by ${signal}` : `exited with code ${code}`) });
     });
   });
 }
@@ -131,9 +194,9 @@ export function playwrightVersion() {
   }
 }
 
-const installChromiumFix = () => {
+const npxPlaywright = () => {
   const v = playwrightVersion();
-  return `npx playwright${v ? `@${v}` : ''} install chromium`;
+  return `npx playwright${v ? `@${v}` : ''}`;
 };
 
 async function loadChromium() {
@@ -148,9 +211,17 @@ async function loadChromium() {
   }
 }
 
+// Playwright's "browser not downloaded" error, and its (Linux) "shared
+// libraries missing" error. The second also mentions `playwright install`
+// (as `install-deps`), so it is checked first.
+const DEPS_MISSING = /Host system is missing dependencies|playwright install-deps/i;
+const BROWSER_MISSING = /Executable doesn't exist|please run the following command to download new browsers|playwright install/i;
+
 /**
  * Launch Playwright's Chromium, converting "browser not downloaded" into a
- * PreflightError whose `fix` is the exact install command for this version.
+ * PreflightError (code CHROMIUM_MISSING) whose `fix` is the exact install
+ * command for this version. Missing Linux system libraries become
+ * CHROMIUM_DEPS_MISSING with the matching `install-deps` command.
  * @param {import('playwright').LaunchOptions} [launchOptions]
  * @returns {Promise<import('playwright').Browser>}
  */
@@ -159,10 +230,21 @@ export async function launchChromium(launchOptions = {}) {
   try {
     return await chromium.launch(launchOptions);
   } catch (err) {
-    if (/Executable doesn't exist|please run the following command to download new browsers|playwright install/i.test(String(err?.message))) {
-      throw new PreflightError('Playwright Chromium is not installed.', {
+    const message = String(err?.message ?? err);
+    if (DEPS_MISSING.test(message)) {
+      throw new PreflightError('Chromium cannot start: system libraries it needs are missing.', {
+        code: 'CHROMIUM_DEPS_MISSING',
+        fix: `sudo ${npxPlaywright()} install-deps chromium`,
+        cause: err,
+      });
+    }
+    // A caller-supplied executablePath is not something `playwright install` fixes.
+    if (BROWSER_MISSING.test(message) && !launchOptions?.executablePath) {
+      const channel = launchOptions?.channel;
+      const browser = channel && !/^chromium/.test(channel) ? channel : 'chromium';
+      throw new PreflightError(`Playwright ${browser === 'chromium' ? 'Chromium' : `browser channel "${browser}"`} is not installed.`, {
         code: 'CHROMIUM_MISSING',
-        fix: installChromiumFix(),
+        fix: `${npxPlaywright()} install ${browser}`,
         cause: err,
       });
     }
@@ -170,28 +252,42 @@ export async function launchChromium(launchOptions = {}) {
   }
 }
 
-/**
- * Resolve ffmpeg on PATH or throw a PreflightError with per-OS install hints.
- * @returns {string} Absolute path to ffmpeg.
- */
-export function ensureFfmpeg() {
-  const found = findOnPath('ffmpeg');
-  if (found) return found;
-  const fix = process.platform === 'win32'
-    ? 'winget install Gyan.FFmpeg  (or: choco install ffmpeg), then restart the terminal'
-    : process.platform === 'darwin'
-      ? 'brew install ffmpeg'
-      : 'sudo apt install ffmpeg  (or your distro\'s package manager)';
-  throw new PreflightError('ffmpeg was not found on PATH.', { code: 'FFMPEG_MISSING', fix });
+function ffmpegInstallHint(platform) {
+  if (platform === 'win32') return 'winget install Gyan.FFmpeg  (or: choco install ffmpeg), then restart the terminal';
+  if (platform === 'darwin') return 'brew install ffmpeg';
+  return 'sudo apt install ffmpeg  (or your distro\'s package manager)';
 }
 
 /**
- * One-line, human-readable rendering of any error for CLI output. Preflight
- * errors get their fix appended; other errors keep their message.
+ * Resolve ffmpeg on PATH or throw a PreflightError with per-OS install hints.
+ * @param {{ env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform }} [opts] - Same as findOnPath.
+ * @returns {string} Absolute path to ffmpeg.
+ */
+export function ensureFfmpeg({ env = process.env, platform = process.platform } = {}) {
+  const found = findOnPath('ffmpeg', { env, platform });
+  if (found) return found;
+  throw new PreflightError('ffmpeg was not found on PATH.', { code: 'FFMPEG_MISSING', fix: ffmpegInstallHint(platform) });
+}
+
+function messageOf(err) {
+  if (err instanceof Error) return err.message || err.name;
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object' && typeof err.message === 'string') return err.message;
+  try {
+    return String(err);
+  } catch {
+    return 'unknown error';
+  }
+}
+
+/**
+ * Human-readable rendering of any error for CLI output: `atelier: <message>`,
+ * plus `\n  Fix: <fix>` when the error carries a fix (every PreflightError
+ * does; any error with a string `fix` property is treated the same way).
  * @param {unknown} err
  * @returns {string}
  */
 export function formatError(err) {
-  if (err instanceof PreflightError) return `atelier: ${err.message}${err.fix ? `\n  Fix: ${err.fix}` : ''}`;
-  return `atelier: ${err instanceof Error ? err.message : String(err)}`;
+  const fix = err && typeof err === 'object' && typeof err.fix === 'string' && err.fix ? err.fix : null;
+  return `atelier: ${messageOf(err)}${fix ? `\n  Fix: ${fix}` : ''}`;
 }

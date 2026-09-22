@@ -5,6 +5,9 @@
  * Claude Code puts a plugin's bin/ on the Bash tool's PATH, so inside a
  * session this runs as plain `atelier ...`. Anywhere else:
  *   node <plugin>/bin/atelier ...
+ *
+ * Exit codes: 0 success, 1 doctor found a failing check (or a forwarded
+ * skill's own code), 2 usage error or runtime failure.
  */
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -38,6 +41,39 @@ ${Object.entries(ALIASES).map(([a, s]) => `  ${a.padEnd(8)} ${s}`).join('\n')}
 
 Docs: https://github.com/EthanY33/atelier`;
 
+const DOCTOR_USAGE = `Usage: atelier doctor [--no-browser] [--json]
+
+Checks Node, the plugin's dependencies, Chromium, ffmpeg and ./.atelier/brand.json.
+
+Options:
+  --no-browser   skip launching Chromium (faster)
+  --json         print the result as JSON
+  -h, --help     show this help
+
+Exit codes: 0 ready, 1 a check failed, 2 usage error.`;
+
+const DEMO_USAGE = `Usage: atelier demo [--out <dir>]
+
+Runs every skill on the bundled fixtures and writes the results to <dir>.
+
+Options:
+  -o, --out <dir>   output directory (default ./atelier-demo); must be new,
+                    empty, or a previous demo output
+  -h, --help        show this help
+
+Exit codes: 0 success, 2 usage error or failure.`;
+
+class UsageError extends Error {}
+
+// Strict option parsing; a bad flag becomes a UsageError with the given usage.
+function parse(args, options, usage) {
+  try {
+    return parseArgs({ args, options: { ...options, help: { type: 'boolean', short: 'h' } }, strict: true, allowPositionals: false }).values;
+  } catch (err) {
+    throw Object.assign(new UsageError(err.message), { usage });
+  }
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 
 async function main() {
@@ -50,37 +86,53 @@ async function main() {
     return 0;
   }
   if (cmd === 'doctor') {
+    const values = parse(rest, { json: { type: 'boolean' }, 'no-browser': { type: 'boolean' } }, DOCTOR_USAGE);
+    if (values.help) {
+      console.log(DOCTOR_USAGE);
+      return 0;
+    }
     const { runDoctor, formatDoctor } = await import('../lib/doctor.mjs');
-    const { values } = parseArgs({ args: rest, options: { json: { type: 'boolean' }, 'no-browser': { type: 'boolean' } } });
     const result = await runDoctor({ launchBrowser: !values['no-browser'] });
     console.log(values.json ? JSON.stringify(result, null, 2) : formatDoctor(result));
     return result.ok ? 0 : 1;
   }
   if (cmd === 'demo') {
+    const values = parse(rest, { out: { type: 'string', short: 'o', default: 'atelier-demo' } }, DEMO_USAGE);
+    if (values.help) {
+      console.log(DEMO_USAGE);
+      return 0;
+    }
     const { runDemo } = await import('../scripts/run-demo.mjs');
-    const { values } = parseArgs({ args: rest, options: { out: { type: 'string', default: 'atelier-demo' } } });
     await runDemo({ outDir: values.out });
     return 0;
   }
 
-  const skill = ALIASES[cmd] ?? cmd;
+  // Own keys only: `__proto__` or `constructor` must not resolve to a skill.
+  const skill = Object.hasOwn(ALIASES, cmd) ? ALIASES[cmd] : cmd;
   const entry = join(pluginRoot, 'skills', skill, 'index.mjs');
   if (!/^[a-z0-9-]+$/.test(skill) || !existsSync(entry)) {
-    console.error(`atelier: unknown command "${cmd}"\n\n${USAGE}`);
-    return 2;
+    throw Object.assign(new UsageError(`unknown command "${cmd}"`), { usage: USAGE });
   }
   return await new Promise((resolve) => {
     const child = spawn(process.execPath, [entry, ...rest], { stdio: 'inherit', shell: false });
-    child.on('error', (err) => { console.error(`atelier: ${err.message}`); resolve(1); });
+    child.on('error', (err) => { console.error(`atelier: ${err.message}`); resolve(2); });
     child.on('close', (code, signal) => resolve(signal ? 1 : code ?? 1));
   });
 }
 
-main().then(
-  (code) => process.exit(code),
-  async (err) => {
+// Set the exit code rather than exiting at once, so piped output is flushed;
+// the unref'd timer only fires if something unexpected keeps Node alive.
+function finish(code) {
+  process.exitCode = code;
+  setTimeout(() => process.exit(code), 3000).unref();
+}
+
+main().then(finish, async (err) => {
+  if (err instanceof UsageError) {
+    console.error(`atelier: ${err.message}\n\n${err.usage}`);
+  } else {
     const { formatError } = await import('../lib/preflight.mjs');
     console.error(formatError(err));
-    process.exit(1);
-  },
-);
+  }
+  finish(2);
+});
