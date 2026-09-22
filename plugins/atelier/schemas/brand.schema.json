@@ -4,12 +4,22 @@
   "title": "Atelier Brand Memory",
   "description": "Brand source of truth for the atelier design-automation plugin.",
   "type": "object",
-  "required": ["brand", "palette", "typography"],
+  "required": [
+    "brand",
+    "palette",
+    "typography"
+  ],
   "additionalProperties": false,
   "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional JSON Schema URL for editor autocomplete. Ignored by atelier."
+    },
     "brand": {
       "type": "object",
-      "required": ["studio"],
+      "required": [
+        "studio"
+      ],
       "additionalProperties": false,
       "properties": {
         "studio": {
@@ -21,7 +31,9 @@
         },
         "voice": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -38,7 +50,9 @@
     },
     "typography": {
       "type": "object",
-      "required": ["body"],
+      "required": [
+        "body"
+      ],
       "additionalProperties": false,
       "properties": {
         "body": {
@@ -57,8 +71,12 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "mark": { "type": "string" },
-        "wordmark": { "type": "string" }
+        "mark": {
+          "type": "string"
+        },
+        "wordmark": {
+          "type": "string"
+        }
       }
     },
     "social": {
@@ -73,7 +91,13 @@
       "properties": {
         "target": {
           "type": "string",
-          "enum": ["cloudflare-pages", "netlify", "github-pages", "vercel", "custom"]
+          "enum": [
+            "cloudflare-pages",
+            "netlify",
+            "github-pages",
+            "vercel",
+            "custom"
+          ]
         },
         "project": {
           "type": "string"
@@ -82,8 +106,101 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["steam", "itch", "apple", "google"]
+            "enum": [
+              "steam",
+              "itch",
+              "apple",
+              "google"
+            ]
           }
+        }
+      }
+    },
+    "motion": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Motion tokens. runtime-ux-audit compares panel transition durations against them.",
+      "properties": {
+        "duration": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-zA-Z][a-zA-Z0-9_-]*$": {
+              "type": "string",
+              "pattern": "^d+(.d+)?(ms|s)$"
+            }
+          }
+        },
+        "easing": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-zA-Z][a-zA-Z0-9_-]*$": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            }
+          }
+        }
+      }
+    },
+    "surfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Surface tokens. zIndexMax is the z-index above which runtime-ux-audit flags a layer.",
+      "properties": {
+        "radius": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-zA-Z][a-zA-Z0-9_-]*$": {
+              "type": "string",
+              "pattern": "^d+(.d+)?(px|rem|em|%)$"
+            }
+          }
+        },
+        "elevation": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-zA-Z][a-zA-Z0-9_-]*$": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 24
+            }
+          }
+        },
+        "zIndexMax": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      }
+    },
+    "targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-project budgets for runtime-ux-audit. Defaults: minTapPx 24 (WCAG 2.2), inpBudgetMs 200.",
+      "properties": {
+        "minTapPx": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "inpBudgetMs": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 10000
+        },
+        "lcpBudgetMs": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 60000
+        },
+        "clsBudget": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
         }
       }
     }
