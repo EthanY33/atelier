@@ -1,0 +1,29 @@
+name: Dependency audit
+
+# Weekly check of the plugin's shipped dependencies. Reports only; upgrades
+# are made by hand so every commit in this repo has a human author.
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: npm audit (plugin runtime deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Audit plugins/atelier
+        run: npm audit --prefix plugins/atelier --omit=dev --audit-level=moderate
+
+      - name: Report outdated pins
+        if: always()
+        run: npm outdated --prefix plugins/atelier || true
