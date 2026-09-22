@@ -95,4 +95,65 @@ describe('brand.schema.json', () => {
     expect(errors).toBeDefined();
     expect(errors.length).toBeGreaterThan(0);
   });
+
+  it('accepts the bundled example brand.json', () => {
+    const example = JSON.parse(readFileSync(join(__dirname, '..', 'plugins', 'atelier', 'examples', 'brand.json'), 'utf8'));
+    expect(check(example).valid).toBe(true);
+  });
+
+  it('accepts an optional $schema key and the motion, surfaces and targets sections', () => {
+    const { valid, errors } = check({
+      $schema: schema.$id,
+      brand: { studio: 'goneIdle' },
+      palette: { bg: '#110f1b' },
+      typography: { body: 'Inter' },
+      motion: { duration: { fast: '120ms', slow: '0.4s', base: '200ms' }, easing: { out: 'cubic-bezier(0.2, 0, 0, 1)' } },
+      surfaces: { radius: { sm: '4px', md: '0.5rem', lg: '1.25em', pill: '50%' }, elevation: { card: 2 }, zIndexMax: 1000 },
+      targets: { minTapPx: 24, inpBudgetMs: 200, lcpBudgetMs: 2500, clsBudget: 0.1 }
+    });
+    expect(errors).toBeNull();
+    expect(valid).toBe(true);
+  });
+
+  it('rejects durations and radii that are not numbers with a unit', () => {
+    const cfg = (motion, surfaces) => ({
+      brand: { studio: 'S' }, palette: { bg: '#000' }, typography: { body: 'Inter' }, motion, surfaces
+    });
+    for (const d of ['fast', 'dms', '200', '1.s', '-5ms']) {
+      expect(check(cfg({ duration: { fast: d } })).valid, d).toBe(false);
+    }
+    for (const r of ['dpx', 'small', '4', '4 px']) {
+      expect(check(cfg(undefined, { radius: { sm: r } })).valid, r).toBe(false);
+    }
+  });
+
+  describe('typography hardening', () => {
+    const withFont = (key, value) => ({
+      brand: { studio: 'S' },
+      palette: { bg: '#000' },
+      typography: key === 'body' ? { body: value } : { body: 'Inter', [key]: value }
+    });
+
+    it('accepts real font stacks, including quotes and a leading dash', () => {
+      for (const key of ['body', 'display', 'mono']) {
+        for (const stack of [
+          'Inter',
+          "Silkscreen, 'Courier New', monospace",
+          '"Space Grotesk", system-ui, -apple-system, sans-serif',
+          'Source Sans 3',
+          'x'.repeat(300)
+        ]) {
+          expect(check(withFont(key, stack)).valid, `${key}: ${stack}`).toBe(true);
+        }
+      }
+    });
+
+    it('rejects < > { } ; backslash, control characters and more than 300 chars', () => {
+      for (const key of ['body', 'display', 'mono']) {
+        for (const bad of ['a<b', 'a>b', 'a{b', 'a}b', 'a;b', 'a\\b', 'a\nb', 'a\u0000b', 'a\u007fb', 'a\u0085b', 'x'.repeat(301)]) {
+          expect(check(withFont(key, bad)).valid, `${key}: ${JSON.stringify(bad)}`).toBe(false);
+        }
+      }
+    });
+  });
 });

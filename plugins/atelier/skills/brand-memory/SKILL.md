@@ -1,33 +1,76 @@
 ---
 name: brand-memory
-description: Define the project's brand identity once (palette, typography, logos, voice, social handles, deploy target) in .atelier/brand.json, which every other atelier skill reads. Use at the start of any design-automation workflow, when initializing a project's design source of truth, updating brand fields, or auditing completeness.
+description: Create, read, update, validate and audit the project's brand file, .atelier/brand.json (studio, product, voice, hex palette, font stacks, logos, social handles, deploy target, motion and surface tokens). Use when starting a design workflow, running /brand-init, /brand-get, /brand-set or /brand-audit, changing a brand color or font, or checking brand.json against its schema.
 ---
 
-## Exports
+Skills such as design-token-sync and og-card-generator read this file. Every command works on `<root>/.atelier/brand.json`, with `--root` defaulting to the current directory.
 
-- `brandFilePath(projectRoot)` → `string`, canonical path to `brand.json`
-- `loadBrand(projectRoot)` → `Promise<object>`; throws a helpful error if missing
-- `saveBrand(projectRoot, cfg)` → `Promise<void>`; validates against the JSON Schema, writes pretty JSON with trailing newline
-- `getPath(obj, 'dotted.path')` → value, or `undefined` if missing
-- `setPath(obj, 'dotted.path', value)` → deep clone with value set; creates intermediate objects; never mutates the original
-- `initBrand(projectRoot, { studio, bodyFont, primaryColor })` → `Promise<object>`; creates and saves the minimal valid config
-- `auditBrand(cfg)` → `{ missing: string[] }`: recommended fields absent or empty
+## Run
 
-## Interactive init flow
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand init --studio goneIdle --product TideWane \
+  --voice "atmospheric, mysterious" --bg "#110f1b" --accent "#67e8f9" \
+  --body-font "Silkscreen, 'Courier New', monospace" --display-font "Space Grotesk, sans-serif" \
+  --deploy cloudflare-pages
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand get palette.bg --raw
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand set palette.terra "#e07a5f"
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand set brand.voice "calm, precise"
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand audit
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand validate
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand path
+```
 
-On `/brand-init`, prompt for these 8 values before writing:
+JS API (synchronous; pass the skill dir as an argument so the import also works with Windows paths):
 
-1. Studio name: developer/company (e.g. `goneIdle`)
-2. Product name: game or product (e.g. `TideWane`)
-3. Brand voice: 2-4 adjectives (e.g. `atmospheric, mysterious, deep-sea`)
-4. Primary background color, hex (e.g. `#110f1b`)
-5. Accent color, hex (e.g. `#67e8f9`)
-6. Body font stack: full CSS font-family (e.g. `Silkscreen, 'Courier New', monospace`)
-7. Display font stack: optional, Enter skips
-8. Deploy target: `cloudflare-pages`, `netlify`, `github-pages`, `vercel`, or `custom`
+```bash
+node --input-type=module -e "
+import { pathToFileURL } from 'node:url';
+const { loadBrand, setPath, saveBrand, auditBrand } = await import(pathToFileURL(process.argv[1] + '/index.mjs').href);
+const cfg = setPath(loadBrand(process.cwd()), 'palette.accent', '#67e8f9');
+saveBrand(process.cwd(), cfg);
+console.log(auditBrand(cfg).missing);
+" "${CLAUDE_SKILL_DIR}"
+```
 
-Then call `initBrand`, then `auditBrand`, and report still-missing fields with suggestions.
+- `loadBrand(root)` returns the validated object. Throws when the file is missing, is not valid JSON, or fails the schema; `err.code` is `BRAND_NOT_FOUND`, `BRAND_INVALID` (with `err.errors`) or `BRAND_UNREADABLE`, and the message names the file. A UTF-8 or UTF-16 BOM is accepted.
+- `saveBrand(root, cfg)` returns nothing. Validates first and throws `invalid brand config: ...` without writing; otherwise writes 2-space JSON plus a trailing newline.
+- `initBrand(root, { studio, bodyFont, primaryColor, product?, voice?, accent?, displayFont?, monoFont?, deployTarget?, withSchema?, overwrite? })` validates everything, writes once, returns the object. `voice` may be a comma string. `accent` goes to `palette.accent`, `deployTarget` to `deploy.target`. `withSchema: true` adds `$schema`. `overwrite: false` throws if the file exists.
+- `validateBrand(cfg)` returns `{ valid, errors }` without touching disk.
+- `getPath(obj, 'a.b')` returns the value or `undefined`; follows own properties only.
+- `setPath(obj, 'a.b', value)` returns a deep clone with the value set and creates missing objects. Throws on `__proto__`, `constructor` or `prototype` segments, empty segments, and non-index keys inside arrays.
+- `auditBrand(cfg)` returns `{ missing: string[] }`.
+- `brandFilePath(root)`, `BRAND_SCHEMA_URL`, `runCli(argv, { cwd, stdout, stderr })` (returns the exit code).
 
-## Schema
+## Options
 
-`schemas/brand.schema.json` (JSON Schema 2020-12). Required top-level keys: `brand`, `palette`, `typography`. Palette values must be hex (`#rgb`, `#rrggbb`, `#rrggbbaa`). `deploy.target` must be one of the 5 values above.
+- `init`: `--studio`, `--product`, `--voice <a,b,c>`, `--bg <hex>`, `--accent <hex>`, `--body-font`, `--display-font`, `--mono-font`, `--deploy <target>`, `--force`. Omitted `--studio`, `--bg`, `--body-font` default to the root folder name, `#111111` and `system-ui, sans-serif`, and the output says so. Refuses to overwrite without `--force`. Writes a `$schema` key for editor autocomplete.
+- `get <path>`: `--raw` prints a string without JSON quotes.
+- `set <path> <value>`: the value is parsed as JSON when it is valid JSON, else kept as a string. String fields keep numbers as text, array fields (`brand.voice`, `deploy.stores`) split a comma list, palette values may omit `#`. Extra words are joined with spaces.
+- `audit`, `validate`: `--json`.
+- Quote `#hex` values in a shell. For a value starting with `-`, use `--body-font=-apple-system,...` or `set -- <path> <value>`.
+
+## Output
+
+Schema (`${CLAUDE_PLUGIN_ROOT}/schemas/brand.schema.json`, JSON Schema 2020-12). Required: `brand.studio`, at least one `palette` color, `typography.body`.
+
+- `palette.<key>`: `#rgb`, `#rrggbb` or `#rrggbbaa`; keys start with a letter (letters, digits, `_`, `-`).
+- `typography.body|display|mono`: CSS font stacks, max 300 chars, no `< > { } ;`, backslash or control characters.
+- `brand.voice`, `deploy.stores`: string arrays. `deploy.stores` items: `steam`, `itch`, `apple`, `google`.
+- `deploy.target`: `cloudflare-pages`, `netlify`, `github-pages`, `vercel` or `custom`.
+- Optional `logos.mark|wordmark`, `social.<platform>`, `motion`, `surfaces`, `targets`.
+
+Validation messages name the dotted property and list allowed values, e.g. `deploy.target: "firebase" is not allowed (allowed: cloudflare-pages, ...)`.
+
+Audit checks: `brand.product`, `brand.voice`, `typography.display`, `logos.mark`, `logos.wordmark`, `social`, `deploy.target`.
+
+## Exit codes
+
+- `0`: success. `audit` always exits 0.
+- `1`: `validate` found errors (including malformed JSON).
+- `2`: usage error, missing or unreadable brand.json, `get` on an unset path, or `init`/`set` rejected (file exists, invalid value, forbidden path).
+
+## Notes
+
+- `/brand-init`: ask for studio, product, voice (2 to 4 adjectives), background hex, accent hex, body font stack, optional display font, and deploy target, then run one `brand init` with all of them and relay its audit. Ask before passing `--force`.
+- `/brand-set`: `brand set <path> <value>`, then report the echoed value or the validation message.
+- `get`, `set` and `audit` read the file without validating it, so `set` can repair an invalid field (the result is validated before it is saved). `validate` and `loadBrand` enforce the schema; `audit` adds a note when the file does not pass.
