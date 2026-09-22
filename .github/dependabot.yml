@@ -1,7 +1,25 @@
 version: 2
 updates:
+  # Dev tooling plus the test-only mirrors of plugin deps.
   - package-ecosystem: "npm"
     directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
+  # The plugin's own lockfile: this is what Claude Code runs `npm ci` against
+  # on /plugin install, so it gets its own update stream.
+  - package-ecosystem: "npm"
+    directory: "/plugins/atelier"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

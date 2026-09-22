@@ -1,0 +1,20 @@
+name: Feature or rule request
+description: A new skill, a new output target, or a new runtime-ux-audit rule.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the design task or the regression you want caught, not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: For audit rules, include a snippet that should trigger it and one that should not.
+  - type: textarea
+    id: brand
+    attributes:
+      label: Does it need new brand.json fields?

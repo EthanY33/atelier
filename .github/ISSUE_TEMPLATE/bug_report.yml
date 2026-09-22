@@ -1,0 +1,46 @@
+name: Bug report
+description: A skill produced the wrong output, crashed, or would not install.
+labels: [bug]
+body:
+  - type: dropdown
+    id: skill
+    attributes:
+      label: Skill
+      options:
+        - brand-memory
+        - design-token-sync
+        - og-card-generator
+        - responsive-image-pipeline
+        - brand-asset-pipeline
+        - accessibility-design-audit
+        - html-to-video
+        - runtime-ux-audit
+        - install / plugin loading
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The prompt you gave Claude, or the exact command, plus a minimal brand.json or page if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `atelier doctor`
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: atelier version, OS, Node version
+      placeholder: 1.0.0, Windows 11, Node 22.13
+    validations:
+      required: true

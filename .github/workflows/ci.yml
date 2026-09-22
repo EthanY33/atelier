@@ -5,27 +5,40 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: Test (${{ matrix.os }})
+    name: Test (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['22', '24']
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: ${{ matrix.node }}
+          cache: npm
 
       - name: Install ffmpeg (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
 
       - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
@@ -34,39 +47,61 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Uses the plugin's pinned Playwright so the browser build matches.
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        run: npm run setup:browsers -- --with-deps
 
       - name: Run tests with coverage
         run: npm run test:coverage
 
       - name: Upload coverage
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.node == '22'
         uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage/
 
   validate:
-    name: Validate manifests
+    name: Validate schemas and manifests
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '22'
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate marketplace.json
-        run: node -e "JSON.parse(require('fs').readFileSync('.claude-plugin/marketplace.json','utf8'))"
+      - name: Lint JSON schemas and manifests
+        run: npm run lint:schemas
 
-      - name: Validate plugin.json
-        run: node -e "JSON.parse(require('fs').readFileSync('plugins/atelier/plugin.json','utf8'))"
+      - name: Version strings agree
+        run: npm run check:versions
 
-      - name: Validate brand.schema.json
-        run: node -e "JSON.parse(require('fs').readFileSync('schemas/brand.schema.json','utf8'))"
+      - name: Claude Code plugin validate
+        run: npx --yes @anthropic-ai/claude-code plugin validate .
+
+  plugin-install:
+    name: Installed-plugin smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # Mirrors what Claude Code does on /plugin install: copy plugins/atelier
+      # out of the repo, then `npm ci --ignore-scripts` inside the copy with a
+      # 60 second budget. Nothing from the repo root is visible to the copy.
+      - name: Simulate marketplace install and smoke-test every skill
+        run: node scripts/smoke-installed-plugin.mjs
