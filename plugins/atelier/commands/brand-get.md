@@ -1,13 +1,19 @@
 ---
-description: Read a value from .atelier/brand.json by dotted path.
+description: Print one value from .atelier/brand.json by dotted path, for example palette.bg, typography.body or brand.voice.
+argument-hint: "<dotted.path> [--root <dir>]"
 ---
 
-You are running `/brand-get $ARGUMENTS` where `$ARGUMENTS` is the dotted path to read (e.g. `brand.studio`, `palette.bg`, `deploy.target`).
+Arguments (may be empty): `$ARGUMENTS`
 
-1. Call `loadBrand(projectRoot)` to read the current config. If the file is missing, the function will throw a helpful error — surface it to the user.
+The first argument is the dotted path. If there is none, ask the user which one (common: `brand.studio`, `palette.bg`, `palette.accent`, `typography.body`, `deploy.target`).
 
-2. Call `getPath(cfg, '$ARGUMENTS')` to retrieve the value at the requested path.
+Run it with the path in single quotes (add `--root '<dir>'` if the user gave `--root`):
 
-3. If the value is `undefined`, tell the user the field is not set and suggest using `/brand-set $ARGUMENTS <value>` to add it.
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand get '<dotted.path>' --raw
+```
 
-4. Otherwise, display the value clearly. If it is an object or array, format it as pretty JSON.
+- Exit 0: show the value. Strings print as-is; objects and arrays print as JSON.
+- Exit 2 and the message says `is not set`: say so and suggest `/brand-set <dotted.path> <value>`.
+- Exit 2 and the message says `not found`: there is no brand.json yet; suggest `/brand-init`.
+- Any other failure: show stderr verbatim and stop.

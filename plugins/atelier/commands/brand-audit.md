@@ -1,22 +1,23 @@
 ---
-description: Report missing recommended fields in .atelier/brand.json.
+description: List the recommended fields missing from .atelier/brand.json, what uses each one, and the /brand-set command that fills it.
+argument-hint: "[--root <dir>]"
 ---
 
-You are running `/brand-audit` for the current project.
+Arguments (may be empty): `$ARGUMENTS`. If they include `--root <dir>`, add `--root '<dir>'` to the commands below.
 
-1. Call `loadBrand(projectRoot)` to read the config. If the file is missing, tell the user to run `/brand-init` first.
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand audit
+```
 
-2. Call `auditBrand(cfg)` to get the list of missing recommended fields.
+- Exit 2: show stderr verbatim and stop. A `not found` message means run `/brand-init` first.
+- Exit 0 (audit always exits 0): if every recommended field is set, say so. Otherwise list each missing field with the hint the CLI prints, and turn each printed `atelier brand set <path> <value>` line into `/brand-set <path> <value>`, with the example value replaced by the user's own when you know it. What reads each field:
+  - `brand.product`: og-card-generator uses it as the card title when a page has none.
+  - `typography.display`: og-card-generator headline font; design-token-sync emits it as a font token.
+  - `logos.mark`: brand-asset-pipeline uses it when no mark SVG is passed.
+  - `brand.voice`, `logos.wordmark`, `social`, `deploy.target`: kept for your own tools and prompts; no atelier skill reads them yet.
 
-3. If `missing` is empty, report that the brand config is complete and all recommended fields are present.
+If the output ends with `Note: brand.json has N schema error(s)`, also run the command below and show its errors verbatim. It exits 1 when it finds errors; that is the expected result here, not a failure.
 
-4. Otherwise, display a table of missing fields and explain why each one matters:
-   - **brand.product** — the product/game name; used by og-card-generator and responsive-image-pipeline for meta titles.
-   - **brand.voice** — tone adjectives; used by copy-generation prompts to stay on-brand.
-   - **typography.display** — headline font stack; used by og-card-generator and html-to-video for title renders.
-   - **logos.mark** — path to the icon/symbol logo; used in og cards, favicons, and Steam assets.
-   - **logos.wordmark** — path to the text logo; used in trailers, hero banners, and press kits.
-   - **social** — platform handles; used in Open Graph tags and footer templates.
-   - **deploy.target** — hosting platform; used by the deploy step to pick the right adapter.
-
-5. For each missing field, suggest the `/brand-set` command the user can run to fill it in (e.g. `/brand-set logos.mark brand/mark.svg`).
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand validate
+```

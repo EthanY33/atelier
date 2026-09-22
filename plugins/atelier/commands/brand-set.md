@@ -1,15 +1,19 @@
 ---
-description: Set a value in .atelier/brand.json by dotted path.
+description: Set one value in .atelier/brand.json by dotted path (a color, font stack, voice, logo path, social handle or deploy target), validated against the schema before it is saved.
+argument-hint: "<dotted.path> <value>"
 ---
 
-You are running `/brand-set $ARGUMENTS` where `$ARGUMENTS` is `<dotted.path> <value>` (e.g. `brand.product TideWane` or `deploy.target netlify`).
+Arguments (may be empty): `$ARGUMENTS`
 
-1. Parse `$ARGUMENTS`: split on the first space to get the dotted path and the remaining string as the value. If the value looks like a JSON array or object (starts with `[` or `{`), parse it as JSON. Otherwise treat it as a plain string.
+The first word is the dotted path; everything after it is the value, which may contain spaces. If the user wrapped the whole value in one pair of quotes, drop them. If the path or the value is missing, ask for it.
 
-2. Call `loadBrand(projectRoot)` to read the current config. If the file is missing, tell the user to run `/brand-init` first.
+Run once, with the path and the whole value each in single quotes (POSIX quoting; write a single quote inside a value as `'\''`). The `--` keeps a value that starts with `-` from being read as an option. If the user gave `--root <dir>`, put `--root '<dir>'` before the `--`.
 
-3. Call `setPath(cfg, path, value)` to produce the updated config (the original is not mutated).
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand set -- '<dotted.path>' '<value>'
+```
 
-4. Call `saveBrand(projectRoot, updatedCfg)`. If schema validation fails, report the error clearly without writing the file.
+How the CLI reads the value: valid JSON is parsed (`true`, `12`, `["a","b"]`, `{"twitter":"@studio"}`), anything else stays a string. String fields keep numbers as text, `brand.voice` and `deploy.stores` turn a comma list into an array, and palette colors may omit the `#`.
 
-5. On success, confirm the update by echoing the new value back: `brand.product → TideWane`.
+- Exit 0: report the line it prints, for example `palette.accent = "#67e8f9"`.
+- Exit 2: show stderr verbatim and stop. Nothing was written. A validation message names the field and its allowed values; `not found` means run `/brand-init` first.
