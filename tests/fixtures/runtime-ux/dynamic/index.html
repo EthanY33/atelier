@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dynamic probe fixture</title>
+<style>
+  body { margin: 0; font: 16px/1.5 sans-serif; }
+  header { display: flex; gap: 8px; padding: 8px; }
+  .icon { width: 12px; height: 12px; padding: 0; border: 0; background: #333; }
+  .card { view-transition-name: hero; display: block; height: 40px; }
+  #feed { margin: 0; padding: 0; list-style: none; }
+  #feed li { height: 120px; }
+  .modal { position: fixed; inset: 20px; background: #fff; border: 1px solid #000; }
+  .modal[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <button class="icon" id="menu" aria-label="Menu"></button>
+  <button id="buy">Buy</button>
+  <button id="open-custom" aria-haspopup="dialog" aria-controls="custom">Open custom</button>
+  <button id="open-native" aria-haspopup="dialog">Open native</button>
+</header>
+<p>Read the <a href="/terms.html">terms</a> before you buy anything.</p>
+<p id="status">Ready</p>
+<div class="card">A</div>
+<div class="card">B</div>
+<div class="modal" id="custom" role="dialog" aria-modal="true" aria-label="Custom" hidden>
+  <button id="custom-close" class="close">Close</button>
+</div>
+<dialog id="native" aria-label="Native"><form method="dialog"><button>Close</button></form></dialog>
+<ul id="feed">
+  <li class="item">1</li><li class="item">2</li><li class="item">3</li><li class="item">4</li><li class="item">5</li>
+  <li class="item">6</li><li class="item">7</li><li class="item">8</li><li class="item">9</li><li class="item">10</li>
+  <li class="item">11</li><li class="item">12</li><li class="item">13</li><li class="item">14</li><li class="item">15</li>
+  <li class="item">16</li><li class="item">17</li><li class="item">18</li><li class="item">19</li><li class="item">20</li>
+  <li class="item">21</li><li class="item">22</li><li class="item">23</li><li class="item">24</li><li class="item">25</li>
+  <li class="item">26</li><li class="item">27</li><li class="item">28</li><li class="item">29</li><li class="item">30</li>
+  <li class="item">31</li><li class="item">32</li><li class="item">33</li><li class="item">34</li><li class="item">35</li>
+  <li class="item">36</li><li class="item">37</li><li class="item">38</li><li class="item">39</li><li class="item">40</li>
+</ul>
+<script src="js/slow.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

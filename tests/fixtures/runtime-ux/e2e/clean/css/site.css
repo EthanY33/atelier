@@ -1,0 +1,93 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 16px/1.5 system-ui, sans-serif;
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+}
+
+.menu-button,
+.subscribe,
+.save {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 16px;
+}
+
+.menu {
+  margin: 0;
+  padding: 16px;
+  opacity: 1;
+  transition: opacity 0.2s ease, display 0.2s allow-discrete, overlay 0.2s allow-discrete;
+}
+
+@starting-style {
+  .menu:popover-open {
+    opacity: 0;
+  }
+}
+
+.hero {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 24px;
+}
+
+.cards {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  list-style: none;
+}
+
+.card .save {
+  opacity: 0.6;
+}
+
+.card:hover .save,
+.card:focus-within .save {
+  opacity: 1;
+}
+
+dialog {
+  opacity: 1;
+  transition: opacity 0.2s ease, display 0.2s allow-discrete, overlay 0.2s allow-discrete;
+}
+
+@starting-style {
+  dialog[open] {
+    opacity: 0;
+  }
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+
+.tab-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: space-around;
+  padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
+  background: #fff;
+  z-index: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu,
+  dialog {
+    transition: none;
+  }
+}

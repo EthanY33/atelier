@@ -1,0 +1,519 @@
+{
+  "schemaVersion": "1.0",
+  "tool": "atelier/runtime-ux-audit",
+  "url": "index.html",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "mode": {
+    "dynamic": true,
+    "areas": [
+      "transitions",
+      "inp",
+      "panels",
+      "mobile"
+    ],
+    "engine": {
+      "name": "chromium",
+      "version": "153.0.7000.0",
+      "device": "Pixel 7",
+      "cpuThrottle": 4
+    }
+  },
+  "budgets": {
+    "minTapPx": 44,
+    "minTapPxSource": "brand",
+    "inpBudgetMs": 150,
+    "lcpBudgetMs": 2500,
+    "clsBudget": 0.1,
+    "zIndexMax": 50,
+    "longScriptMs": 100,
+    "motionDurationsMs": {
+      "long": 400,
+      "short": 150
+    }
+  },
+  "summary": {
+    "pass": false,
+    "rules": {
+      "critical": 1,
+      "serious": 3,
+      "moderate": 3,
+      "minor": 1
+    },
+    "instances": {
+      "critical": 1,
+      "serious": 4,
+      "moderate": 4,
+      "minor": 7
+    },
+    "byArea": {
+      "transitions": {
+        "critical": 1,
+        "serious": 0,
+        "moderate": 1,
+        "minor": 0,
+        "instances": 2
+      },
+      "inp": {
+        "critical": 0,
+        "serious": 0,
+        "moderate": 1,
+        "minor": 0,
+        "instances": 1
+      },
+      "panels": {
+        "critical": 0,
+        "serious": 1,
+        "moderate": 1,
+        "minor": 1,
+        "instances": 10
+      },
+      "mobile": {
+        "critical": 0,
+        "serious": 2,
+        "moderate": 0,
+        "minor": 0,
+        "instances": 3
+      }
+    }
+  },
+  "metrics": {
+    "inpP75Ms": 288,
+    "inp": {
+      "estimateMs": 288,
+      "p75InteractionMs": 288,
+      "maxMs": 288,
+      "count": 1,
+      "belowThreshold": false,
+      "worst": {
+        "name": "pointerup",
+        "target": "body > button.icon",
+        "inputDelayMs": 12,
+        "processingMs": 250,
+        "presentationMs": 26
+      }
+    },
+    "bfcache": {
+      "restored": false,
+      "reasons": [
+        "masked"
+      ]
+    },
+    "highlights": {
+      "transitions": {
+        "bfcache blockers": 0,
+        "view-transition gaps": 0,
+        "speculation rules": 0,
+        "prerender analytics": 0
+      },
+      "inp": {
+        "non-passive listeners": 0,
+        "main-thread smells": 0,
+        "long scripts": 0,
+        "RUM gaps": 0
+      },
+      "panels": {
+        "z-index smells": 0,
+        "dialog semantics": 0,
+        "popover/menu behavior": 0,
+        "motion gaps": 0,
+        "compositor costs": 0
+      },
+      "mobile": {
+        "tap targets under 44px": 0,
+        "vh without dvh": 0,
+        "safe-area gaps": 0,
+        "touch/scroll hijacks": 0,
+        "viewport meta": 0,
+        "PWA": 0
+      }
+    }
+  },
+  "violations": [
+    {
+      "ruleId": "atelier/runtime-ux/fake-js-unload",
+      "severity": "critical",
+      "area": "transitions",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "Fake rule for the core tests.",
+      "helpUrl": "https://example.com/help",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "window.addEventListener('unload', function () { navigator.sendBeacon('/x'); })",
+          "location": "js/app.js:1:1",
+          "message": "unload listener via addEventListener"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/fake-rendered-dialog",
+      "severity": "serious",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "html"
+      ],
+      "description": "Fake rule for the core tests.",
+      "helpUrl": "https://example.com/help",
+      "nodes": [
+        {
+          "selector": "#late",
+          "snippet": "<dialog id=\"late\">",
+          "location": "(rendered DOM)"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/fake-css-height",
+      "severity": "serious",
+      "area": "mobile",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "Fake rule for the core tests.",
+      "helpUrl": "https://example.com/help",
+      "nodes": [
+        {
+          "selector": ".hero",
+          "snippet": ".hero { min-height: 100vh }",
+          "location": "index.html:10:9",
+          "data": {
+            "vh": 100
+          }
+        },
+        {
+          "selector": ".card .tip",
+          "snippet": ".card .tip { height: 90vh }",
+          "location": "css/site.css:3:14",
+          "data": {
+            "vh": 90
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/fake-tap",
+      "severity": "serious",
+      "area": "mobile",
+      "confidence": "high",
+      "methods": [
+        "dom"
+      ],
+      "description": "Fake rule for the core tests.",
+      "helpUrl": "https://example.com/help",
+      "nodes": [
+        {
+          "selector": "body > button.icon",
+          "snippet": "12x12 px < 44",
+          "location": "(runtime)"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/fake-body-attr",
+      "severity": "moderate",
+      "area": "transitions",
+      "confidence": "high",
+      "methods": [
+        "html"
+      ],
+      "description": "Fake rule for the core tests.",
+      "helpUrl": "https://example.com/help",
+      "nodes": [
+        {
+          "selector": "body",
+          "snippet": "<body onunload=\"sendBeacon()\">",
+          "location": "index.html:17:7"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/fake-loaf",
+      "severity": "moderate",
+      "area": "inp",
+      "confidence": "high",
+      "methods": [
+        "trace"
+      ],
+      "description": "Fake rule for the core tests.",
+      "helpUrl": "https://example.com/help",
+      "nodes": [
+        {
+          "selector": "js/slow.js",
+          "snippet": "BUTTON.onclick 250 ms",
+          "location": "js/slow.js"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/fake-z-index",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "Fake rule for the core tests.",
+      "helpUrl": "https://example.com/help",
+      "nodes": [
+        {
+          "selector": ".modal",
+          "snippet": ".modal { z-index: 9999 }",
+          "location": "index.html:13:10",
+          "message": "9999 > 50",
+          "confidence": "medium"
+        },
+        {
+          "selector": "body > main > div.modal:nth-of-type(1)",
+          "snippet": "style=\"z-index: 10000\"",
+          "location": "index.html:21:36",
+          "message": "10000 > 50",
+          "confidence": "medium"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/fake-html-item",
+      "severity": "minor",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "html"
+      ],
+      "description": "Fake rule for the core tests.",
+      "helpUrl": "https://example.com/help",
+      "nodes": [
+        {
+          "selector": "body > main > ul.list > li.item:nth-of-type(1)",
+          "snippet": "<li class=\"item\">",
+          "location": "index.html:23:5",
+          "message": "item 1"
+        },
+        {
+          "selector": "body > main > ul.list > li.item:nth-of-type(2)",
+          "snippet": "<li class=\"item\">",
+          "location": "index.html:24:5",
+          "message": "item 2"
+        },
+        {
+          "selector": "body > main > ul.list > li.item:nth-of-type(3)",
+          "snippet": "<li class=\"item\">",
+          "location": "index.html:25:5",
+          "message": "item 3"
+        },
+        {
+          "selector": "body > main > ul.list > li.item:nth-of-type(4)",
+          "snippet": "<li class=\"item\">",
+          "location": "index.html:26:5",
+          "message": "item 4"
+        },
+        {
+          "selector": "body > main > ul.list > li.item:nth-of-type(5)",
+          "snippet": "<li class=\"item\">",
+          "location": "index.html:27:5",
+          "message": "item 5"
+        },
+        {
+          "selector": "body > main > ul.list > li.item:nth-of-type(6)",
+          "snippet": "<li class=\"item\">",
+          "location": "index.html:28:5",
+          "message": "item 6"
+        },
+        {
+          "selector": "body > main > ul.list > li.item:nth-of-type(7)",
+          "snippet": "<li class=\"item\">",
+          "location": "index.html:29:5",
+          "message": "item 7"
+        }
+      ]
+    }
+  ],
+  "incomplete": [
+    {
+      "ruleId": "atelier/runtime-ux/fake-absence",
+      "severity": "moderate",
+      "area": "inp",
+      "confidence": "low",
+      "methods": [
+        "js"
+      ],
+      "description": "Fake rule for the core tests.",
+      "helpUrl": "https://example.com/help",
+      "nodes": [
+        {
+          "selector": "document",
+          "snippet": "no scheduler.yield() anywhere",
+          "location": "index.html"
+        }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "id": "atelier/runtime-ux/fake-absence",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "incomplete"
+    },
+    {
+      "id": "atelier/runtime-ux/fake-body-attr",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/fake-css-height",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "failed",
+      "suppressed": 1
+    },
+    {
+      "id": "atelier/runtime-ux/fake-dynamic",
+      "area": "inp",
+      "severity": "serious",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/fake-html-item",
+      "area": "panels",
+      "severity": "minor",
+      "status": "failed",
+      "suppressed": 1
+    },
+    {
+      "id": "atelier/runtime-ux/fake-http",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "notApplicable",
+      "reason": "requires-http"
+    },
+    {
+      "id": "atelier/runtime-ux/fake-ignored",
+      "area": "mobile",
+      "severity": "critical",
+      "status": "skipped",
+      "reason": "ignored"
+    },
+    {
+      "id": "atelier/runtime-ux/fake-js-unload",
+      "area": "transitions",
+      "severity": "critical",
+      "status": "failed",
+      "suppressed": 1
+    },
+    {
+      "id": "atelier/runtime-ux/fake-loaf",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/fake-na",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "notApplicable",
+      "reason": "no popovers"
+    },
+    {
+      "id": "atelier/runtime-ux/fake-pass",
+      "area": "transitions",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/fake-rendered-dialog",
+      "area": "panels",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/fake-tap",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/fake-throws",
+      "area": "mobile",
+      "severity": "minor",
+      "status": "error",
+      "reason": "boom"
+    },
+    {
+      "id": "atelier/runtime-ux/fake-z-index",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed"
+    }
+  ],
+  "resources": [
+    {
+      "kind": "document",
+      "url": "index.html",
+      "status": "parsed"
+    },
+    {
+      "kind": "stylesheet",
+      "url": "css/site.css",
+      "status": "parsed"
+    },
+    {
+      "kind": "stylesheet",
+      "url": "css/base.css",
+      "status": "parsed"
+    },
+    {
+      "kind": "stylesheet",
+      "url": "https://fonts.example.com/css2?family=Inter",
+      "status": "skipped",
+      "reason": "cross-origin"
+    },
+    {
+      "kind": "stylesheet",
+      "url": "style:inline(1)",
+      "status": "parsed"
+    },
+    {
+      "kind": "speculation-rules",
+      "url": "script:speculationrules(1)",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/app.js",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/missing.js",
+      "status": "failed",
+      "reason": "not-found"
+    },
+    {
+      "kind": "script",
+      "url": "script:inline(1)",
+      "status": "parsed"
+    },
+    {
+      "kind": "module",
+      "url": "js/module.js",
+      "status": "parsed"
+    }
+  ],
+  "errors": [
+    {
+      "phase": "rule",
+      "ruleId": "atelier/runtime-ux/fake-throws",
+      "message": "boom"
+    },
+    {
+      "phase": "dynamic",
+      "message": "dialogs: trigger not found"
+    }
+  ]
+}

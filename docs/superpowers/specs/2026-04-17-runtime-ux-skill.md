@@ -1,6 +1,6 @@
 # runtime-ux-audit v0.1 — Runtime-UX quality skill
 
-**Status:** Spec only (filed 2026-04-17). Research base: [`docs/research/2026-04-17-runtime-ux-research.md`](../../research/2026-04-17-runtime-ux-research.md). No implementation yet.
+**Status:** Implemented in atelier 1.0 as `plugins/atelier/skills/runtime-ux-audit/`. Filed 2026-04-17. Research base: [`docs/research/2026-04-17-runtime-ux-research.md`](../../research/2026-04-17-runtime-ux-research.md). Where the shipped skill differs from this spec, see [Implementation deviations (1.0)](#implementation-deviations-10) at the end.
 
 ## Problem
 
@@ -424,3 +424,93 @@ Update the `brand-memory` row's inputs column from
   positives are acceptable as long as they're easily explainable in the
   report; rules with >20% false-positive rate on the fixture corpus should
   be downgraded to `minor` or dropped before merge.
+
+## Implementation deviations (1.0)
+
+The skill shipped in atelier 1.0. This section records where it differs from the spec above. The skill's `SKILL.md` is the user reference; `schemas/ux-audit.schema.json` in the plugin describes `ux-raw.json`.
+
+### Layout and packaging
+
+- The skill lives in `plugins/atelier/skills/runtime-ux-audit/` (entry `index.mjs`, rules in `rules/<area>/`, the Chromium pass in `dynamic/`). It imports only postcss, acorn, acorn-walk, parse5 and Playwright, resolved from the plugin's own `package.json`. Playwright is loaded only under `--dynamic`.
+- Schemas sit in `plugins/atelier/schemas/`: `ux-audit.schema.json` is new, and `brand.schema.json` gained `motion`, `surfaces` and `targets`. The skill never reads the schema files at runtime; it validates the brand fields it uses itself.
+- CLI: `atelier ux <url|file> [outDir]` through `bin/atelier`, or `node index.mjs` directly. Local paths and `file://` URLs are accepted wherever a URL is. The CLI (not the API) loads `./.atelier/brand.json` when it exists.
+- Errors reuse the plugin's shared preflight: `UxAuditError` extends `PreflightError`, so every failure prints `atelier: <message>` and a `Fix:` line. A missing Chromium names the exact `npx playwright@<version> install chromium` command.
+
+### Exit codes
+
+- `0` pass, `1` critical or serious findings, `2` the audit could not run (usage, missing input, failed document fetch, invalid brand.json, missing Playwright or Chromium, dynamic failure). The spec's "an uncaught throw exits 1" would let CI mistake "did not run" for "found problems".
+
+### Measurement (`--dynamic`)
+
+- No `web-vitals` dependency. INP is estimated from the Event Timing API directly: a `PerformanceObserver` of type `event` with `durationThreshold: 16`, entries grouped by `interactionId`, and web-vitals' rule of skipping one outlier per 50 interactions. `metrics.inpP75Ms` keeps the spec's name but holds this lab estimate (Pixel 7 profile, 4x CPU through CDP), not a field p75.
+- Full Chromium (`channel: 'chromium'`, new headless) with Playwright's default `--disable-back-forward-cache` switch removed. Verified on Playwright 1.63 and Chromium 153: the headless shell never restores from the back/forward cache and reports `masked` for every page.
+- A settle phase (1 s plus two animation frames at 4x CPU) runs before the interaction probe. Without it the first interaction on a trivial page measured 416 ms.
+- Local files are served from a loopback server (127.0.0.1, GET and HEAD only, confined to the site root), so bfcache, module scripts and same-origin fetches behave as in production. Served URLs are mapped back to file paths before they reach the report.
+- The dynamic pass only collects facts (Event Timing entries, long animation frames, a DOM sweep, dialog focus results, bfcache restore); the area rules judge them. It taps and tabs through safe controls only (never links, downloads or form submits) and closes popups.
+
+### Static analysis
+
+- The static pass never runs page code and never starts a browser. A source-scan test bans Playwright, `eval`, `new Function` and `node:vm` in `lib/` and `rules/`.
+- `cache-control-no-store-on-html` is a static rule that reads the response headers of http(s) inputs; the spec listed it as dynamic-only. It is not applicable to local files.
+- Several spec "DOM" rules run statically on the HTML: `dialog-missing-label`, `div-role-dialog`, `tooltip-focusable`, `menu-no-arrow-keys`, `backdrop-as-sibling-div`, `destructive-dialog-closedby-any`, `backdrop-filter-on-video-modal`, `user-scalable-no` and `missing-interactive-widget`. Under `--dynamic` they run again on the rendered DOM, which catches markup that scripts add; nodes already reported are not repeated. `fixed-bottom-no-safe-area` is static (CSS and HTML) and applies only with `viewport-fit=cover`.
+- Findings that rest on missing evidence go to "Needs review" (the raw `incomplete` list) and never fail the audit: a same-origin file that could not be read, plus the calibration cases below.
+- Suppression: `--ignore <rule-id>`, `data-atelier-ignore` on an element or ancestor, and `atelier-ignore` comments in CSS and JS.
+- Output is deterministic: fixed ordering by code unit, no durations or machine paths, and `--timestamp` for the report time. Runtime findings keep the order their rule emits (longest script first, targets in DOM order).
+
+### Rule set: 65 shipped, from a catalog of 72
+
+Deferred (9):
+
+- `prefer-pageshow-for-restore`: nothing static can tell which init code must re-run after a restore, and most correct pages have no pageshow listener. `bfcache-not-restored` covers the measurable part.
+- `close-idb-on-pagehide`: contradicted by measurement. Chromium 153 restored pages holding a Web Lock and an open BroadcastChannel.
+- `sync-large-json-parse`: payload size is unknown statically; `loaf-long-script` shows the real cost with attribution.
+- `combobox-focus-in-listbox`: needs a scripted open of each combobox; a candidate for a later dynamic probe.
+- `video-missing-gpu-hint-in-modal`: no authoritative source; Chromium already composites video in its own layer.
+- `tap-targets-spacing-under-24`: merged into `tap-target-under-minimum`, which applies the WCAG 2.5.8 spacing exception.
+- `missing-touch-action-manipulation`: with `width=device-width` (enforced by `viewport-meta-missing`) no current engine has the 300 ms tap delay.
+- `pwa-manifest-no-display-override`: `display_override` is optional, so the rule would flag every correct PWA.
+- `sw-no-fetch-handler`: Chromium dropped the fetch-handler install requirement, and a no-op fetch handler slows navigations.
+
+Added (2): `no-sync-xhr` (inp, serious) and `viewport-meta-missing` (mobile, serious).
+
+Renamed: `missing-webvitals-onINP` ships as `missing-webvitals-oninp` to fit the lowercase id pattern.
+
+### Severity changes
+
+| Rule | Spec | 1.0 | Why |
+|---|---|---|---|
+| `non-passive-scroll-listener` | critical | moderate | Calibration. Root touch listeners are passive by default, so what is left (element listeners, or a root wheel listener with `passive: false` that never cancels) only delays scrolls that start on that element. It fired on 6 of 25 well-built sites, all in library code. Root opt-outs stay critical in `non-passive-touch-listener` and `scroll-hijack`. |
+| `click-handler-forced-layout` | serious | moderate | Heuristic source analysis. |
+| `scroll-listener-animates-transform` | serious | moderate | Heuristic; a scroll-driven CSS animation is an improvement, not a correctness fix. |
+| `requestidlecallback-no-timeout` | moderate | minor | Often intentional for work that can wait. |
+| `env-safe-area-without-viewport-fit-cover` | serious | minor | Calibration. Without `viewport-fit=cover` the browser keeps content inside the safe area, so the insets are dead code rather than a layout bug (4 of 25 sites, all harmless). |
+| `z-index-over-budget` | moderate | minor | Calibration. With the default budget of 100 it flagged 16 of 25 sites (Bootstrap and design-system scales start at 1000). `z-index-literal-smell` keeps the 9999-style literals at moderate. |
+| `fixed-header-vh-sized` | moderate | minor | vh follows the large viewport, so a fixed header sized in vh is a little taller than intended while the toolbar shows; it rarely hides content. |
+
+### Brand budgets
+
+- `motion.duration`, `motion.easing`, `surfaces.radius` and `surfaces.elevation` are named-token maps, so projects keep their own token names. `motion-duration-off-token` compares a panel duration with every duration token and flags one more than 25% away from all of them.
+- `targets.minTapPx` defaults to 24. A brand value also turns off the WCAG 2.5.8 spacing exception, since a project that asks for 44 px means 44 px.
+- `targets.lcpBudgetMs` and `targets.clsBudget` are validated and echoed in `ux-raw.json`, but no 1.0 rule reads them; LCP and CLS stay with Lighthouse.
+
+### Area notes
+
+These keep false positives down; each has tests with near misses.
+
+- Transitions: body `onunload` and `onbeforeunload` properties count as window listeners. `vta-no-feature-check` follows one level of helper function whose call sites are all guarded. `vta-no-reduced-motion-guard` accepts a script guard (a script that reads `prefers-reduced-motion` and calls `startViewTransition` or `skipTransition`) and ignores durations of 1 ms or less; a global `*` reduce reset does not count, because `*` does not match `::view-transition` pseudo-elements. `vta-duplicate-names` resolves the cascade per element and per media condition set before grouping names, and under `--dynamic` confirms duplicates from rendered boxes. `speculation-rules-csp-gap` treats `'strict-dynamic'` as disabling `'unsafe-inline'` and prints the sha256 source to add, hashed over the element text the browser hashes.
+- INP: the passive-listener rule treats any cancel (`preventDefault()`, `returnValue = false`, `return false` in attribute handlers) and an event passed to other code as a possible cancel. `click-handler-forced-layout` also flags a read and a write inside the same loop iteration. `scroll-listener-animates-transform` follows `requestAnimationFrame` hops and skips discrete toggles. `framework-hydration-on-static-page` needs real hydration calls, not text mentions.
+- Panels: the z-index rules skip skip links and screen-reader text revealed on focus. `motion-no-reduced-motion-guard` ignores opacity and color-only fades (WCAG 2.3.3 is about motion). `menu-no-arrow-keys` passes when any script handles the arrow keys. The @starting-style, `transition: all` and `max-height` rules look at the selector subject, so `dialog .btn` and `[popovertarget]` invokers are not panels.
+- Mobile: `viewport-meta-missing` also reads a viewport meta that scripts inject. `tap-target-under-minimum` ignores visually hidden 1x1 targets, checkboxes and radios, and links inside running text. `hover-only-affordance` accepts `:focus-within`, click-state classes and `(hover: none)` alternatives, including utility-class equivalents on the same element.
+
+### Calibration (1.0)
+
+The static pass ran over `examples/page.html`, `demos/storyboard/index.html`, the og-card template, every runtime-ux fixture, and 25 public pages fetched on 2026-09-22: web.dev, developer.mozilla.org, developer.chrome.com, gov.uk, nodejs.org, svelte.dev, astro.build, github.com, w3.org, css-tricks.com, smashingmagazine.com, en.wikipedia.org, news.ycombinator.com, bbc.com/news, react.dev, vuejs.org, tailwindcss.com, getbootstrap.com, apple.com, stripe.com, vercel.com, theverge.com, python.org, nextjs.org and docs.github.com. Changes made:
+
+1. `menu-no-arrow-keys` goes to review when a script loads more scripts at run time (a `createElement('script')` loader, or `import()` of a computed specifier). web.dev and developer.chrome.com build their menus from JavaScript loaded that way.
+2. `hover-only-affordance` goes to review when no element in the page HTML (or the rendered DOM) matches the revealed target, when every match is empty (no text, controls or media), when the reveal sits inside a link or button that a tap still reaches, or when it reveals `::before` or `::after` content. Cases: plugin CSS for markup the page lacks (css-tricks.com), a "View Theme" hint inside card links (astro.build), and decorative pseudo-elements (react.dev).
+3. `uses-vh-without-dvh` goes to review when no element in the page uses the rule (framework utilities such as Bootstrap's `.vh-100` and unused Tailwind classes) or every match is an empty box (backdrops, decorative lines). A dvh utility on the same element now counts only when it wins the cascade.
+4. `no-starting-style-on-transitioned-popover` accepts a keyframe animation on the open state as the entry animation (vercel.com and nextjs.org dialogs).
+5. `settimeout-zero-as-yield` skips a call followed by `return`, `throw` or `break` out of the loop, which schedules one task rather than one per iteration (svelte.dev tooltip code).
+6. The three severity changes marked "Calibration" in the table above.
+
+After these changes 8 of the 25 sites fail the gate. The remaining blocking findings were reviewed: `uses-vh-without-dvh` on `body`, app shells and sticky panels that exist on the page (7 sites), a `width=1120` viewport (en.wikipedia.org) and `maximum-scale=1` (vercel.com). The 100vh findings are the pattern this spec was written for, so the rule stays serious.

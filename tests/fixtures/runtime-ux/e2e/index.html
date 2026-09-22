@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Northwind Outfitters</title>
+<link rel="stylesheet" href="css/site.css">
+<link rel="manifest" href="manifest.webmanifest">
+</head>
+<body>
+<header class="site-header">
+  <div class="icon-row">
+    <button class="icon-btn" id="menu-btn" aria-label="Menu" aria-haspopup="dialog" aria-controls="menu-sheet"></button>
+    <button class="icon-btn" id="search-btn" aria-label="Search" type="button"></button>
+  </div>
+  <a class="brand" href="/">Northwind</a>
+  <button id="filter" class="filter" type="button">Filter</button>
+</header>
+
+<main>
+  <section class="hero" id="hero">
+    <h1>Gear for the long way round</h1>
+    <p>Packs, shells and stoves tested on the trail.</p>
+    <a class="cta" href="/shop.html">Shop the range</a>
+  </section>
+
+  <ul class="product-grid" id="products">
+    <li class="product">
+      <h2>Ridge 30 pack</h2>
+      <p class="price">$129</p>
+      <button class="quick-view" type="button">Quick view</button>
+      <button class="add" type="button" data-sku="ridge-30">Add to cart</button>
+    </li>
+    <li class="product">
+      <h2>Storm shell</h2>
+      <p class="price">$189</p>
+      <button class="quick-view" type="button">Quick view</button>
+      <button class="add" type="button" data-sku="storm">Add to cart</button>
+    </li>
+    <li class="product">
+      <h2>Ember stove</h2>
+      <p class="price">$59</p>
+      <button class="quick-view" type="button">Quick view</button>
+      <button class="add" type="button" data-sku="ember">Add to cart</button>
+    </li>
+  </ul>
+
+  <div class="toast" id="toast" popover>Added to your cart</div>
+</main>
+
+<div class="sheet" id="menu-sheet" role="dialog" aria-modal="true" aria-label="Menu" hidden>
+  <nav>
+    <a href="/">Home</a>
+    <a href="/shop.html">Shop</a>
+    <a href="/journal.html">Journal</a>
+  </nav>
+  <button class="sheet-close" id="sheet-close" type="button">Close</button>
+</div>
+
+<footer class="site-footer">
+  <p>Northwind Outfitters, since 1998.</p>
+</footer>
+
+<script src="js/analytics.js"></script>
+<script src="js/cart.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

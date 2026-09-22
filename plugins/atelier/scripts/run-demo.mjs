@@ -10,7 +10,7 @@
  *   atelier demo [--out <dir>]
  */
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -23,6 +23,7 @@ import { generateAssets } from '../skills/brand-asset-pipeline/index.mjs';
 import { processImage } from '../skills/responsive-image-pipeline/index.mjs';
 import { generateCard } from '../skills/og-card-generator/index.mjs';
 import { auditPage } from '../skills/accessibility-design-audit/index.mjs';
+import { auditRuntimeUx } from '../skills/runtime-ux-audit/index.mjs';
 import { recordHtml } from '../skills/html-to-video/index.mjs';
 import { findOnPath, formatError } from '../lib/preflight.mjs';
 import { isMain } from '../lib/cli.mjs';
@@ -37,9 +38,17 @@ const MARKER = '.atelier-demo-output';
 // Everything the demo writes. Re-runs delete exactly these names and nothing else.
 const OWNED = ['stage', 'tokens', 'brand', 'img', 'og', 'a11y', 'ux', 'video', 'photo.jpg'];
 
-const isFile = (p) => {
+// lstat, not stat: a symlink named like the marker must not pass for it.
+const isPlainFile = (p) => {
   try {
-    return statSync(p).isFile();
+    return lstatSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+const isDir = (p) => {
+  try {
+    return statSync(p).isDirectory();
   } catch {
     return false;
   }
@@ -61,9 +70,10 @@ const same = (a, b) => relative(real(a), real(b)) === '';
 
 /**
  * Make `outDir` safe to write into. Refuses the working directory, any of its
- * ancestors, the home directory, a filesystem root and the plugin itself, and
- * refuses any non-empty directory that lacks the marker file a previous demo
- * run left. On a re-run it removes only the demo's own outputs (OWNED).
+ * ancestors, the home directory and its ancestors, a filesystem root, the
+ * plugin itself, and an existing file. Refuses any non-empty directory that
+ * lacks the marker file a previous demo run left. On a re-run it removes only
+ * the demo's own outputs (OWNED); links among them are removed, not followed.
  * @param {string} outDir - Absolute path.
  */
 export function prepareOutDir(outDir) {
@@ -71,17 +81,19 @@ export function prepareOutDir(outDir) {
     throw new Error(`Refusing to use ${outDir} as the demo output directory: ${why}. Pass --out <new-folder>.`);
   };
   if (same(outDir, parse(resolve(outDir)).root)) refuse('it is a filesystem root');
-  if (same(outDir, homedir())) refuse('it is your home directory');
+  if (contains(outDir, homedir())) refuse('it is your home directory or one of its parents');
   if (contains(outDir, process.cwd())) refuse('it is the current directory or one of its parents');
   if (contains(outDir, pluginRoot) || contains(pluginRoot, outDir)) refuse('it overlaps the plugin install');
 
   const marker = join(outDir, MARKER);
   if (existsSync(outDir)) {
-    if (readdirSync(outDir).length > 0 && !isFile(marker)) refuse('it is not empty and was not created by atelier demo');
+    if (!isDir(outDir)) refuse('it is a file, not a directory');
+    if (readdirSync(outDir).length > 0 && !isPlainFile(marker)) refuse('it is not empty and was not created by atelier demo');
     for (const name of OWNED) rmSync(join(outDir, name), { recursive: true, force: true });
   }
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(marker, 'Created by `atelier demo`. Safe to delete this whole folder.\n');
+  // Create the marker once; never rewrite an existing one (it could be a hard link).
+  if (!isPlainFile(marker)) writeFileSync(marker, 'Created by `atelier demo`. Safe to delete this whole folder.\n', { flag: 'wx' });
 }
 
 const step = (name) => console.log(`\n> ${name}`);
@@ -142,6 +154,10 @@ export async function runDemo({ outDir = 'atelier-demo' } = {}) {
   const { violations } = await auditPage({ url: pageUrl, outDir: join(outDir, 'a11y') });
   ok(`critical ${violations.critical.length}, serious ${violations.serious.length} -> a11y/`);
 
+  step('runtime-ux-audit');
+  const ux = await auditRuntimeUx({ url: pageSrc, outDir: join(outDir, 'ux') });
+  ok(`critical ${ux.violations.critical.length}, serious ${ux.violations.serious.length} (static pass) -> ux/`);
+
   step('html-to-video');
   if (findOnPath('ffmpeg')) {
     const videoOut = join(outDir, 'video', 'demo.mp4');
@@ -156,10 +172,28 @@ export async function runDemo({ outDir = 'atelier-demo' } = {}) {
   return { outDir };
 }
 
+const USAGE = `Usage: node run-demo.mjs [--out <dir>]
+
+Runs every atelier skill on the bundled fixtures and writes the results to <dir>
+(default ./atelier-demo). <dir> must be new, empty, or a previous demo output.
+
+Exit codes: 0 success, 2 usage error or failure.`;
+
 if (isMain(import.meta.url)) {
-  const { values } = parseArgs({ options: { out: { type: 'string', default: 'atelier-demo' } } });
-  runDemo({ outDir: values.out }).catch((err) => {
-    console.error(`\n${formatError(err)}`);
-    process.exit(1);
-  });
+  let values;
+  try {
+    ({ values } = parseArgs({ options: { out: { type: 'string', short: 'o', default: 'atelier-demo' }, help: { type: 'boolean', short: 'h' } } }));
+  } catch (err) {
+    console.error(`atelier: ${err.message}\n\n${USAGE}`);
+    process.exit(2);
+  }
+  if (values.help) {
+    console.log(USAGE);
+  } else {
+    runDemo({ outDir: values.out }).catch((err) => {
+      console.error(`\n${formatError(err)}`);
+      // Exit now: a step that failed mid-run may have left a browser open.
+      process.exit(2);
+    });
+  }
 }

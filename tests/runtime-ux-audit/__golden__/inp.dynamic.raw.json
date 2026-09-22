@@ -1,0 +1,526 @@
+{
+  "schemaVersion": "1.0",
+  "tool": "atelier/runtime-ux-audit",
+  "url": "index.html",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "mode": {
+    "dynamic": true,
+    "areas": [
+      "inp"
+    ],
+    "engine": {
+      "name": "chromium",
+      "version": "153.0.7000.0",
+      "device": "Pixel 7",
+      "cpuThrottle": 4
+    }
+  },
+  "budgets": {
+    "minTapPx": 24,
+    "minTapPxSource": "default",
+    "inpBudgetMs": 150,
+    "lcpBudgetMs": 2500,
+    "clsBudget": 0.1,
+    "zIndexMax": 100,
+    "longScriptMs": 100,
+    "motionDurationsMs": null
+  },
+  "summary": {
+    "pass": false,
+    "rules": {
+      "critical": 0,
+      "serious": 3,
+      "moderate": 7,
+      "minor": 3
+    },
+    "instances": {
+      "critical": 0,
+      "serious": 4,
+      "moderate": 8,
+      "minor": 3
+    },
+    "byArea": {
+      "inp": {
+        "critical": 0,
+        "serious": 3,
+        "moderate": 7,
+        "minor": 3,
+        "instances": 15
+      }
+    }
+  },
+  "metrics": {
+    "inpP75Ms": 312,
+    "inp": {
+      "estimateMs": 312,
+      "p75InteractionMs": 312,
+      "maxMs": 312,
+      "count": 2,
+      "belowThreshold": false,
+      "worst": {
+        "name": "pointerup",
+        "target": "#feed > li.card:nth-of-type(1)",
+        "inputDelayMs": 18,
+        "processingMs": 262,
+        "presentationMs": 32
+      }
+    },
+    "bfcache": {
+      "restored": true,
+      "reasons": []
+    },
+    "highlights": {
+      "inp": {
+        "non-passive listeners": 2,
+        "main-thread smells": 6,
+        "long scripts": 2,
+        "RUM gaps": 2
+      }
+    }
+  },
+  "violations": [
+    {
+      "ruleId": "atelier/runtime-ux/inp-estimate-over-budget",
+      "severity": "serious",
+      "area": "inp",
+      "confidence": "medium",
+      "methods": [
+        "trace"
+      ],
+      "description": "The lab INP estimate (Event Timing, 4x CPU throttle, Pixel 7 profile) exceeds the INP budget from brand.json targets.inpBudgetMs or the 200 ms default.",
+      "helpUrl": "https://web.dev/articles/inp",
+      "nodes": [
+        {
+          "selector": "#feed > li.card:nth-of-type(1)",
+          "snippet": "pointerup 312 ms (input delay 18, processing 262, presentation 32)",
+          "location": "(runtime)",
+          "message": "INP estimate 312 ms exceeds the 150 ms budget (brand.json targets.inpBudgetMs). Most of it is handler time: split the work and yield.",
+          "data": {
+            "budgetMs": 150,
+            "estimateMs": 312,
+            "inputDelayMs": 18,
+            "interactions": 2,
+            "presentationMs": 32,
+            "processingMs": 262
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/loaf-long-script",
+      "severity": "serious",
+      "area": "inp",
+      "confidence": "high",
+      "methods": [
+        "trace"
+      ],
+      "description": "A script ran longer than 100 ms inside one long animation frame during the interaction probe, blocking input and rendering.",
+      "helpUrl": "https://developer.chrome.com/docs/web-platform/long-animation-frames",
+      "nodes": [
+        {
+          "selector": "js/app.js",
+          "snippet": "DOCUMENT.onclick 240 ms (forced style/layout 36 ms)",
+          "location": "js/app.js:16:36",
+          "message": "Script ran 240 ms in one frame during the interaction probe (limit 100 ms); split it and yield to the main thread.",
+          "data": {
+            "durationMs": 240,
+            "forcedStyleAndLayoutMs": 36,
+            "invoker": "DOCUMENT.onclick",
+            "invokerType": "event-listener"
+          }
+        },
+        {
+          "selector": "https://cdn.example.com/ads.js",
+          "snippet": "TimerHandler:setTimeout 118 ms (forced style/layout 0 ms)",
+          "location": "https://cdn.example.com/ads.js",
+          "message": "tick() ran 118 ms in one frame during the interaction probe (limit 100 ms); split it and yield to the main thread.",
+          "data": {
+            "durationMs": 118,
+            "forcedStyleAndLayoutMs": 0,
+            "invoker": "TimerHandler:setTimeout",
+            "invokerType": "user-callback",
+            "sourceFunctionName": "tick"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/no-sync-xhr",
+      "severity": "serious",
+      "area": "inp",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "A synchronous XMLHttpRequest blocks the main thread, and every pending input, for the whole network round trip.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest/open",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "xhr.open('GET', '/api/config.json', false)",
+          "location": "js/app.js:50:3",
+          "message": "XMLHttpRequest.open('GET', ..., false) is synchronous; use fetch() or an async XMLHttpRequest."
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/click-handler-forced-layout",
+      "severity": "moderate",
+      "area": "inp",
+      "confidence": "medium",
+      "methods": [
+        "js"
+      ],
+      "description": "An input handler writes styles or classes and then reads layout in the same task, forcing a synchronous style and layout pass.",
+      "helpUrl": "https://web.dev/articles/avoid-large-complex-layouts-and-layout-thrashing",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "card.offsetHeight",
+          "location": "js/app.js:20:16",
+          "message": "click handler writes card.classList.add() and then reads offsetHeight, forcing a synchronous layout; read before writing, or move the read into requestAnimationFrame.",
+          "data": {
+            "event": "click",
+            "loop": false,
+            "read": "offsetHeight",
+            "write": "card.classList.add()"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/framework-hydration-on-static-page",
+      "severity": "moderate",
+      "area": "inp",
+      "confidence": "low",
+      "methods": [
+        "html",
+        "js"
+      ],
+      "description": "A framework hydration runtime ships with a page whose server-rendered body has no interactive elements, spending main-thread time for nothing.",
+      "helpUrl": "https://qwik.dev/docs/concepts/resumable/",
+      "nodes": [
+        {
+          "selector": "#__NEXT_DATA__",
+          "snippet": "<script id=\"__NEXT_DATA__\" type=\"application/json\">",
+          "location": "index.html:7:9",
+          "message": "Next.js hydration (script#__NEXT_DATA__) runs on a page with no interactive elements; ship static HTML, or hydrate only the widgets that need it.",
+          "data": {
+            "evidence": "script#__NEXT_DATA__",
+            "framework": "Next.js",
+            "interactive": 0
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/missing-content-visibility",
+      "severity": "moderate",
+      "area": "inp",
+      "confidence": "medium",
+      "methods": [
+        "dom"
+      ],
+      "description": "A long list of repeated blocks sits mostly below the fold without content-visibility: auto, so every item pays style and layout cost up front.",
+      "helpUrl": "https://web.dev/articles/content-visibility",
+      "nodes": [
+        {
+          "selector": "#feed",
+          "snippet": "48 x li.card",
+          "location": "(runtime)",
+          "message": "40 of 48 li.card items start more than two viewports down; add content-visibility: auto with contain-intrinsic-size to skip their rendering.",
+          "data": {
+            "belowFoldCount": 40,
+            "count": 48,
+            "signature": "li.card"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/missing-webvitals-oninp",
+      "severity": "moderate",
+      "area": "inp",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "The page reports Core Web Vitals with web-vitals but never registers onINP, so field responsiveness is not measured.",
+      "helpUrl": "https://www.npmjs.com/package/web-vitals",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/vitals.js\"]",
+          "snippet": "import { onCLS, onLCP } from 'web-vitals';",
+          "location": "js/vitals.js:1:1",
+          "message": "web-vitals reports onCLS, onLCP but never onINP; add onINP (the attribution build also reports long animation frames).",
+          "data": {
+            "metrics": [
+              "onCLS",
+              "onLCP"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/non-passive-scroll-listener",
+      "severity": "moderate",
+      "area": "inp",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "A touch or wheel listener that never cancels its event is registered without { passive: true }, so scrolling waits for it on the main thread.",
+      "helpUrl": "https://developer.chrome.com/docs/lighthouse/best-practices/uses-passive-event-listeners",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "carousel.addEventListener('touchmove', function (e) { carouselX = e.touches[0].clientX; })",
+          "location": "js/app.js:4:1",
+          "message": "touchmove listener on carousel never calls preventDefault(), so it can be passive; add { passive: true } to keep scrolling off the main thread.",
+          "data": {
+            "event": "touchmove",
+            "target": "element",
+            "via": "addEventListener"
+          }
+        },
+        {
+          "selector": "script[src=\"js/scroll.js\"]",
+          "snippet": "window.addEventListener('wheel', function (e) { if (e.ctrlKey) e.preventDefault(); }, { passive: false })",
+          "location": "js/scroll.js:29:1",
+          "message": "wheel listener on window sets { passive: false } but only cancels conditionally; every wheel scroll now waits for it. Attach it to the element that needs it.",
+          "confidence": "medium",
+          "data": {
+            "event": "wheel",
+            "target": "window",
+            "via": "addEventListener"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/scroll-listener-animates-transform",
+      "severity": "moderate",
+      "area": "inp",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "A scroll listener drives transform or opacity from JavaScript where a CSS scroll-driven animation could run off the main thread.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/animation-timeline",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/scroll.js\"]",
+          "snippet": "window.addEventListener('scroll', function () { if (!ticking) { requestAnimationFrame(updateHero); ticking = true; } }, { passive: true })",
+          "location": "js/scroll.js:4:1",
+          "message": "Scroll listener on window sets hero.style.transform on scroll; use animation-timeline: scroll() or view() and keep this code as a fallback behind CSS.supports().",
+          "data": {
+            "target": "window",
+            "write": "hero.style.transform"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/settimeout-zero-as-yield",
+      "severity": "moderate",
+      "area": "inp",
+      "confidence": "medium",
+      "methods": [
+        "js"
+      ],
+      "description": "setTimeout(fn, 0) is used to yield inside a loop; the continuation queues behind every other task instead of resuming first.",
+      "helpUrl": "https://developer.chrome.com/blog/use-scheduler-yield",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "setTimeout(resolve, 0)",
+          "location": "js/app.js:35:36",
+          "message": "Awaiting a setTimeout(0) promise inside a loop yields without priority, so the loop resumes behind other tasks; prefer scheduler.yield() and keep this as the fallback.",
+          "data": {
+            "pattern": "await"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/longtask-without-loaf",
+      "severity": "minor",
+      "area": "inp",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "A PerformanceObserver watches longtask entries with no long-animation-frame observer, so slow frames are not attributed to scripts.",
+      "helpUrl": "https://developer.chrome.com/docs/web-platform/long-animation-frames",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "new PerformanceObserver(function (list) { report(list.getEntries()); }).observe({ type: 'longtask', buffered: true })",
+          "location": "js/app.js:62:1",
+          "message": "Observes 'longtask' only; also observe 'long-animation-frame' (LoAF), which names the scripts and forced layout behind slow frames."
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/mouse-and-touch-pair",
+      "severity": "minor",
+      "area": "inp",
+      "confidence": "medium",
+      "methods": [
+        "js",
+        "html"
+      ],
+      "description": "The same target listens to both mouse and touch events for one gesture; a single pointer event listener handles every input type once.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/API/Pointer_events",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "carousel.addEventListener('touchstart', onPress, { passive: true })",
+          "location": "js/app.js:8:1",
+          "message": "carousel listens to touchstart and mousedown; use one pointerdown or pointerup listener (or click) instead.",
+          "data": {
+            "mouse": [
+              "mousedown"
+            ],
+            "touch": "touchstart"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/requestidlecallback-no-timeout",
+      "severity": "minor",
+      "area": "inp",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "requestIdleCallback is called without a timeout, so on a busy page the callback can be delayed indefinitely.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/API/Window/requestIdleCallback",
+      "nodes": [
+        {
+          "selector": "script:inline(1)",
+          "snippet": "requestIdleCallback(sendLogs)",
+          "location": "index.html:25:3",
+          "message": "requestIdleCallback without { timeout } may never run while the page is busy; add { timeout } if the work is user-visible."
+        }
+      ]
+    }
+  ],
+  "incomplete": [],
+  "rules": [
+    {
+      "id": "atelier/runtime-ux/click-handler-forced-layout",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/framework-hydration-on-static-page",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/inp-estimate-over-budget",
+      "area": "inp",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/loaf-long-script",
+      "area": "inp",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/longtask-without-loaf",
+      "area": "inp",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/missing-content-visibility",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/missing-webvitals-oninp",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/mouse-and-touch-pair",
+      "area": "inp",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/no-sync-xhr",
+      "area": "inp",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/non-passive-scroll-listener",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/requestidlecallback-no-timeout",
+      "area": "inp",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/scroll-listener-animates-transform",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/settimeout-zero-as-yield",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "failed"
+    }
+  ],
+  "resources": [
+    {
+      "kind": "document",
+      "url": "index.html",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/app.js",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/scroll.js",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/vitals.js",
+      "status": "parsed"
+    },
+    {
+      "kind": "module",
+      "url": "web-vitals",
+      "status": "skipped",
+      "reason": "bare-specifier"
+    },
+    {
+      "kind": "script",
+      "url": "script:inline(1)",
+      "status": "parsed"
+    }
+  ],
+  "errors": []
+}

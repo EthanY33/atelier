@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <title>Trailhead: mobile fixture</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/touch-120.png">
+  <link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav">
+      <a href="/" class="brand">Trailhead</a>
+      <div class="nav-item">
+        <a href="/gear">Gear</a>
+        <ul class="dropdown">
+          <li><a href="/gear/packs">Packs</a></li>
+          <li><a href="/gear/tents">Tents</a></li>
+        </ul>
+      </div>
+      <div class="account">
+        <button class="account-btn" type="button">Account</button>
+        <ul class="account-menu">
+          <li><a href="/orders">Orders</a></li>
+        </ul>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>Find your next trail</h1>
+    </section>
+
+    <section class="page">
+      <div class="product-carousel">
+        <article class="card">Pack 30L</article>
+        <article class="card">Pack 45L</article>
+        <article class="card">Pack 60L</article>
+      </div>
+      <div class="chips">
+        <a href="/tag/day" class="chip">Day hikes</a>
+        <a href="/tag/multi" class="chip">Multi-day</a>
+      </div>
+    </section>
+
+    <div class="modal" id="size-guide" role="dialog" aria-modal="true" aria-label="Size guide">
+      <div class="modal-body">Size guide</div>
+    </div>
+  </main>
+
+  <form class="composer" action="/chat">
+    <input type="text" name="message" aria-label="Message">
+    <button type="submit">Send</button>
+  </form>
+
+  <nav class="tabbar">
+    <a href="/">Home</a>
+    <a href="/map">Map</a>
+  </nav>
+
+  <div class="overlay" hidden></div>
+
+  <footer class="footer-bar">
+    <a href="/help">Help</a>
+  </footer>
+
+  <script src="https://cdn.example.com/fastclick/1.0.6/fastclick.min.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+{
+  "engine": { "name": "chromium", "version": "153.0.7000.0", "headless": "new" },
+  "profile": { "device": "Pixel 7", "viewport": { "width": 412, "height": 839 }, "deviceScaleFactor": 2.625, "cpuThrottle": 4 },
+  "navigation": { "status": 200, "finalUrl": "index.html" },
+  "rendered": null,
+  "sweep": {
+    "interactive": [
+      { "selector": "#menu-toggle", "tag": "button", "role": null, "type": null, "text": "Menu", "rect": { "x": 8, "y": 8, "width": 12, "height": 12 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "#search", "tag": "button", "role": null, "type": null, "text": "Search", "rect": { "x": 26, "y": 8, "width": 12, "height": 12 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "#prev", "tag": "a", "role": null, "type": null, "text": "Prev", "rect": { "x": 16, "y": 300, "width": 20, "height": 20 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "#next", "tag": "a", "role": null, "type": null, "text": "Next", "rect": { "x": 37, "y": 295, "width": 60, "height": 30 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "#lone-help", "tag": "button", "role": null, "type": null, "text": "?", "rect": { "x": 360, "y": 400, "width": 16, "height": 16 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "#buy", "tag": "button", "role": null, "type": "submit", "text": "Buy now", "rect": { "x": 16, "y": 600, "width": 120, "height": 48 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "body > main > p > a", "tag": "a", "role": null, "type": null, "text": "terms", "rect": { "x": 100, "y": 500, "width": 40, "height": 14 }, "visible": true, "disabled": false, "inlineInText": true },
+      { "selector": "#agree", "tag": "input", "role": null, "type": "checkbox", "text": "", "rect": { "x": 16, "y": 700, "width": 13, "height": 13 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "#ghost", "tag": "button", "role": null, "type": null, "text": "Hidden", "rect": { "x": 200, "y": 700, "width": 5, "height": 5 }, "visible": false, "disabled": false, "inlineInText": false },
+      { "selector": "#disabled-btn", "tag": "button", "role": null, "type": null, "text": "Off", "rect": { "x": 300, "y": 700, "width": 10, "height": 10 }, "visible": true, "disabled": true, "inlineInText": false },
+      { "selector": "a.skip", "tag": "a", "role": null, "type": null, "text": "Skip to content", "rect": { "x": 0, "y": 0, "width": 1, "height": 1 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "a.offscreen", "tag": "a", "role": null, "type": null, "text": "Offscreen", "rect": { "x": -9999, "y": 0, "width": 20, "height": 20 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "body > main > a.card", "tag": "a", "role": null, "type": null, "text": "Pack 30L", "rect": { "x": 16, "y": 800, "width": 300, "height": 120 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "body > main > a.card > button.fav", "tag": "button", "role": null, "type": null, "text": "Save", "rect": { "x": 290, "y": 806, "width": 16, "height": 16 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "#tab-map", "tag": "div", "role": "tab", "type": null, "text": "Map", "rect": { "x": 200, "y": 1000, "width": 40, "height": 20 }, "visible": true, "disabled": false, "inlineInText": false },
+      { "selector": "#tab-list", "tag": "div", "role": "tab", "type": null, "text": "List", "rect": { "x": 244, "y": 1000, "width": 40, "height": 20 }, "visible": true, "disabled": false, "inlineInText": false }
+    ],
+    "interactiveTruncated": false,
+    "repeatedGroups": [],
+    "viewTransitionNames": []
+  },
+  "interactions": null,
+  "dialogs": null,
+  "bfcache": null,
+  "errors": []
+}

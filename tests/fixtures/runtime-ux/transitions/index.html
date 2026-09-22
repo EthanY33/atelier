@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'nonce-r4nd0m'">
+<title>Transitions fixture</title>
+<link rel="stylesheet" href="css/site.css">
+<script type="speculationrules">
+{
+  "prerender": [{ "where": { "href_matches": "/products/*" }, "eagerness": "immediate" }],
+  "prefetch": [{ "where": { "href_matches": "/*" }, "eagerness": "moderate" }]
+}
+</script>
+<script type="speculationrules" nonce="r4nd0m">
+{ "prefetch": [{ "urls": ["/about.html", "/contact.html"] }] }
+</script>
+</head>
+<body onunload="navigator.sendBeacon('/bye')">
+<header class="site-header">
+  <a href="/">Shop</a>
+  <a href="/about.html">About</a>
+  <a href="/contact.html">Contact</a>
+</header>
+<main>
+  <section class="hero"><h1>New arrivals</h1></section>
+  <ul class="products">
+    <li class="card"><a href="/products/1.html">Product 1</a></li>
+    <li class="card"><a href="/products/2.html">Product 2</a></li>
+    <li class="card"><a href="/products/3.html">Product 3</a></li>
+    <li class="card"><a href="/products/4.html">Product 4</a></li>
+    <li class="card"><a href="/products/5.html">Product 5</a></li>
+    <li class="card"><a href="/products/6.html">Product 6</a></li>
+    <li class="card"><a href="/products/7.html">Product 7</a></li>
+    <li class="card"><a href="/products/8.html">Product 8</a></li>
+    <li class="card"><a href="/products/9.html">Product 9</a></li>
+    <li class="card"><a href="/products/10.html">Product 10</a></li>
+    <li class="card"><a href="/products/11.html">Product 11</a></li>
+    <li class="card"><a href="/products/12.html">Product 12</a></li>
+  </ul>
+  <aside class="promo">Free shipping this week</aside>
+  <dialog class="quick-view"><div class="promo">Quick view</div></dialog>
+</main>
+<script src="js/app.js"></script>
+<script src="js/analytics.js"></script>
+</body>
+</html>

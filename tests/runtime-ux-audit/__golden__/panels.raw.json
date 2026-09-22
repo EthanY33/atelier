@@ -1,0 +1,753 @@
+{
+  "schemaVersion": "1.0",
+  "tool": "atelier/runtime-ux-audit",
+  "url": "index.html",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "mode": {
+    "dynamic": false,
+    "areas": [
+      "panels"
+    ],
+    "engine": null
+  },
+  "budgets": {
+    "minTapPx": 24,
+    "minTapPxSource": "default",
+    "inpBudgetMs": 200,
+    "lcpBudgetMs": 2500,
+    "clsBudget": 0.1,
+    "zIndexMax": 50,
+    "longScriptMs": 100,
+    "motionDurationsMs": {
+      "long": 400,
+      "medium": 250,
+      "short": 150
+    }
+  },
+  "summary": {
+    "pass": false,
+    "rules": {
+      "critical": 0,
+      "serious": 5,
+      "moderate": 9,
+      "minor": 9
+    },
+    "instances": {
+      "critical": 0,
+      "serious": 6,
+      "moderate": 11,
+      "minor": 11
+    },
+    "byArea": {
+      "panels": {
+        "critical": 0,
+        "serious": 5,
+        "moderate": 9,
+        "minor": 9,
+        "instances": 28
+      }
+    }
+  },
+  "metrics": {
+    "inpP75Ms": null,
+    "inp": null,
+    "bfcache": null,
+    "highlights": {
+      "panels": {
+        "z-index smells": 3,
+        "dialog semantics": 7,
+        "popover/menu behavior": 5,
+        "motion gaps": 5,
+        "compositor costs": 3
+      }
+    }
+  },
+  "violations": [
+    {
+      "ruleId": "atelier/runtime-ux/backdrop-filter-on-video-modal",
+      "severity": "serious",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "css",
+        "html"
+      ],
+      "description": "backdrop-filter on a modal that contains a video or iframe, which re-runs the blur on every video frame.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/backdrop-filter",
+      "nodes": [
+        {
+          "selector": "dialog.trailer",
+          "snippet": "dialog.trailer { backdrop-filter: blur(8px) }",
+          "location": "css/panels.css:42:18",
+          "message": "backdrop-filter on a modal that holds <video> or <iframe> (#trailer); the blur re-runs every frame",
+          "data": {
+            "containers": [
+              "#trailer"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/destructive-dialog-closedby-any",
+      "severity": "serious",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "html"
+      ],
+      "description": "A destructive confirmation <dialog> uses closedby=\"any\", so a stray click outside dismisses it.",
+      "helpUrl": "https://html.spec.whatwg.org/multipage/interactive-elements.html#attr-dialog-closedby",
+      "nodes": [
+        {
+          "selector": "#confirm-delete",
+          "snippet": "<dialog id=\"confirm-delete\" closedby=\"any\" aria-labelledby=\"confirm-title\">",
+          "location": "index.html:50:29",
+          "message": "closedby=\"any\" on a \"delete\" confirmation; use closedby=\"closerequest\" so only Escape or a button closes it"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/dialog-missing-label",
+      "severity": "serious",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "html"
+      ],
+      "description": "A <dialog> has no accessible name (aria-label, aria-labelledby or title), so screen readers announce it without a title.",
+      "helpUrl": "https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/",
+      "nodes": [
+        {
+          "selector": "#settings",
+          "snippet": "<dialog id=\"settings\">",
+          "location": "index.html:45:1",
+          "message": "no aria-labelledby, aria-label or title; point aria-labelledby at the dialog heading"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/menu-no-arrow-keys",
+      "severity": "serious",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "js",
+        "html"
+      ],
+      "description": "role=\"menu\" or \"menubar\" promises arrow-key navigation, but no script handles ArrowUp or ArrowDown.",
+      "helpUrl": "https://www.w3.org/WAI/ARIA/apg/patterns/menubar/",
+      "nodes": [
+        {
+          "selector": "#menu-pop",
+          "snippet": "<div id=\"menu-pop\" class=\"dropdown\" popover role=\"menu\">",
+          "location": "index.html:27:47",
+          "message": "role=\"menu\" but no keydown handler for ArrowUp/ArrowDown"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/tooltip-focusable",
+      "severity": "serious",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "html",
+        "js"
+      ],
+      "description": "A role=\"tooltip\" element can take focus or receives focus from a script; tooltips must never be focused.",
+      "helpUrl": "https://www.w3.org/WAI/ARIA/apg/patterns/tooltip/",
+      "nodes": [
+        {
+          "selector": "#info-tip",
+          "snippet": "<div id=\"info-tip\" role=\"tooltip\" tabindex=\"0\">",
+          "location": "index.html:33:37",
+          "message": "role=\"tooltip\" element is focusable (tabindex=\"0\")"
+        },
+        {
+          "selector": "script[src=\"js/panels.js\"]",
+          "snippet": "document.getElementById('info-tip').focus()",
+          "location": "js/panels.js:40:3",
+          "message": "focus() moves focus into role=\"tooltip\" element #info-tip"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/anchor-name-no-supports",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "css",
+        "html"
+      ],
+      "description": "Anchor positioning is used outside @supports and without a polyfill, so browsers without it show an unanchored panel.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_anchor_positioning",
+      "nodes": [
+        {
+          "selector": ".tip-anchor",
+          "snippet": ".tip-anchor { anchor-name: --tip }",
+          "location": "index.html:10:15",
+          "message": "anchor-name outside @supports (anchor-name: --a) and no polyfill; add a fallback position for older browsers"
+        },
+        {
+          "selector": ".flyout-pos",
+          "snippet": ".flyout-pos { position-anchor: --tip }",
+          "location": "index.html:14:15",
+          "message": "position-anchor outside @supports (anchor-name: --a) and no polyfill; add a fallback position for older browsers"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/backdrop-as-sibling-div",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "html"
+      ],
+      "description": "A hand-made backdrop element sits next to or around a modal; a modal <dialog> gets ::backdrop for free.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/::backdrop",
+      "nodes": [
+        {
+          "selector": "body > div.modal-backdrop:nth-of-type(1)",
+          "snippet": "<div class=\"modal-backdrop\">",
+          "location": "index.html:64:1",
+          "message": "\".modal-backdrop\" backs modal body > div.modal:nth-of-type(3); style dialog::backdrop instead"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/backdrop-filter-on-opaque-fill",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "backdrop-filter sits behind a fill that is at least 90% opaque, so the blur is invisible but still costs a compositor layer.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/backdrop-filter",
+      "nodes": [
+        {
+          "selector": ".site-nav",
+          "snippet": ".site-nav { backdrop-filter: blur(16px) }",
+          "location": "css/panels.css:15:3",
+          "message": "backdrop-filter: blur(16px) over background: rgba(10, 10, 15, 0.96) (alpha 0.96); the blur cannot show through, drop it",
+          "data": {
+            "alpha": 0.96,
+            "fill": "rgba(10, 10, 15, 0.96)"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/custom-outside-click-on-auto-popover",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "js",
+        "html"
+      ],
+      "description": "A page-level click listener closes popovers by hand although popover=\"auto\" already light-dismisses.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/API/Popover_API",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/panels.js\"]",
+          "snippet": "document.addEventListener('click', (event) => { const menu = document.getElementById('menu-pop'); if (!menu.contains(event.target)) menu.hidePopover(); })",
+          "location": "js/panels.js:28:1",
+          "message": "document click listener dismisses popovers by hand; popover=\"auto\" already closes on an outside click"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/div-role-dialog",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "html"
+      ],
+      "description": "A modal built from a non-dialog element with role=\"dialog\"; a native <dialog> opened with showModal() handles focus, inertness and Escape.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/dialog",
+      "nodes": [
+        {
+          "selector": "body > div.modal:nth-of-type(3)",
+          "snippet": "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"legacy-title\">",
+          "location": "index.html:66:20",
+          "message": "<div role=\"dialog\" aria-modal=\"true\">: use <dialog> with showModal()"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/fixed-nav-backdrop-filter-under-modal",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "css",
+        "html"
+      ],
+      "description": "A fixed element keeps its backdrop-filter while a modal covers it, so the blur is recomputed under the modal on every paint.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/backdrop-filter",
+      "nodes": [
+        {
+          "selector": ".site-nav",
+          "snippet": ".site-nav { backdrop-filter: blur(16px) }",
+          "location": "css/panels.css:15:3",
+          "message": "fixed \".site-nav\" keeps backdrop-filter under an open modal; hide it or set backdrop-filter: none while the modal is open"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/motion-no-reduced-motion-guard",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "css"
+      ],
+      "description": "A panel moves (transition or animation) with no prefers-reduced-motion override.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/At-rules/@media/prefers-reduced-motion",
+      "nodes": [
+        {
+          "selector": ".sheet",
+          "snippet": ".sheet { animation: slide-up 600ms ease-out }",
+          "location": "css/panels.css:80:10",
+          "message": "\".sheet\" moves with no prefers-reduced-motion: reduce override"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/no-starting-style-on-transitioned-popover",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "css"
+      ],
+      "description": "A popover or dialog declares a transition but no @starting-style, so it appears without its entry animation.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/@starting-style",
+      "nodes": [
+        {
+          "selector": "[popover].dropdown",
+          "snippet": "[popover].dropdown { transition: opacity 0.2s, display 0.2s allow-discrete }",
+          "location": "css/panels.css:50:3",
+          "message": "\"[popover].dropdown\" transitions without a matching @starting-style, so the entry is not animated"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/z-index-literal-smell",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "A magic \"always on top\" z-index such as 9999 or 2147483647; the top layer (showModal, popover) replaces it.",
+      "helpUrl": "https://drafts.csswg.org/css-position-4/#top-layer",
+      "nodes": [
+        {
+          "selector": ":root",
+          "snippet": ":root { --z-modal: 2147483647 }",
+          "location": "css/panels.css:4:3",
+          "message": "--z-modal 2147483647 is an \"always on top\" literal; use a small z-index scale, or the top layer for dialogs and popovers",
+          "data": {
+            "zIndex": 2147483647
+          }
+        },
+        {
+          "selector": ".cookie-banner",
+          "snippet": ".cookie-banner { z-index: 99999 }",
+          "location": "css/panels.css:27:46",
+          "message": "z-index 99999 is an \"always on top\" literal; use a small z-index scale, or the top layer for dialogs and popovers",
+          "data": {
+            "zIndex": 99999
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/custom-escape-on-dialog-popover",
+      "severity": "minor",
+      "area": "panels",
+      "confidence": "low",
+      "methods": [
+        "js",
+        "html"
+      ],
+      "description": "A keydown Escape handler closes modal dialogs or auto popovers, which already close on Escape.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/API/Popover_API",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/panels.js\"]",
+          "snippet": "document.addEventListener('keydown', (event) => { if (event.key === 'Escape') settings.close(); })",
+          "location": "js/panels.js:18:1",
+          "message": "Escape handler calls close() although every dialog opens with showModal(), which closes on Escape by itself"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/exit-not-faster-than-enter",
+      "severity": "minor",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "css"
+      ],
+      "description": "A panel closes more slowly than it opens; exits should be as fast as or faster than entries.",
+      "helpUrl": "https://m3.material.io/styles/motion/overview",
+      "nodes": [
+        {
+          "selector": ".drawer",
+          "snippet": ".drawer { transition: transform 450ms ease-in }",
+          "location": "css/panels.css:68:3",
+          "message": "exit 450ms > enter 200ms",
+          "data": {
+            "enterMs": 200,
+            "exitMs": 450,
+            "openSelector": ".drawer.is-open"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/fixed-max-height-no-overflow",
+      "severity": "minor",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "css"
+      ],
+      "description": "A panel caps its height in px without overflow: auto or scroll, so longer content is clipped or spills out.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/overflow",
+      "nodes": [
+        {
+          "selector": "[popover].dropdown",
+          "snippet": "[popover].dropdown { max-height: 320px }",
+          "location": "css/panels.css:49:3",
+          "message": "max-height: 320px without overflow: auto or scroll; taller content is clipped or spills out",
+          "data": {
+            "maxHeight": "320px"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/focus-trap-library-near-dialog",
+      "severity": "minor",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "js",
+        "html"
+      ],
+      "description": "A focus-trap library ships next to a native <dialog>; showModal() already keeps focus inside the dialog.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/dialog",
+      "nodes": [
+        {
+          "selector": "body > script:nth-of-type(1)",
+          "snippet": "<script src=\"js/vendor/focus-trap.umd.js\">",
+          "location": "index.html:70:9",
+          "message": "loads js/vendor/focus-trap.umd.js next to a native <dialog>"
+        },
+        {
+          "selector": "script[src=\"js/panels.js\"]",
+          "snippet": "window.focusTrap.createFocusTrap('#settings')",
+          "location": "js/panels.js:3:14",
+          "message": "createFocusTrap() next to a native <dialog>"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/inert-with-showmodal",
+      "severity": "minor",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "js"
+      ],
+      "description": "Code that calls showModal() also sets inert by hand; a modal dialog already makes the rest of the page inert.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/inert",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/panels.js\"]",
+          "snippet": "settings.showModal()",
+          "location": "js/panels.js:8:3",
+          "message": "showModal() already makes the rest of the page inert; drop the manual inert toggle next to it"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/motion-duration-off-token",
+      "severity": "minor",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "A panel duration is more than 25% away from every brand motion.duration token.",
+      "helpUrl": "https://m3.material.io/styles/motion/overview",
+      "nodes": [
+        {
+          "selector": ".sheet",
+          "snippet": ".sheet { animation: slide-up 600ms ease-out }",
+          "location": "css/panels.css:80:10",
+          "message": "600ms is 50% off long=400ms",
+          "data": {
+            "durationMs": 600,
+            "offPercent": 50,
+            "token": "long",
+            "tokenMs": 400
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/stale-inset-area",
+      "severity": "minor",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "inset-area is the pre-release name of position-area.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_anchor_positioning",
+      "nodes": [
+        {
+          "selector": ".flyout-pos",
+          "snippet": ".flyout-pos { inset-area: bottom }",
+          "location": "index.html:14:39",
+          "message": "inset-area: bottom was renamed; use position-area: bottom"
+        },
+        {
+          "selector": "@position-try --below",
+          "snippet": "@position-try --below { inset-area: bottom }",
+          "location": "index.html:16:25",
+          "message": "inset-area: bottom was renamed; use position-area: bottom"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/transition-all-on-popover",
+      "severity": "minor",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "transition: all on a popover or dialog animates every changed property, including layout; list the properties instead.",
+      "helpUrl": "https://web.dev/articles/entry-exit-animations",
+      "nodes": [
+        {
+          "selector": "[popover].hint-card",
+          "snippet": "[popover].hint-card { transition-property: all }",
+          "location": "css/panels.css:58:3",
+          "message": "transition-property: all transitions every property; name them (opacity, transform, display, overlay)"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/z-index-over-budget",
+      "severity": "minor",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "A z-index literal is above the surfaces.zIndexMax budget; top-layer dialogs and popovers need no z-index race.",
+      "helpUrl": "https://drafts.csswg.org/css-position-4/#top-layer",
+      "nodes": [
+        {
+          "selector": ".site-nav",
+          "snippet": ".site-nav { z-index: 60 }",
+          "location": "css/panels.css:13:3",
+          "message": "z-index 60 is above the budget of 50 (surfaces.zIndexMax)",
+          "data": {
+            "budget": 50,
+            "zIndex": 60
+          }
+        }
+      ]
+    }
+  ],
+  "incomplete": [],
+  "rules": [
+    {
+      "id": "atelier/runtime-ux/anchor-name-no-supports",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/backdrop-as-sibling-div",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed",
+      "suppressed": 1
+    },
+    {
+      "id": "atelier/runtime-ux/backdrop-filter-on-opaque-fill",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/backdrop-filter-on-video-modal",
+      "area": "panels",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/custom-escape-on-dialog-popover",
+      "area": "panels",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/custom-outside-click-on-auto-popover",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/destructive-dialog-closedby-any",
+      "area": "panels",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/dialog-missing-label",
+      "area": "panels",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/div-role-dialog",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/exit-not-faster-than-enter",
+      "area": "panels",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/fixed-max-height-no-overflow",
+      "area": "panels",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/fixed-nav-backdrop-filter-under-modal",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/focus-lost-after-close",
+      "area": "panels",
+      "severity": "serious",
+      "status": "skipped",
+      "reason": "dynamic-only"
+    },
+    {
+      "id": "atelier/runtime-ux/focus-trap-library-near-dialog",
+      "area": "panels",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/inert-with-showmodal",
+      "area": "panels",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/menu-no-arrow-keys",
+      "area": "panels",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/motion-duration-off-token",
+      "area": "panels",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/motion-no-reduced-motion-guard",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/no-starting-style-on-transitioned-popover",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/stale-inset-area",
+      "area": "panels",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/tooltip-focusable",
+      "area": "panels",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/transition-all-on-popover",
+      "area": "panels",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/z-index-literal-smell",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/z-index-over-budget",
+      "area": "panels",
+      "severity": "minor",
+      "status": "failed",
+      "suppressed": 1
+    }
+  ],
+  "resources": [
+    {
+      "kind": "document",
+      "url": "index.html",
+      "status": "parsed"
+    },
+    {
+      "kind": "stylesheet",
+      "url": "css/panels.css",
+      "status": "parsed"
+    },
+    {
+      "kind": "stylesheet",
+      "url": "style:inline(1)",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/vendor/focus-trap.umd.js",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/panels.js",
+      "status": "parsed"
+    }
+  ],
+  "errors": []
+}

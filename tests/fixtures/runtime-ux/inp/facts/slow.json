@@ -1,0 +1,46 @@
+{
+  "engine": { "name": "chromium", "version": "153.0.7000.0", "headless": "new" },
+  "profile": { "device": "Pixel 7", "viewport": { "width": 412, "height": 839 }, "deviceScaleFactor": 2.625, "cpuThrottle": 4 },
+  "navigation": { "status": 200, "finalUrl": "index.html" },
+  "rendered": null,
+  "sweep": {
+    "interactive": [
+      { "selector": "header.site-header > a:nth-of-type(1)", "tag": "a", "role": null, "type": null, "text": "Home", "rect": { "x": 8, "y": 8, "width": 40, "height": 18 }, "visible": true, "disabled": false, "inlineInText": false }
+    ],
+    "interactiveTruncated": false,
+    "repeatedGroups": [
+      { "parentSelector": "#feed", "signature": "li.card", "count": 48, "belowFoldCount": 40, "contentVisibility": false },
+      { "parentSelector": "main > section.hero", "signature": "p", "count": 24, "belowFoldCount": 22, "contentVisibility": true },
+      { "parentSelector": "footer > ul", "signature": "li", "count": 30, "belowFoldCount": 12, "contentVisibility": false }
+    ],
+    "viewTransitionNames": []
+  },
+  "interactions": {
+    "attempted": [
+      { "kind": "key", "target": "body" },
+      { "kind": "tap", "target": "#feed > li.card:nth-of-type(1)" }
+    ],
+    "entries": [
+      { "interactionId": 11, "name": "pointerup", "target": "#feed > li.card:nth-of-type(1)", "startTime": 2100, "duration": 312, "processingStart": 2118, "processingEnd": 2380 },
+      { "interactionId": 12, "name": "keydown", "target": "body", "startTime": 2900, "duration": 48, "processingStart": 2904, "processingEnd": 2930 }
+    ],
+    "interactionCount": 2,
+    "inp": {
+      "estimateMs": 312, "p75InteractionMs": 312, "maxMs": 312, "count": 2, "belowThreshold": false,
+      "worst": { "name": "pointerup", "target": "#feed > li.card:nth-of-type(1)", "inputDelayMs": 18, "processingMs": 262, "presentationMs": 32 }
+    },
+    "loaf": [
+      { "startTime": 2090, "durationMs": 330, "blockingDurationMs": 280, "scripts": [
+        { "invoker": "DOCUMENT.onclick", "invokerType": "event-listener", "sourceURL": "js/app.js", "sourceFunctionName": "", "sourceCharPosition": 537, "durationMs": 240, "forcedStyleAndLayoutDurationMs": 36 },
+        { "invoker": "Promise.then", "invokerType": "resolve-promise", "sourceURL": "js/app.js", "sourceFunctionName": "renderAll", "sourceCharPosition": 941, "durationMs": 60, "forcedStyleAndLayoutDurationMs": 0 }
+      ] },
+      { "startTime": 2600, "durationMs": 180, "blockingDurationMs": 120, "scripts": [
+        { "invoker": "DOCUMENT.onclick", "invokerType": "event-listener", "sourceURL": "js/app.js", "sourceFunctionName": "", "sourceCharPosition": 537, "durationMs": 130, "forcedStyleAndLayoutDurationMs": 12 },
+        { "invoker": "TimerHandler:setTimeout", "invokerType": "user-callback", "sourceURL": "https://cdn.example.com/ads.js", "sourceFunctionName": "tick", "sourceCharPosition": 1200, "durationMs": 118, "forcedStyleAndLayoutDurationMs": 0 }
+      ] }
+    ]
+  },
+  "dialogs": [],
+  "bfcache": { "supported": true, "restored": true, "reasons": [] },
+  "errors": []
+}

@@ -1,0 +1,714 @@
+{
+  "schemaVersion": "1.0",
+  "tool": "atelier/runtime-ux-audit",
+  "url": "index.html",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "mode": {
+    "dynamic": false,
+    "areas": [
+      "transitions",
+      "inp",
+      "panels",
+      "mobile"
+    ],
+    "engine": null
+  },
+  "budgets": {
+    "minTapPx": 24,
+    "minTapPxSource": "default",
+    "inpBudgetMs": 200,
+    "lcpBudgetMs": 2500,
+    "clsBudget": 0.1,
+    "zIndexMax": 100,
+    "longScriptMs": 100,
+    "motionDurationsMs": null
+  },
+  "summary": {
+    "pass": false,
+    "rules": {
+      "critical": 1,
+      "serious": 3,
+      "moderate": 3,
+      "minor": 0
+    },
+    "instances": {
+      "critical": 1,
+      "serious": 3,
+      "moderate": 3,
+      "minor": 0
+    },
+    "byArea": {
+      "transitions": {
+        "critical": 1,
+        "serious": 1,
+        "moderate": 0,
+        "minor": 0,
+        "instances": 2
+      },
+      "inp": {
+        "critical": 0,
+        "serious": 0,
+        "moderate": 1,
+        "minor": 0,
+        "instances": 1
+      },
+      "panels": {
+        "critical": 0,
+        "serious": 0,
+        "moderate": 2,
+        "minor": 0,
+        "instances": 2
+      },
+      "mobile": {
+        "critical": 0,
+        "serious": 2,
+        "moderate": 0,
+        "minor": 0,
+        "instances": 2
+      }
+    }
+  },
+  "metrics": {
+    "inpP75Ms": null,
+    "inp": null,
+    "bfcache": null,
+    "highlights": {
+      "transitions": {
+        "bfcache blockers": 1,
+        "view-transition gaps": 1,
+        "speculation rules": 0,
+        "prerender analytics": 0
+      },
+      "inp": {
+        "non-passive listeners": 0,
+        "main-thread smells": 1,
+        "long scripts": 0,
+        "RUM gaps": 0
+      },
+      "panels": {
+        "z-index smells": 1,
+        "dialog semantics": 1,
+        "popover/menu behavior": 0,
+        "motion gaps": 0,
+        "compositor costs": 0
+      },
+      "mobile": {
+        "tap targets under 24px": 0,
+        "vh without dvh": 1,
+        "safe-area gaps": 0,
+        "touch/scroll hijacks": 0,
+        "viewport meta": 0,
+        "PWA": 0
+      }
+    }
+  },
+  "violations": [
+    {
+      "ruleId": "atelier/runtime-ux/no-unload-handler",
+      "severity": "critical",
+      "area": "transitions",
+      "confidence": "high",
+      "methods": [
+        "js",
+        "html"
+      ],
+      "description": "An unload handler on the window keeps the page out of the back/forward cache.",
+      "helpUrl": "https://web.dev/articles/bfcache",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/analytics.js\"]",
+          "snippet": "window.addEventListener('unload', function () { navigator.sendBeacon('/collect', JSON.stringify({ type: 'exit' })); })",
+          "location": "js/analytics.js:3:1",
+          "message": "unload handlers keep the page out of the back/forward cache in Firefox and desktop Chromium, and Chromium is deprecating them; listen for pagehide instead.",
+          "data": {
+            "via": "addEventListener"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/vta-no-feature-check",
+      "severity": "serious",
+      "area": "transitions",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "document.startViewTransition() is called without checking that the browser supports it.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/API/View_Transition_API/Using",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "document.startViewTransition(function () { const grid = document.getElementById('products'); const items = Array.from(grid.children).reverse(); items.forEach...",
+          "location": "js/app.js:23:3",
+          "message": "startViewTransition throws where the API is missing; guard it: if (!document.startViewTransition) { update(); return; }"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/hover-only-affordance",
+      "severity": "serious",
+      "area": "mobile",
+      "confidence": "medium",
+      "methods": [
+        "css",
+        "html"
+      ],
+      "description": "Content hidden by default is revealed only by :hover on an ancestor or sibling, with no :focus, :focus-within or click-state equivalent, so touch users cannot reach it.",
+      "helpUrl": "https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus",
+      "nodes": [
+        {
+          "selector": ".product:hover .quick-view",
+          "snippet": ".product:hover .quick-view { opacity: 1 }",
+          "location": "css/site.css:74:3",
+          "message": ".product:hover .quick-view reveals it on hover only; add :focus-within (or a click toggle) to the same rule.",
+          "data": {
+            "hover": ".product:hover .quick-view",
+            "props": [
+              "opacity"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/uses-vh-without-dvh",
+      "severity": "serious",
+      "area": "mobile",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "A full-height box is sized with 100vh and no dvh or svh fallback, so on phones it is taller than the visible viewport while the URL bar shows.",
+      "helpUrl": "https://web.dev/blog/viewport-units",
+      "nodes": [
+        {
+          "selector": ".hero",
+          "snippet": ".hero { height: 100vh }",
+          "location": "css/site.css:40:3",
+          "message": "height uses 100vh with no later dvh or svh declaration; add height: 100dvh (or svh) after it.",
+          "data": {
+            "prop": "height",
+            "vh": 100
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/scroll-listener-animates-transform",
+      "severity": "moderate",
+      "area": "inp",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "A scroll listener drives transform or opacity from JavaScript where a CSS scroll-driven animation could run off the main thread.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/animation-timeline",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "window.addEventListener('scroll', function () { hero.style.transform = 'translateY(' + window.scrollY * 0.3 + 'px)'; }, { passive: true })",
+          "location": "js/app.js:32:1",
+          "message": "Scroll listener on window sets hero.style.transform on scroll; use animation-timeline: scroll() or view() and keep this code as a fallback behind CSS.supports().",
+          "data": {
+            "target": "window",
+            "write": "hero.style.transform"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/div-role-dialog",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "medium",
+      "methods": [
+        "html"
+      ],
+      "description": "A modal built from a non-dialog element with role=\"dialog\"; a native <dialog> opened with showModal() handles focus, inertness and Escape.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/dialog",
+      "nodes": [
+        {
+          "selector": "#menu-sheet",
+          "snippet": "<div class=\"sheet\" id=\"menu-sheet\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Menu\" hidden>",
+          "location": "index.html:51:36",
+          "message": "<div role=\"dialog\" aria-modal=\"true\">: use <dialog> with showModal()"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/z-index-literal-smell",
+      "severity": "moderate",
+      "area": "panels",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "A magic \"always on top\" z-index such as 9999 or 2147483647; the top layer (showModal, popover) replaces it.",
+      "helpUrl": "https://drafts.csswg.org/css-position-4/#top-layer",
+      "nodes": [
+        {
+          "selector": ".sheet",
+          "snippet": ".sheet { z-index: 9999 }",
+          "location": "css/site.css:91:3",
+          "message": "z-index 9999 is an \"always on top\" literal; use a small z-index scale, or the top layer for dialogs and popovers",
+          "data": {
+            "zIndex": 9999
+          }
+        }
+      ]
+    }
+  ],
+  "incomplete": [],
+  "rules": [
+    {
+      "id": "atelier/runtime-ux/analytics-without-prerender-guard",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "notApplicable",
+      "reason": "no known analytics page view calls"
+    },
+    {
+      "id": "atelier/runtime-ux/anchor-name-no-supports",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "notApplicable",
+      "reason": "no anchor-name or position-anchor"
+    },
+    {
+      "id": "atelier/runtime-ux/backdrop-as-sibling-div",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/backdrop-filter-on-opaque-fill",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/backdrop-filter-on-video-modal",
+      "area": "panels",
+      "severity": "serious",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/bfcache-not-restored",
+      "area": "transitions",
+      "severity": "serious",
+      "status": "skipped",
+      "reason": "dynamic-only"
+    },
+    {
+      "id": "atelier/runtime-ux/cache-control-no-store-on-html",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "notApplicable",
+      "reason": "requires-http"
+    },
+    {
+      "id": "atelier/runtime-ux/carousel-no-scroll-snap",
+      "area": "mobile",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/click-handler-forced-layout",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/custom-escape-on-dialog-popover",
+      "area": "panels",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/custom-outside-click-on-auto-popover",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/destructive-dialog-closedby-any",
+      "area": "panels",
+      "severity": "serious",
+      "status": "notApplicable",
+      "reason": "no <dialog closedby=\"any\">"
+    },
+    {
+      "id": "atelier/runtime-ux/dialog-missing-label",
+      "area": "panels",
+      "severity": "serious",
+      "status": "notApplicable",
+      "reason": "no <dialog> elements"
+    },
+    {
+      "id": "atelier/runtime-ux/div-role-dialog",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/double-tap-js-override",
+      "area": "mobile",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/env-safe-area-without-viewport-fit-cover",
+      "area": "mobile",
+      "severity": "minor",
+      "status": "notApplicable",
+      "reason": "no env(safe-area-inset-*) in CSS"
+    },
+    {
+      "id": "atelier/runtime-ux/exit-not-faster-than-enter",
+      "area": "panels",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/fixed-bottom-no-safe-area",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "notApplicable",
+      "reason": "viewport-fit is not cover"
+    },
+    {
+      "id": "atelier/runtime-ux/fixed-header-vh-sized",
+      "area": "mobile",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/fixed-max-height-no-overflow",
+      "area": "panels",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/fixed-nav-backdrop-filter-under-modal",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/focus-lost-after-close",
+      "area": "panels",
+      "severity": "serious",
+      "status": "skipped",
+      "reason": "dynamic-only"
+    },
+    {
+      "id": "atelier/runtime-ux/focus-trap-library-near-dialog",
+      "area": "panels",
+      "severity": "minor",
+      "status": "notApplicable",
+      "reason": "no <dialog> element or showModal() call"
+    },
+    {
+      "id": "atelier/runtime-ux/framework-hydration-on-static-page",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "notApplicable",
+      "reason": "no hydration runtime"
+    },
+    {
+      "id": "atelier/runtime-ux/hover-only-affordance",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/inert-with-showmodal",
+      "area": "panels",
+      "severity": "minor",
+      "status": "notApplicable",
+      "reason": "no showModal() call"
+    },
+    {
+      "id": "atelier/runtime-ux/inp-estimate-over-budget",
+      "area": "inp",
+      "severity": "serious",
+      "status": "skipped",
+      "reason": "dynamic-only"
+    },
+    {
+      "id": "atelier/runtime-ux/loaf-long-script",
+      "area": "inp",
+      "severity": "serious",
+      "status": "skipped",
+      "reason": "dynamic-only"
+    },
+    {
+      "id": "atelier/runtime-ux/longtask-without-loaf",
+      "area": "inp",
+      "severity": "minor",
+      "status": "notApplicable",
+      "reason": "no longtask observer"
+    },
+    {
+      "id": "atelier/runtime-ux/menu-no-arrow-keys",
+      "area": "panels",
+      "severity": "serious",
+      "status": "notApplicable",
+      "reason": "no role=\"menu\" or \"menubar\""
+    },
+    {
+      "id": "atelier/runtime-ux/missing-content-visibility",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "skipped",
+      "reason": "dynamic-only"
+    },
+    {
+      "id": "atelier/runtime-ux/missing-interactive-widget",
+      "area": "mobile",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/missing-webvitals-oninp",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "notApplicable",
+      "reason": "no web-vitals usage"
+    },
+    {
+      "id": "atelier/runtime-ux/modal-no-overscroll-behavior",
+      "area": "mobile",
+      "severity": "moderate",
+      "status": "notApplicable",
+      "reason": "no scrollable modal rules"
+    },
+    {
+      "id": "atelier/runtime-ux/motion-duration-off-token",
+      "area": "panels",
+      "severity": "minor",
+      "status": "notApplicable",
+      "reason": "no brand motion.duration tokens"
+    },
+    {
+      "id": "atelier/runtime-ux/motion-no-reduced-motion-guard",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/mouse-and-touch-pair",
+      "area": "inp",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/no-beforeunload-always-attached",
+      "area": "transitions",
+      "severity": "serious",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/no-starting-style-on-transitioned-popover",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/no-sync-xhr",
+      "area": "inp",
+      "severity": "serious",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/no-unload-handler",
+      "area": "transitions",
+      "severity": "critical",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/non-passive-scroll-listener",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/non-passive-touch-listener",
+      "area": "mobile",
+      "severity": "critical",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/push-permission-no-display-mode-guard",
+      "area": "mobile",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/pwa-no-apple-touch-icon",
+      "area": "mobile",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/requestidlecallback-no-timeout",
+      "area": "inp",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/scroll-hijack",
+      "area": "mobile",
+      "severity": "critical",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/scroll-listener-animates-transform",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/settimeout-zero-as-yield",
+      "area": "inp",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/speculation-rules-csp-gap",
+      "area": "transitions",
+      "severity": "serious",
+      "status": "notApplicable",
+      "reason": "no inline speculation rules"
+    },
+    {
+      "id": "atelier/runtime-ux/speculation-rules-immediate-abuse",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "notApplicable",
+      "reason": "no speculation rules"
+    },
+    {
+      "id": "atelier/runtime-ux/stale-inset-area",
+      "area": "panels",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/tap-target-under-minimum",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "skipped",
+      "reason": "dynamic-only"
+    },
+    {
+      "id": "atelier/runtime-ux/tooltip-focusable",
+      "area": "panels",
+      "severity": "serious",
+      "status": "notApplicable",
+      "reason": "no role=\"tooltip\" elements"
+    },
+    {
+      "id": "atelier/runtime-ux/transition-all-on-popover",
+      "area": "panels",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/user-scalable-no",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/uses-vh-without-dvh",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/viewport-meta-missing",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/vta-duplicate-names",
+      "area": "transitions",
+      "severity": "serious",
+      "status": "notApplicable",
+      "reason": "no view-transition-name declarations"
+    },
+    {
+      "id": "atelier/runtime-ux/vta-no-feature-check",
+      "area": "transitions",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/vta-no-reduced-motion-guard",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "notApplicable",
+      "reason": "no custom view transition CSS"
+    },
+    {
+      "id": "atelier/runtime-ux/vta-root-transformed",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/webkit-overflow-scrolling-touch",
+      "area": "mobile",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/z-index-literal-smell",
+      "area": "panels",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/z-index-over-budget",
+      "area": "panels",
+      "severity": "minor",
+      "status": "passed"
+    }
+  ],
+  "resources": [
+    {
+      "kind": "document",
+      "url": "index.html",
+      "status": "parsed"
+    },
+    {
+      "kind": "stylesheet",
+      "url": "css/site.css",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/analytics.js",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/cart.js",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/app.js",
+      "status": "parsed"
+    },
+    {
+      "kind": "manifest",
+      "url": "manifest.webmanifest",
+      "status": "parsed"
+    }
+  ],
+  "errors": []
+}

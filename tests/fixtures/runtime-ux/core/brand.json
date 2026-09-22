@@ -1,0 +1,8 @@
+{
+  "brand": { "studio": "Fixture Studio" },
+  "palette": { "bg": "#101010" },
+  "typography": { "body": "system-ui" },
+  "motion": { "duration": { "short": "150ms", "long": "0.4s" } },
+  "surfaces": { "zIndexMax": 50 },
+  "targets": { "minTapPx": 44, "inpBudgetMs": 150 }
+}

@@ -1,0 +1,36 @@
+{
+  "engine": { "name": "chromium", "version": "153.0.7000.0", "headless": "new" },
+  "profile": { "device": "Pixel 7", "viewport": { "width": 412, "height": 839 }, "deviceScaleFactor": 2.625, "cpuThrottle": 4 },
+  "navigation": { "status": 200, "finalUrl": "index.html" },
+  "rendered": { "html": "<!doctype html><html><head></head><body><button class=\"icon\">x</button><dialog id=\"late\"></dialog></body></html>" },
+  "sweep": {
+    "interactive": [
+      { "selector": "body > button.icon", "tag": "button", "role": null, "type": null, "text": "x", "rect": { "x": 8, "y": 8, "width": 12, "height": 12 }, "visible": true, "disabled": false, "inlineInText": false }
+    ],
+    "interactiveTruncated": false,
+    "repeatedGroups": [
+      { "parentSelector": "#list", "signature": "li.card", "count": 40, "belowFoldCount": 30, "contentVisibility": false }
+    ],
+    "viewTransitionNames": [
+      { "name": "hero", "selectors": ["body > div.card:nth-of-type(1)", "body > div.card:nth-of-type(2)"] }
+    ]
+  },
+  "interactions": {
+    "attempted": [{ "kind": "key", "target": "body" }, { "kind": "tap", "target": "body > button.icon" }],
+    "entries": [
+      { "interactionId": 7, "name": "pointerup", "target": "body > button.icon", "startTime": 1200, "duration": 288, "processingStart": 1212, "processingEnd": 1462 }
+    ],
+    "interactionCount": 2,
+    "inp": { "estimateMs": 288, "p75InteractionMs": 288, "maxMs": 288, "count": 1, "belowThreshold": false, "worst": { "name": "pointerup", "target": "body > button.icon", "inputDelayMs": 12, "processingMs": 250, "presentationMs": 26 } },
+    "loaf": [
+      { "startTime": 1190, "durationMs": 310, "blockingDurationMs": 260, "scripts": [
+        { "invoker": "BUTTON.onclick", "invokerType": "event-listener", "sourceURL": "js/slow.js", "sourceFunctionName": "onBuy", "sourceCharPosition": 0, "durationMs": 250, "forcedStyleAndLayoutDurationMs": 0 }
+      ] }
+    ]
+  },
+  "dialogs": [
+    { "trigger": "body > button.open", "opened": true, "closed": true, "closeMethod": "escape", "activeAfterClose": "body", "restoredToTrigger": false }
+  ],
+  "bfcache": { "supported": true, "restored": false, "reasons": ["masked"] },
+  "errors": []
+}

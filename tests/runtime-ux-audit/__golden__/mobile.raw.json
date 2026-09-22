@@ -1,0 +1,536 @@
+{
+  "schemaVersion": "1.0",
+  "tool": "atelier/runtime-ux-audit",
+  "url": "index.html",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "mode": {
+    "dynamic": false,
+    "areas": [
+      "mobile"
+    ],
+    "engine": null
+  },
+  "budgets": {
+    "minTapPx": 24,
+    "minTapPxSource": "default",
+    "inpBudgetMs": 200,
+    "lcpBudgetMs": 2500,
+    "clsBudget": 0.1,
+    "zIndexMax": 100,
+    "longScriptMs": 100,
+    "motionDurationsMs": null
+  },
+  "summary": {
+    "pass": false,
+    "rules": {
+      "critical": 2,
+      "serious": 4,
+      "moderate": 4,
+      "minor": 4
+    },
+    "instances": {
+      "critical": 2,
+      "serious": 5,
+      "moderate": 8,
+      "minor": 4
+    },
+    "byArea": {
+      "mobile": {
+        "critical": 2,
+        "serious": 4,
+        "moderate": 4,
+        "minor": 4,
+        "instances": 19
+      }
+    }
+  },
+  "metrics": {
+    "inpP75Ms": null,
+    "inp": null,
+    "bfcache": null,
+    "highlights": {
+      "mobile": {
+        "tap targets under 24px": 0,
+        "vh without dvh": 2,
+        "safe-area gaps": 3,
+        "touch/scroll hijacks": 5,
+        "viewport meta": 1,
+        "PWA": 3
+      }
+    }
+  },
+  "violations": [
+    {
+      "ruleId": "atelier/runtime-ux/non-passive-touch-listener",
+      "severity": "critical",
+      "area": "mobile",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "A touchstart or touchmove listener on window, document or body opts out of passive mode, so every scroll gesture waits for the handler to run.",
+      "helpUrl": "https://web.dev/articles/uses-passive-event-listeners",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "document.addEventListener('touchmove', function onTouchMove(e) { pinching = e.touches.length > 1; if (pinching) e.preventDefault(); }, { passive: false })",
+          "location": "js/app.js:6:1",
+          "message": "touchmove on document with passive: false blocks scrolling until the handler returns; use passive: true, or touch-action in CSS.",
+          "data": {
+            "event": "touchmove",
+            "target": "document"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/scroll-hijack",
+      "severity": "critical",
+      "area": "mobile",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "A non-passive touch or wheel listener on window, document or body calls preventDefault() on every event, which disables native scrolling.",
+      "helpUrl": "https://web.dev/articles/uses-passive-event-listeners",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "window.addEventListener('wheel', (e) => { e.preventDefault(); customScrollBy(e.deltaY); }, { passive: false })",
+          "location": "js/app.js:12:1",
+          "message": "The wheel handler on window calls preventDefault() unconditionally (js/app.js:13:3) with passive: false, so the page cannot scroll natively.",
+          "data": {
+            "event": "wheel",
+            "target": "window"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/fixed-bottom-no-safe-area",
+      "severity": "serious",
+      "area": "mobile",
+      "confidence": "medium",
+      "methods": [
+        "css",
+        "html"
+      ],
+      "description": "A position: fixed element pinned to bottom 0 under viewport-fit=cover never pads for env(safe-area-inset-bottom), so the home indicator overlaps it.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/env",
+      "nodes": [
+        {
+          "selector": ".composer",
+          "snippet": ".composer { position: fixed }",
+          "location": "css/site.css:82:3",
+          "message": ".composer is fixed at bottom 0 with no env(safe-area-inset-bottom) padding, margin or offset."
+        },
+        {
+          "selector": ".tabbar",
+          "snippet": ".tabbar { position: fixed }",
+          "location": "css/site.css:91:3",
+          "message": ".tabbar is fixed at bottom 0 with no env(safe-area-inset-bottom) padding, margin or offset."
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/hover-only-affordance",
+      "severity": "serious",
+      "area": "mobile",
+      "confidence": "medium",
+      "methods": [
+        "css",
+        "html"
+      ],
+      "description": "Content hidden by default is revealed only by :hover on an ancestor or sibling, with no :focus, :focus-within or click-state equivalent, so touch users cannot reach it.",
+      "helpUrl": "https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus",
+      "nodes": [
+        {
+          "selector": ".nav-item:hover .dropdown",
+          "snippet": ".nav-item:hover .dropdown { display: block }",
+          "location": "css/site.css:25:3",
+          "message": ".nav-item:hover .dropdown reveals it on hover only; add :focus-within (or a click toggle) to the same rule.",
+          "data": {
+            "hover": ".nav-item:hover .dropdown",
+            "props": [
+              "display"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/user-scalable-no",
+      "severity": "serious",
+      "area": "mobile",
+      "confidence": "high",
+      "methods": [
+        "html"
+      ],
+      "description": "The viewport meta disables or caps pinch zoom (user-scalable=no or maximum-scale below 2), which fails WCAG 1.4.4 Resize Text.",
+      "helpUrl": "https://www.w3.org/TR/WCAG22/#resize-text",
+      "nodes": [
+        {
+          "selector": "head > meta:nth-of-type(2)",
+          "snippet": "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover\">",
+          "location": "index.html:5:25",
+          "message": "maximum-scale=1 blocks zooming to 200%; remove it."
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/uses-vh-without-dvh",
+      "severity": "serious",
+      "area": "mobile",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "A full-height box is sized with 100vh and no dvh or svh fallback, so on phones it is taller than the visible viewport while the URL bar shows.",
+      "helpUrl": "https://web.dev/blog/viewport-units",
+      "nodes": [
+        {
+          "selector": ".hero",
+          "snippet": ".hero { min-height: 100vh }",
+          "location": "css/site.css:40:3",
+          "message": "min-height uses 100vh with no later dvh or svh declaration; add min-height: 100dvh (or svh) after it.",
+          "data": {
+            "prop": "min-height",
+            "vh": 100
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/carousel-no-scroll-snap",
+      "severity": "moderate",
+      "area": "mobile",
+      "confidence": "medium",
+      "methods": [
+        "css"
+      ],
+      "description": "A horizontal carousel scrolls freely without scroll-snap-type, or scroll-snap-align is set with no snap container, so swipes stop between slides.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_scroll_snap",
+      "nodes": [
+        {
+          "selector": ".product-carousel",
+          "snippet": ".product-carousel { overflow-x: auto }",
+          "location": "css/site.css:53:3",
+          "message": ".product-carousel scrolls horizontally without scroll-snap-type; add scroll-snap-type: x mandatory and scroll-snap-align on the slides."
+        },
+        {
+          "selector": ".product-carousel .card",
+          "snippet": ".product-carousel .card { scroll-snap-align: start }",
+          "location": "css/site.css:59:3",
+          "message": "scroll-snap-align is set but no rule sets scroll-snap-type, so nothing snaps.",
+          "confidence": "high"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/double-tap-js-override",
+      "severity": "moderate",
+      "area": "mobile",
+      "confidence": "medium",
+      "methods": [
+        "js",
+        "html"
+      ],
+      "description": "Script fights the browser tap handling (a touchend double-tap timer with preventDefault, or FastClick) where touch-action: manipulation or a device-width viewport is enough.",
+      "helpUrl": "https://web.dev/articles/mobile-touch",
+      "nodes": [
+        {
+          "selector": "body > script:nth-of-type(1)",
+          "snippet": "<script src=\"https://cdn.example.com/fastclick/1.0.6/fastclick.min.js\">",
+          "location": "index.html:69:11",
+          "message": "FastClick removes a 300 ms delay that no current browser has with width=device-width, and breaks native taps; remove it."
+        },
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "document.querySelector('.product-carousel').addEventListener('touchend', (e) => { const now = Date.now(); if (now - lastTap < 350) { e.preventDefault(); } la...",
+          "location": "js/app.js:22:1",
+          "message": "touchend handler cancels a second tap within 350 ms; use touch-action: manipulation instead of a script timer.",
+          "data": {
+            "windowMs": 350
+          }
+        },
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "FastClick.attach(document.body)",
+          "location": "js/app.js:46:3",
+          "message": "FastClick removes a 300 ms delay that no current browser has with width=device-width, and breaks native taps; remove it."
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/modal-no-overscroll-behavior",
+      "severity": "moderate",
+      "area": "mobile",
+      "confidence": "medium",
+      "methods": [
+        "css",
+        "js"
+      ],
+      "description": "A scrollable modal has no overscroll-behavior and the page has no body scroll lock, so scrolling past its end scrolls the page behind it.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/overscroll-behavior",
+      "nodes": [
+        {
+          "selector": ".modal",
+          "snippet": ".modal { overflow-y: auto }",
+          "location": "css/site.css:77:3",
+          "message": ".modal scrolls but has no overscroll-behavior: contain and no body scroll lock was found."
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/push-permission-no-display-mode-guard",
+      "severity": "moderate",
+      "area": "mobile",
+      "confidence": "medium",
+      "methods": [
+        "js"
+      ],
+      "description": "Notification permission or a push subscription is requested without a display-mode: standalone check, but iOS offers web push only to Home Screen web apps.",
+      "helpUrl": "https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "Notification.requestPermission()",
+          "location": "js/app.js:32:28",
+          "message": "Notification.requestPermission() is not gated on matchMedia('(display-mode: standalone)') or navigator.standalone; on iOS, ask only inside the installed app."
+        },
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "reg.pushManager.subscribe({ userVisibleOnly: true })",
+          "location": "js/app.js:35:11",
+          "message": "reg.pushManager.subscribe() is not gated on matchMedia('(display-mode: standalone)') or navigator.standalone; on iOS, ask only inside the installed app."
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/fixed-header-vh-sized",
+      "severity": "minor",
+      "area": "mobile",
+      "confidence": "medium",
+      "methods": [
+        "css"
+      ],
+      "description": "A position: fixed or sticky element is sized in vh, which follows the large viewport on phones and overstates the visible area while browser toolbars show.",
+      "helpUrl": "https://web.dev/blog/viewport-units",
+      "nodes": [
+        {
+          "selector": ".site-header",
+          "snippet": ".site-header { height: 8vh }",
+          "location": "css/site.css:16:3",
+          "message": "position: fixed element sized with height: 8vh; use svh or dvh.",
+          "data": {
+            "position": "fixed",
+            "prop": "height",
+            "vh": 8
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/missing-interactive-widget",
+      "severity": "minor",
+      "area": "mobile",
+      "confidence": "medium",
+      "methods": [
+        "html",
+        "css"
+      ],
+      "description": "A fixed, bottom-anchored bar holds a text field but the viewport meta has no interactive-widget key, so the on-screen keyboard covers it in Chromium.",
+      "helpUrl": "https://developer.chrome.com/blog/viewport-resize-behavior",
+      "nodes": [
+        {
+          "selector": ".composer",
+          "snippet": ".composer { position: fixed }",
+          "location": "css/site.css:82:3",
+          "message": ".composer is fixed at bottom 0 and holds body > form.composer > input; add interactive-widget=resizes-content to the viewport meta."
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/pwa-no-apple-touch-icon",
+      "severity": "minor",
+      "area": "mobile",
+      "confidence": "medium",
+      "methods": [
+        "html"
+      ],
+      "description": "An installable page has no apple-touch-icon and no manifest icon of at least 180x180, so iOS adds it to the Home Screen with a blurry or screenshot icon.",
+      "helpUrl": "https://web.dev/articles/install-criteria",
+      "nodes": [
+        {
+          "selector": "head > link:nth-of-type(2)",
+          "snippet": "<link rel=\"apple-touch-icon\" href=\"icons/touch-120.png\">",
+          "location": "index.html:8:32",
+          "message": "The largest apple-touch-icon is 120x120 and no manifest icon is 180x180 or larger; iOS needs 180x180.",
+          "data": {
+            "largestPx": 120
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/webkit-overflow-scrolling-touch",
+      "severity": "minor",
+      "area": "mobile",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "-webkit-overflow-scrolling: touch has been a no-op since iOS 13, where every overflow scroller already uses momentum scrolling.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/-webkit-overflow-scrolling",
+      "nodes": [
+        {
+          "selector": ".product-carousel",
+          "snippet": ".product-carousel { -webkit-overflow-scrolling: touch }",
+          "location": "css/site.css:54:3",
+          "message": "Remove it; iOS 13 and later ignore it."
+        }
+      ]
+    }
+  ],
+  "incomplete": [],
+  "rules": [
+    {
+      "id": "atelier/runtime-ux/carousel-no-scroll-snap",
+      "area": "mobile",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/double-tap-js-override",
+      "area": "mobile",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/env-safe-area-without-viewport-fit-cover",
+      "area": "mobile",
+      "severity": "minor",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/fixed-bottom-no-safe-area",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/fixed-header-vh-sized",
+      "area": "mobile",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/hover-only-affordance",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/missing-interactive-widget",
+      "area": "mobile",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/modal-no-overscroll-behavior",
+      "area": "mobile",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/non-passive-touch-listener",
+      "area": "mobile",
+      "severity": "critical",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/push-permission-no-display-mode-guard",
+      "area": "mobile",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/pwa-no-apple-touch-icon",
+      "area": "mobile",
+      "severity": "minor",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/scroll-hijack",
+      "area": "mobile",
+      "severity": "critical",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/tap-target-under-minimum",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "skipped",
+      "reason": "dynamic-only"
+    },
+    {
+      "id": "atelier/runtime-ux/user-scalable-no",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/uses-vh-without-dvh",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/viewport-meta-missing",
+      "area": "mobile",
+      "severity": "serious",
+      "status": "passed"
+    },
+    {
+      "id": "atelier/runtime-ux/webkit-overflow-scrolling-touch",
+      "area": "mobile",
+      "severity": "minor",
+      "status": "failed",
+      "suppressed": 1
+    }
+  ],
+  "resources": [
+    {
+      "kind": "document",
+      "url": "index.html",
+      "status": "parsed"
+    },
+    {
+      "kind": "stylesheet",
+      "url": "css/site.css",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "https://cdn.example.com/fastclick/1.0.6/fastclick.min.js",
+      "status": "skipped",
+      "reason": "cross-origin"
+    },
+    {
+      "kind": "script",
+      "url": "js/app.js",
+      "status": "parsed"
+    },
+    {
+      "kind": "manifest",
+      "url": "manifest.webmanifest",
+      "status": "parsed"
+    },
+    {
+      "kind": "image",
+      "url": "icons/touch-120.png",
+      "status": "parsed"
+    }
+  ],
+  "errors": []
+}

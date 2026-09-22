@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/EthanY33/atelier/main/plugins/atelier/schemas/ux-audit.schema.json",
+  "title": "runtime-ux-audit raw report (ux-raw.json)",
+  "description": "Output of the runtime-ux-audit skill: rule results grouped by pain area and severity.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "tool", "url", "timestamp", "mode", "budgets", "summary", "metrics", "violations", "incomplete", "rules", "resources", "errors"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "tool": { "const": "atelier/runtime-ux-audit" },
+    "url": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dynamic", "areas", "engine"],
+      "properties": {
+        "dynamic": { "type": "boolean" },
+        "areas": { "type": "array", "items": { "$ref": "#/$defs/area" }, "minItems": 1, "uniqueItems": true },
+        "engine": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "version", "device", "cpuThrottle"],
+              "properties": {
+                "name": { "type": "string" },
+                "version": { "type": ["string", "null"] },
+                "device": { "type": ["string", "null"] },
+                "cpuThrottle": { "type": ["number", "null"] }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "budgets": { "$ref": "#/$defs/budgets" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "metrics": { "$ref": "#/$defs/metrics" },
+    "violations": { "type": "array", "items": { "$ref": "#/$defs/violation" } },
+    "incomplete": { "type": "array", "items": { "$ref": "#/$defs/violation" } },
+    "rules": { "type": "array", "items": { "$ref": "#/$defs/ruleStatus" } },
+    "resources": { "type": "array", "items": { "$ref": "#/$defs/resource" } },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["phase", "message"],
+        "properties": {
+          "phase": { "enum": ["collect", "rule", "dynamic"] },
+          "ruleId": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "severity": { "enum": ["critical", "serious", "moderate", "minor"] },
+    "area": { "enum": ["transitions", "inp", "panels", "mobile"] },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "method": { "enum": ["html", "css", "js", "dom", "trace", "headers"] },
+    "ruleId": { "type": "string", "pattern": "^atelier/runtime-ux/[a-z0-9]+(-[a-z0-9]+)*$" },
+    "severityCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["critical", "serious", "moderate", "minor"],
+      "properties": {
+        "critical": { "type": "integer", "minimum": 0 },
+        "serious": { "type": "integer", "minimum": 0 },
+        "moderate": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selector", "snippet", "location"],
+      "properties": {
+        "selector": { "type": "string" },
+        "snippet": { "type": "string", "maxLength": 200 },
+        "location": { "type": "string" },
+        "message": { "type": "string", "maxLength": 240 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "data": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "number" },
+              { "type": "boolean" },
+              { "type": "null" },
+              { "type": "array", "items": { "type": ["string", "number"] } }
+            ]
+          }
+        }
+      }
+    },
+    "violation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ruleId", "severity", "area", "confidence", "methods", "description", "helpUrl", "nodes"],
+      "properties": {
+        "ruleId": { "$ref": "#/$defs/ruleId" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "area": { "$ref": "#/$defs/area" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "methods": { "type": "array", "items": { "$ref": "#/$defs/method" }, "minItems": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "helpUrl": { "type": "string", "format": "uri" },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" }, "minItems": 1 },
+        "nodesTruncated": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ruleStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "area", "severity", "status"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ruleId" },
+        "area": { "$ref": "#/$defs/area" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "status": { "enum": ["failed", "passed", "notApplicable", "skipped", "incomplete", "error"] },
+        "reason": { "type": "string" },
+        "suppressed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "url", "status"],
+      "properties": {
+        "kind": { "enum": ["document", "stylesheet", "script", "module", "manifest", "image", "speculation-rules"] },
+        "url": { "type": "string" },
+        "status": { "enum": ["parsed", "skipped", "failed", "parse-error", "too-large"] },
+        "reason": { "type": "string" }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minTapPx", "minTapPxSource", "inpBudgetMs", "lcpBudgetMs", "clsBudget", "zIndexMax", "longScriptMs", "motionDurationsMs"],
+      "properties": {
+        "minTapPx": { "type": "integer", "minimum": 1 },
+        "minTapPxSource": { "enum": ["default", "brand"] },
+        "inpBudgetMs": { "type": "number", "exclusiveMinimum": 0 },
+        "lcpBudgetMs": { "type": "number", "exclusiveMinimum": 0 },
+        "clsBudget": { "type": "number", "minimum": 0 },
+        "zIndexMax": { "type": "integer", "minimum": 0 },
+        "longScriptMs": { "type": "number", "exclusiveMinimum": 0 },
+        "motionDurationsMs": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 } }
+          ]
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pass", "rules", "instances", "byArea"],
+      "properties": {
+        "pass": { "type": "boolean" },
+        "rules": { "$ref": "#/$defs/severityCounts" },
+        "instances": { "$ref": "#/$defs/severityCounts" },
+        "byArea": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "transitions": { "$ref": "#/$defs/areaCounts" },
+            "inp": { "$ref": "#/$defs/areaCounts" },
+            "panels": { "$ref": "#/$defs/areaCounts" },
+            "mobile": { "$ref": "#/$defs/areaCounts" }
+          }
+        }
+      }
+    },
+    "areaCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["critical", "serious", "moderate", "minor", "instances"],
+      "properties": {
+        "critical": { "type": "integer", "minimum": 0 },
+        "serious": { "type": "integer", "minimum": 0 },
+        "moderate": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 },
+        "instances": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inpP75Ms", "inp", "bfcache", "highlights"],
+      "properties": {
+        "inpP75Ms": { "type": ["number", "null"] },
+        "inp": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["estimateMs", "p75InteractionMs", "maxMs", "count", "belowThreshold", "worst"],
+              "properties": {
+                "estimateMs": { "type": ["number", "null"] },
+                "p75InteractionMs": { "type": ["number", "null"] },
+                "maxMs": { "type": ["number", "null"] },
+                "count": { "type": "integer", "minimum": 0 },
+                "belowThreshold": { "type": "boolean" },
+                "worst": {
+                  "oneOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["name", "target", "inputDelayMs", "processingMs", "presentationMs"],
+                      "properties": {
+                        "name": { "type": "string" },
+                        "target": { "type": ["string", "null"] },
+                        "inputDelayMs": { "type": ["number", "null"] },
+                        "processingMs": { "type": ["number", "null"] },
+                        "presentationMs": { "type": ["number", "null"] }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "bfcache": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["restored", "reasons"],
+              "properties": {
+                "restored": { "type": ["boolean", "null"] },
+                "reasons": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          ]
+        },
+        "highlights": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}

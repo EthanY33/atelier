@@ -1,0 +1,15 @@
+{
+  "engine": { "name": "chromium", "version": "153.0.7000.0", "headless": "new" },
+  "profile": { "device": "Pixel 7", "viewport": { "width": 412, "height": 839 }, "deviceScaleFactor": 2.625, "cpuThrottle": 4 },
+  "navigation": { "status": 200, "finalUrl": "index.html" },
+  "rendered": {
+    "html": "<!doctype html><html><head></head><body><main><h1>App</h1><button id=\"open\">Open</button><nav><ul role=\"menubar\"><li role=\"none\"><a role=\"menuitem\" href=\"#a\">A</a></li></ul></nav><div id=\"tip\" role=\"tooltip\" tabindex=\"0\">Tip</div><dialog id=\"static-dialog\"><p>Static</p></dialog></main><dialog id=\"late\" closedby=\"any\"><p>Remove this file?</p></dialog><div class=\"modal-overlay\"><div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Player\"><video src=\"media/clip.mp4\"></video></div></div></body></html>"
+  },
+  "sweep": null,
+  "interactions": null,
+  "dialogs": [
+    { "trigger": "#open", "opened": true, "closed": true, "closeMethod": "escape", "activeAfterClose": "#open", "restoredToTrigger": true }
+  ],
+  "bfcache": null,
+  "errors": []
+}

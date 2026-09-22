@@ -1,0 +1,7 @@
+{
+  "brand": { "studio": "Panels Fixture" },
+  "palette": { "bg": "#0b0b0f" },
+  "typography": { "body": "system-ui" },
+  "motion": { "duration": { "short": "150ms", "medium": "250ms", "long": "400ms" } },
+  "surfaces": { "zIndexMax": 50 }
+}

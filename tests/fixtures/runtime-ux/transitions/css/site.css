@@ -1,0 +1,35 @@
+/* Cross-document transitions, no reduced-motion override. */
+@view-transition {
+  navigation: auto;
+}
+
+html {
+  scroll-behavior: smooth;
+  will-change: transform;
+}
+
+.site-header { view-transition-name: site-header; }
+.card { view-transition-name: product-card; }
+.hero { view-transition-name: hero; }
+.promo { view-transition-name: hero; }
+
+::view-transition-old(root) {
+  animation: 250ms ease-out both slide-out;
+}
+
+::view-transition-new(root) {
+  animation: 250ms ease-in both slide-in;
+}
+
+/* Guarded: only runs when the user has no motion preference. */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-group(hero) { animation-duration: 400ms; }
+}
+
+@keyframes slide-out {
+  to { transform: translateX(-30px); opacity: 0; }
+}
+
+@keyframes slide-in {
+  from { transform: translateX(30px); opacity: 0; }
+}

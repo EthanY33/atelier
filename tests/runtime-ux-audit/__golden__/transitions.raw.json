@@ -1,0 +1,410 @@
+{
+  "schemaVersion": "1.0",
+  "tool": "atelier/runtime-ux-audit",
+  "url": "index.html",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "mode": {
+    "dynamic": false,
+    "areas": [
+      "transitions"
+    ],
+    "engine": null
+  },
+  "budgets": {
+    "minTapPx": 24,
+    "minTapPxSource": "default",
+    "inpBudgetMs": 200,
+    "lcpBudgetMs": 2500,
+    "clsBudget": 0.1,
+    "zIndexMax": 100,
+    "longScriptMs": 100,
+    "motionDurationsMs": null
+  },
+  "summary": {
+    "pass": false,
+    "rules": {
+      "critical": 1,
+      "serious": 4,
+      "moderate": 4,
+      "minor": 0
+    },
+    "instances": {
+      "critical": 2,
+      "serious": 5,
+      "moderate": 6,
+      "minor": 0
+    },
+    "byArea": {
+      "transitions": {
+        "critical": 1,
+        "serious": 4,
+        "moderate": 4,
+        "minor": 0,
+        "instances": 13
+      }
+    }
+  },
+  "metrics": {
+    "inpP75Ms": null,
+    "inp": null,
+    "bfcache": null,
+    "highlights": {
+      "transitions": {
+        "bfcache blockers": 3,
+        "view-transition gaps": 7,
+        "speculation rules": 2,
+        "prerender analytics": 1
+      }
+    }
+  },
+  "violations": [
+    {
+      "ruleId": "atelier/runtime-ux/no-unload-handler",
+      "severity": "critical",
+      "area": "transitions",
+      "confidence": "high",
+      "methods": [
+        "js",
+        "html"
+      ],
+      "description": "An unload handler on the window keeps the page out of the back/forward cache.",
+      "helpUrl": "https://web.dev/articles/bfcache",
+      "nodes": [
+        {
+          "selector": "body",
+          "snippet": "<body onunload=\"navigator.sendBeacon('/bye')\">",
+          "location": "index.html:19:7",
+          "message": "unload handlers keep the page out of the back/forward cache in Firefox and desktop Chromium, and Chromium is deprecating them; listen for pagehide instead.",
+          "data": {
+            "via": "attribute"
+          }
+        },
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "window.addEventListener('unload', function () { navigator.sendBeacon('/analytics/exit'); })",
+          "location": "js/app.js:2:1",
+          "message": "unload handlers keep the page out of the back/forward cache in Firefox and desktop Chromium, and Chromium is deprecating them; listen for pagehide instead.",
+          "data": {
+            "via": "addEventListener"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/no-beforeunload-always-attached",
+      "severity": "serious",
+      "area": "transitions",
+      "confidence": "medium",
+      "methods": [
+        "js",
+        "html"
+      ],
+      "description": "A beforeunload handler is attached on every page load instead of only while there are unsaved changes.",
+      "helpUrl": "https://web.dev/articles/bfcache",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "window.addEventListener('beforeunload', function (event) { if (cart.dirty) event.preventDefault(); })",
+          "location": "js/app.js:6:1",
+          "message": "beforeunload is attached unconditionally; add it only while there are unsaved changes and remove it after saving, since it can keep the page out of the back/forward cache.",
+          "data": {
+            "via": "addEventListener"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/speculation-rules-csp-gap",
+      "severity": "serious",
+      "area": "transitions",
+      "confidence": "high",
+      "methods": [
+        "html",
+        "headers"
+      ],
+      "description": "The page's Content-Security-Policy blocks its inline speculation rules.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/API/Speculation_Rules_API",
+      "nodes": [
+        {
+          "selector": "head > script:nth-of-type(1)",
+          "snippet": "<script type=\"speculationrules\">",
+          "location": "index.html:9:1",
+          "message": "Blocked by the meta CSP script-src: add 'inline-speculation-rules', a matching nonce or the sha256 hash to script-src.",
+          "data": {
+            "directive": "script-src",
+            "policy": "meta",
+            "sha256": "'sha256-MJc3EfFAXh6WdNRcXrsfeRF92AoQpPyzrnypRqvO9l4='"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/vta-duplicate-names",
+      "severity": "serious",
+      "area": "transitions",
+      "confidence": "medium",
+      "methods": [
+        "css",
+        "html",
+        "dom"
+      ],
+      "description": "The same view-transition-name is set on more than one element, which makes the browser skip the transition.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/view-transition-name",
+      "nodes": [
+        {
+          "selector": ".card",
+          "snippet": ".card { view-transition-name: product-card }",
+          "location": "css/site.css:12:9",
+          "message": "view-transition-name \"product-card\" is on 12 elements; names must be unique, or the browser skips the transition.",
+          "data": {
+            "count": 12,
+            "elements": [
+              "body > main > ul.products > li.card:nth-of-type(1)",
+              "body > main > ul.products > li.card:nth-of-type(2)",
+              "body > main > ul.products > li.card:nth-of-type(3)",
+              "body > main > ul.products > li.card:nth-of-type(4)",
+              "body > main > ul.products > li.card:nth-of-type(5)"
+            ],
+            "name": "product-card"
+          }
+        },
+        {
+          "selector": ".hero",
+          "snippet": ".hero { view-transition-name: hero }",
+          "location": "css/site.css:13:9",
+          "message": "view-transition-name \"hero\" is on 2 elements; names must be unique, or the browser skips the transition.",
+          "data": {
+            "count": 2,
+            "elements": [
+              "body > main > section.hero",
+              "body > main > aside.promo"
+            ],
+            "name": "hero"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/vta-no-feature-check",
+      "severity": "serious",
+      "area": "transitions",
+      "confidence": "high",
+      "methods": [
+        "js"
+      ],
+      "description": "document.startViewTransition() is called without checking that the browser supports it.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/API/View_Transition_API/Using",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/app.js\"]",
+          "snippet": "document.startViewTransition(() => render(id))",
+          "location": "js/app.js:16:3",
+          "message": "startViewTransition throws where the API is missing; guard it: if (!document.startViewTransition) { update(); return; }"
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/analytics-without-prerender-guard",
+      "severity": "moderate",
+      "area": "transitions",
+      "confidence": "medium",
+      "methods": [
+        "js"
+      ],
+      "description": "Analytics send a page view at script start without checking document.prerendering, so prerendered pages that are never viewed are counted.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/API/Document/prerendering",
+      "nodes": [
+        {
+          "selector": "script[src=\"js/analytics.js\"]",
+          "snippet": "ga('send', 'pageview')",
+          "location": "js/analytics.js:3:3",
+          "message": "ga(\"send\", \"pageview\") runs at script start, so prerendered pages that are never viewed are counted; send it once document.prerendering is false (prerenderingchange)."
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/speculation-rules-immediate-abuse",
+      "severity": "moderate",
+      "area": "transitions",
+      "confidence": "medium",
+      "methods": [
+        "html"
+      ],
+      "description": "An immediate speculation rule matches more URLs than Chromium will prerender or prefetch at once.",
+      "helpUrl": "https://developer.chrome.com/blog/speculation-rules-improvements",
+      "nodes": [
+        {
+          "selector": "head > script:nth-of-type(1)",
+          "snippet": "<script type=\"speculationrules\">",
+          "location": "index.html:9:1",
+          "message": "This immediate prerender rule matches 12 URLs, above Chromium's limit of 10; the extra requests waste bandwidth and memory. Use eagerness moderate or conservative.",
+          "data": {
+            "action": "prerender",
+            "candidates": 12,
+            "limit": 10,
+            "source": "document"
+          }
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/vta-no-reduced-motion-guard",
+      "severity": "moderate",
+      "area": "transitions",
+      "confidence": "high",
+      "methods": [
+        "css",
+        "js"
+      ],
+      "description": "View transitions with custom motion have no prefers-reduced-motion: reduce override.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/At-rules/@media/prefers-reduced-motion",
+      "nodes": [
+        {
+          "selector": "@view-transition",
+          "snippet": "@view-transition { navigation: auto }",
+          "location": "css/site.css:3:3",
+          "message": "Cross-document view transitions have no reduced-motion override; add @media (prefers-reduced-motion: reduce) { @view-transition { navigation: none } }."
+        },
+        {
+          "selector": "::view-transition-old(root)",
+          "snippet": "::view-transition-old(root) { animation: 250ms ease-out both slide-out }",
+          "location": "css/site.css:17:3",
+          "message": "This view transition animation has no reduced-motion override; remove or shorten it under @media (prefers-reduced-motion: reduce)."
+        },
+        {
+          "selector": "::view-transition-new(root)",
+          "snippet": "::view-transition-new(root) { animation: 250ms ease-in both slide-in }",
+          "location": "css/site.css:21:3",
+          "message": "This view transition animation has no reduced-motion override; remove or shorten it under @media (prefers-reduced-motion: reduce)."
+        }
+      ]
+    },
+    {
+      "ruleId": "atelier/runtime-ux/vta-root-transformed",
+      "severity": "moderate",
+      "area": "transitions",
+      "confidence": "high",
+      "methods": [
+        "css"
+      ],
+      "description": "The root element has a transform, filter, opacity below 1 or will-change: transform on a page that uses view transitions.",
+      "helpUrl": "https://developer.mozilla.org/en-US/docs/Web/API/View_Transition_API/Using",
+      "nodes": [
+        {
+          "selector": "html",
+          "snippet": "html { will-change: transform }",
+          "location": "css/site.css:8:3",
+          "message": "will-change: transform on the root element can break the root view transition snapshot; apply it to an inner wrapper instead.",
+          "data": {
+            "property": "will-change"
+          }
+        }
+      ]
+    }
+  ],
+  "incomplete": [],
+  "rules": [
+    {
+      "id": "atelier/runtime-ux/analytics-without-prerender-guard",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "failed",
+      "suppressed": 1
+    },
+    {
+      "id": "atelier/runtime-ux/bfcache-not-restored",
+      "area": "transitions",
+      "severity": "serious",
+      "status": "skipped",
+      "reason": "dynamic-only"
+    },
+    {
+      "id": "atelier/runtime-ux/cache-control-no-store-on-html",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "notApplicable",
+      "reason": "requires-http"
+    },
+    {
+      "id": "atelier/runtime-ux/no-beforeunload-always-attached",
+      "area": "transitions",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/no-unload-handler",
+      "area": "transitions",
+      "severity": "critical",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/speculation-rules-csp-gap",
+      "area": "transitions",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/speculation-rules-immediate-abuse",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/vta-duplicate-names",
+      "area": "transitions",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/vta-no-feature-check",
+      "area": "transitions",
+      "severity": "serious",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/vta-no-reduced-motion-guard",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "failed"
+    },
+    {
+      "id": "atelier/runtime-ux/vta-root-transformed",
+      "area": "transitions",
+      "severity": "moderate",
+      "status": "failed"
+    }
+  ],
+  "resources": [
+    {
+      "kind": "document",
+      "url": "index.html",
+      "status": "parsed"
+    },
+    {
+      "kind": "stylesheet",
+      "url": "css/site.css",
+      "status": "parsed"
+    },
+    {
+      "kind": "speculation-rules",
+      "url": "script:speculationrules(1)",
+      "status": "parsed"
+    },
+    {
+      "kind": "speculation-rules",
+      "url": "script:speculationrules(2)",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/app.js",
+      "status": "parsed"
+    },
+    {
+      "kind": "script",
+      "url": "js/analytics.js",
+      "status": "parsed"
+    }
+  ],
+  "errors": []
+}

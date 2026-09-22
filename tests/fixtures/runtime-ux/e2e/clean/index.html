@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Northwind Journal</title>
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="/">Northwind</a>
+  <button class="menu-button" type="button" popovertarget="site-menu" aria-label="Menu">Menu</button>
+  <nav id="site-menu" class="menu" popover>
+    <a href="/">Home</a>
+    <a href="/shop.html">Shop</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero">
+    <h1>Notes from the trail</h1>
+    <p>Stories and gear tests from the Northwind team.</p>
+    <button class="subscribe" type="button" id="subscribe">Subscribe</button>
+  </section>
+
+  <ul class="cards">
+    <li class="card">
+      <a href="/journal/ridge.html">Ridge walk</a>
+      <button class="save" type="button">Save</button>
+    </li>
+    <li class="card">
+      <a href="/journal/storm.html">Storm night</a>
+      <button class="save" type="button">Save</button>
+    </li>
+  </ul>
+</main>
+
+<dialog id="signup" aria-labelledby="signup-title">
+  <h2 id="signup-title">Join the journal</h2>
+  <form method="dialog">
+    <label>Email <input type="email" name="email" autocomplete="email"></label>
+    <button type="submit">Sign up</button>
+    <button type="submit" value="cancel">Not now</button>
+  </form>
+</dialog>
+
+<nav class="tab-bar" aria-label="Sections">
+  <a href="/">Home</a>
+  <a href="/shop.html">Shop</a>
+</nav>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panels fixture</title>
+<link rel="stylesheet" href="css/panels.css">
+<style>
+/* Anchor positioning. */
+.tip-anchor { anchor-name: --tip; }
+@supports (anchor-name: --a) {
+  .menu-anchor { anchor-name: --menu; }
+}
+.flyout-pos { position-anchor: --tip; inset-area: bottom; }
+.legacy-pos { inset-area: top; position-area: top; }
+@position-try --below { inset-area: bottom; }
+</style>
+</head>
+<body>
+<header class="site-nav"><a href="/">Home</a></header>
+<header class="site-header"><a href="/docs">Docs</a></header>
+<main>
+  <h1>Panels</h1>
+  <button id="open-settings" type="button">Settings</button>
+  <button id="delete-project" type="button">Delete project</button>
+  <button type="button" popovertarget="menu-pop">Menu</button>
+  <div id="menu-pop" class="dropdown" popover role="menu">
+    <button type="button" role="menuitem">Rename</button>
+    <button type="button" role="menuitem">Duplicate</button>
+  </div>
+  <div id="notes" popover="manual">Pinned notes</div>
+  <span class="tip-anchor">?</span>
+  <div id="info-tip" role="tooltip" tabindex="0">Shown on hover and focus.</div>
+  <span id="calm-tip" role="tooltip">Plain tooltip.</span>
+  <div class="card">
+    <img src="img/card.png" alt="">
+    <div class="card-overlay">Caption</div>
+  </div>
+  <div class="lightbox"><img src="img/photo.png" alt="Photo"></div>
+  <aside class="chat">
+    <div role="dialog" aria-label="Chat">Non-modal chat panel.</div>
+  </aside>
+</main>
+
+<dialog id="settings">
+  <p>Settings go here.</p>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+
+<dialog id="confirm-delete" closedby="any" aria-labelledby="confirm-title">
+  <h2 id="confirm-title">Delete project?</h2>
+  <p>This cannot be undone.</p>
+  <form method="dialog"><button value="cancel">Cancel</button><button value="ok">Delete</button></form>
+</dialog>
+
+<dialog id="newsletter" closedby="any" aria-label="Newsletter">
+  <p>Get the monthly newsletter.</p>
+</dialog>
+
+<dialog id="trailer" class="trailer" aria-label="Trailer">
+  <video src="media/trailer.mp4" controls muted></video>
+</dialog>
+
+<div class="modal-backdrop"></div>
+<div class="legacy-overlay" data-atelier-ignore="backdrop-as-sibling-div"></div>
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="legacy-title">
+  <h2 id="legacy-title">Legacy modal</h2>
+</div>
+
+<script src="js/vendor/focus-trap.umd.js"></script>
+<script src="js/panels.js"></script>
+</body>
+</html>

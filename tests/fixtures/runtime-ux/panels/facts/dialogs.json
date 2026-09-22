@@ -1,0 +1,19 @@
+{
+  "engine": { "name": "chromium", "version": "153.0.7000.0", "headless": "new" },
+  "profile": { "device": "Pixel 7", "viewport": { "width": 412, "height": 839 }, "deviceScaleFactor": 2.625, "cpuThrottle": 4 },
+  "navigation": { "status": 200, "finalUrl": "index.html" },
+  "rendered": null,
+  "sweep": null,
+  "interactions": null,
+  "dialogs": [
+    { "trigger": "#open-settings", "opened": true, "closed": true, "closeMethod": "escape", "activeAfterClose": "body", "restoredToTrigger": false },
+    { "trigger": "#delete-project", "opened": true, "closed": true, "closeMethod": "close-button", "activeAfterClose": "#delete-project", "restoredToTrigger": true },
+    { "trigger": "main > button:nth-of-type(3)", "opened": true, "closed": true, "closeMethod": "escape", "activeAfterClose": null, "restoredToTrigger": false },
+    { "trigger": "#legacy-open", "opened": true, "closed": true, "closeMethod": "close-button", "activeAfterClose": "html", "restoredToTrigger": false },
+    { "trigger": "#skip-open", "opened": true, "closed": true, "closeMethod": "escape", "activeAfterClose": "#skip-link", "restoredToTrigger": false },
+    { "trigger": "#help-open", "opened": true, "closed": false, "closeMethod": null, "activeAfterClose": null, "restoredToTrigger": false },
+    { "trigger": "#noop", "opened": false, "closed": false, "closeMethod": null, "activeAfterClose": null, "restoredToTrigger": false }
+  ],
+  "bfcache": { "supported": true, "restored": true, "reasons": [] },
+  "errors": []
+}

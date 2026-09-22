@@ -1,0 +1,22 @@
+{
+  "engine": { "name": "chromium", "version": "153.0.7000.0", "headless": "new" },
+  "profile": { "device": "Pixel 7", "viewport": { "width": 412, "height": 839 }, "deviceScaleFactor": 2.625, "cpuThrottle": 4 },
+  "navigation": { "status": 200, "finalUrl": "index.html" },
+  "rendered": null,
+  "sweep": {
+    "interactive": [],
+    "interactiveTruncated": false,
+    "repeatedGroups": [],
+    "viewTransitionNames": []
+  },
+  "interactions": {
+    "attempted": [{ "kind": "key", "target": "body" }],
+    "entries": [],
+    "interactionCount": 1,
+    "inp": { "estimateMs": null, "p75InteractionMs": null, "maxMs": null, "count": 0, "belowThreshold": true, "worst": null },
+    "loaf": []
+  },
+  "dialogs": [],
+  "bfcache": { "supported": true, "restored": true, "reasons": [] },
+  "errors": []
+}

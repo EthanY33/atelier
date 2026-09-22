@@ -1,0 +1,109 @@
+:root {
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+body {
+  margin: 0;
+  font: 16px/1.5 system-ui, sans-serif;
+}
+
+/* Fixed header sized in vh. */
+.site-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8vh;
+}
+
+/* Hover-only dropdown: hidden by default, shown only on hover. */
+.dropdown {
+  display: none;
+}
+
+.nav-item:hover .dropdown {
+  display: block;
+}
+
+/* Near miss: the account menu also opens on focus-within. */
+.account-menu {
+  opacity: 0;
+}
+
+.account:hover .account-menu,
+.account:focus-within .account-menu {
+  opacity: 1;
+}
+
+/* 100vh hero with no dvh fallback. */
+.hero {
+  min-height: 100vh;
+}
+
+/* Near miss: vh with a later dvh fallback. */
+.page {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Carousel without scroll snapping; slides set snap-align that does nothing. */
+.product-carousel {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.product-carousel .card {
+  flex: 0 0 80%;
+  scroll-snap-align: start;
+}
+
+/* Near miss: a horizontal chip row is not a carousel. */
+.chips {
+  display: flex;
+  overflow-x: auto;
+}
+
+/* atelier-ignore webkit-overflow-scrolling-touch -- kept for iOS 12 kiosks */
+.chips {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Scrollable modal with no overscroll containment and no body scroll lock. */
+.modal {
+  position: fixed;
+  inset: 5vh 16px;
+  overflow-y: auto;
+}
+
+/* Chat composer pinned to the bottom edge. */
+.composer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+}
+
+/* Tab bar pinned to the bottom edge with no safe-area padding. */
+.tabbar {
+  position: fixed;
+  inset: auto 0 0 0;
+  display: flex;
+}
+
+/* Near miss: a full-screen overlay. */
+.overlay {
+  position: fixed;
+  inset: 0;
+}
+
+/* Near miss: a bottom bar that pads for the home indicator. */
+.footer-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding-bottom: max(8px, var(--safe-bottom));
+}

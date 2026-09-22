@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Core fixture</title>
+<link rel="stylesheet" href="css/site.css">
+<link rel="stylesheet" href="https://fonts.example.com/css2?family=Inter">
+<style>
+.hero { min-height: 100vh; }
+/* atelier-ignore fake-css-height */
+.banner { height: 100vh; }
+.modal { z-index: 9999; transition: opacity .2s; }
+</style>
+<script type="speculationrules">{"prerender": [{"where": {"href_matches": "/*"}, "eagerness": "immediate"}]}</script>
+</head>
+<body onunload="sendBeacon()">
+<main>
+  <section class="hero"><h1>Core</h1></section>
+  <section class="banner"><p>Banner</p></section>
+  <div class="modal" role="dialog" style="z-index: 10000">Dialog</div>
+  <ul class="list">
+    <li class="item">1</li>
+    <li class="item">2</li>
+    <li class="item">3</li>
+    <li class="item">4</li>
+    <li class="item">5</li>
+    <li class="item">6</li>
+    <li class="item">7</li>
+  </ul>
+  <div data-atelier-ignore="fake-html-item"><span class="item">ignored</span></div>
+</main>
+<script src="js/app.js"></script>
+<script src="js/missing.js"></script>
+<script type="module">
+import { init } from './js/module.js';
+init();
+</script>
+</body>
+</html>

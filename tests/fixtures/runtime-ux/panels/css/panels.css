@@ -1,0 +1,100 @@
+/* Panels fixture stylesheet: each block triggers a rule or is a near miss. */
+
+:root {
+  --z-modal: 2147483647;
+  --z-dropdown: 30;
+  --panel-fast: 150ms;
+}
+
+/* Fixed nav: opaque fill under blur, and never hidden under a modal. */
+.site-nav {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 60;
+  background: rgba(10, 10, 15, 0.96);
+  backdrop-filter: blur(16px);
+}
+
+/* Near miss: see-through fill, and the blur is dropped while a dialog is open. */
+.site-header {
+  position: fixed;
+  top: 3rem;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+}
+body:has(dialog[open]) .site-header { backdrop-filter: none; }
+
+.cookie-banner { position: fixed; bottom: 0; z-index: 99999; }
+.toast { position: fixed; z-index: 40; }
+/* atelier-ignore z-index-over-budget -- legacy stack, removed next release */
+.legacy-stack { z-index: 70; }
+
+/* Native dialog with entry styles and an opacity-only fade. */
+dialog {
+  transition: opacity var(--panel-fast) ease-out, display var(--panel-fast) allow-discrete, overlay var(--panel-fast) allow-discrete;
+}
+@starting-style {
+  dialog[open] { opacity: 0; }
+}
+dialog::backdrop { backdrop-filter: blur(4px); }
+
+/* Blur on a modal that plays video. */
+dialog.trailer { backdrop-filter: blur(8px); }
+
+/* Near miss: a blurred lightbox with a still image. */
+.lightbox { backdrop-filter: blur(6px); }
+
+/* Popover menu: transition without @starting-style, capped height without overflow. */
+[popover].dropdown {
+  max-height: 320px;
+  transition: opacity 0.2s, display 0.2s allow-discrete;
+}
+
+/* Near miss: a capped panel that scrolls. */
+.menu-panel { max-height: 480px; overflow-y: auto; }
+
+/* transition-property: all on a popover that is otherwise well behaved. */
+[popover].hint-card {
+  transition-property: all;
+  transition-duration: 250ms;
+}
+@starting-style {
+  [popover].hint-card:popover-open { opacity: 0; }
+}
+
+/* Drawer: slower exit than entry, guarded for reduced motion. */
+.drawer {
+  transform: translateX(100%);
+  transition: transform 450ms ease-in;
+}
+.drawer.is-open {
+  transform: none;
+  transition: transform 200ms ease-out;
+}
+
+/* Near miss: exit faster than entry. */
+.flyout { transition: opacity 150ms; }
+.flyout.open { transition: opacity 250ms; }
+
+/* Sheet: slides with no reduced-motion override and an off-token duration. */
+.sheet { animation: slide-up 600ms ease-out; }
+@keyframes slide-up {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+
+/* Near miss: an opacity-only animation is not motion. */
+.popover-fade { animation: fade-in 200ms; }
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer { transition: none; }
+  .hint-card { transition: none; }
+}
