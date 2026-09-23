@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -225,8 +225,11 @@ describe('responsive-image-pipeline', { timeout: 30_000 }, () => {
     expect(odd).toContain('a%23b%3Fc%20%22d%22-10.webp 10w');
     const unicode = buildPictureSnippet({ basename: String.fromCharCode(99, 97, 102, 0xe9), widths: [10], formats: ['webp'] });
     expect(unicode).toContain('caf%C3%A9-10.webp');
+    // basename is the literal name on disk, so its '%' is encoded; a baseUrl keeps its escapes.
     const pre = buildPictureSnippet({ basename: 'Hero%20Image', widths: [10], formats: ['webp'] });
-    expect(pre).toContain('Hero%20Image-10.webp'); // not double-encoded
+    expect(pre).toContain('Hero%2520Image-10.webp');
+    const escBase = buildPictureSnippet({ basename: 'h', widths: [10], formats: ['webp'], baseUrl: '/a%20b/100%/' });
+    expect(escBase).toContain('src="/a%20b/100%25/h-10.webp"');
     const base = buildPictureSnippet({ basename: 'h', widths: [10], formats: ['webp'], baseUrl: '/my img/"x"/' });
     expect(base).toContain('src="/my%20img/%22x%22/h-10.webp"');
 
@@ -240,14 +243,18 @@ describe('responsive-image-pipeline', { timeout: 30_000 }, () => {
     expect(buildPictureSnippet({ ...result, alt: 'x' })).toContain('Hero%20Image-100.avif 100w');
   });
 
-  it('a browser loads the encoded srcset for a name with spaces', { timeout: 60_000 }, async (ctx) => {
+  it('a browser loads the encoded srcset for names with spaces, commas and a literal %', { timeout: 60_000 }, async (ctx) => {
     const tmp = scratch();
-    const input = join(tmp, 'src', 'Hero, Image.png');
-    await solid(input, { width: 400, height: 300 });
     const outDir = join(tmp, 'site');
-    const result = await processImage({ input, outDir, widths: [200, 400] });
+    const snippets = [];
+    for (const file of ['Hero, Image.png', 'photo%20one.png']) {
+      const input = join(tmp, 'src', file);
+      await solid(input, { width: 400, height: 300 });
+      const result = await processImage({ input, outDir, widths: [200, 400] });
+      snippets.push(buildPictureSnippet({ ...result, alt: file, loading: 'eager' }));
+    }
     const page = join(outDir, 'index.html');
-    writeFileSync(page, `<!doctype html><html><body style="margin:0">${buildPictureSnippet({ ...result, alt: 'hero', loading: 'eager' })}</body></html>`);
+    writeFileSync(page, `<!doctype html><html><body style="margin:0">${snippets.join('\n')}</body></html>`);
 
     let browser;
     try {
@@ -259,13 +266,11 @@ describe('responsive-image-pipeline', { timeout: 30_000 }, () => {
     try {
       const tab = await browser.newPage({ viewport: { width: 400, height: 300 } });
       await tab.goto(pathToFileURL(page).href);
-      await tab.waitForFunction(() => document.querySelector('img').complete);
-      const { src, natural } = await tab.evaluate(() => {
-        const img = document.querySelector('img');
-        return { src: img.currentSrc, natural: img.naturalWidth };
-      });
-      expect(decodeURIComponent(src)).toMatch(/Hero, Image-400\.avif$/);
-      expect(natural).toBe(400);
+      await tab.waitForFunction(() => [...document.images].every((img) => img.complete));
+      const loaded = await tab.evaluate(() => [...document.images].map((img) => ({ src: img.currentSrc, natural: img.naturalWidth })));
+      expect(decodeURIComponent(loaded[0].src)).toMatch(/Hero, Image-400\.avif$/);
+      expect(decodeURIComponent(loaded[1].src)).toMatch(/photo%20one-400\.avif$/);
+      expect(loaded.map((l) => l.natural)).toEqual([400, 400]);
     } finally {
       await browser.close();
     }
@@ -429,6 +434,42 @@ describe('responsive-image-pipeline', { timeout: 30_000 }, () => {
     expect(viaUrl.basename).toBe('p');
     const viaUrlObj = await processImage({ input: pathToFileURL(input), outDir, widths: [50] });
     expect(viaUrlObj.cached).toBe(true);
+  });
+
+  it('fails up front, naming the input and a width that fits, when a variant is over the AVIF or WebP size limit', async () => {
+    const tmp = scratch();
+    const thin = join(tmp, 'thin.png');
+    await solid(thin, { width: 100, height: 20000 });
+    const outDir = join(tmp, 'out');
+    const tooTall = /Cannot write .*thin\.png as avif at 100 px: the result would be 100x20000 px, over the 16384 px avif limit\. Use widths up to 81 /;
+    await expect(processImage({ input: thin, outDir })).rejects.toThrow(tooTall);
+    expect(readdirSync(outDir)).toEqual([]); // nothing written, no half-finished set
+    // WebP's limit is one pixel lower than AVIF's.
+    await expect(processImage({ input: thin, outDir, formats: ['webp'] })).rejects.toThrow(/as webp at 100 px: .*over the 16383 px webp limit/);
+
+    // The suggested width encodes, and a later failing call keeps that run's cache.
+    const ok = await processImage({ input: thin, outDir, widths: [81] });
+    expect(ok.images.map((i) => `${i.format} ${i.width}x${i.height}`)).toEqual(['avif 81x16200', 'webp 81x16200', 'png 81x16200']);
+    await expect(processImage({ input: thin, outDir })).rejects.toThrow(tooTall);
+    expect((await processImage({ input: thin, outDir, widths: [81] })).cached).toBe(true);
+
+    // Width counts too: MAX_WIDTH allows 16384, WebP does not.
+    const wide = join(tmp, 'wide.png');
+    await solid(wide, { width: 16400, height: 8 });
+    await expect(processImage({ input: wide, outDir, widths: [16384], formats: ['webp'], fallback: false }))
+      .rejects.toThrow(/as webp at 16384 px: the result would be 16384x8 px, over the 16383 px webp limit\. Use widths up to 16383 /);
+    expect(readdirSync(outDir).filter((f) => f.startsWith('wide'))).toEqual([]);
+  });
+
+  it('names the input when an encoder fails mid-run and removes the files that run wrote', async () => {
+    const tmp = scratch();
+    // PNG variants have no size limit, but this transparent strip's WebP
+    // placeholder (20x20000) is too tall for the encoder.
+    const input = join(tmp, 'strip.png');
+    await solid(input, { width: 20, height: 20000, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0.5 } });
+    const outDir = join(tmp, 'out');
+    await expect(processImage({ input, outDir, widths: [20], formats: ['png'] })).rejects.toThrow(/^Cannot write the placeholder for .*strip\.png: ./);
+    expect(readdirSync(outDir)).toEqual([]);
   });
 
   it('never overwrites the source image with an output', async () => {

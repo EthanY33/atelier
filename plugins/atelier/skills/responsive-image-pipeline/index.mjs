@@ -27,6 +27,8 @@ const DEFAULT_QUALITY = Object.freeze({ avif: 60, webp: 78, jpg: 80 });
 const AVIF_EFFORT = 4;
 const LQIP_QUALITY = 40;
 const MAX_WIDTH = 16384;
+/** Largest width or height each encoder accepts (sharp's limits); PNG has none. */
+const MAX_DIMENSION = Object.freeze({ avif: 16384, webp: 16383, jpg: 65535 });
 
 const FORMATS = {
   avif: { mime: 'image/avif' },
@@ -100,14 +102,18 @@ function escapeHtmlAttr(s) {
 const NAME_SAFE = /^[A-Za-z0-9\-._~!$&'()*+;=:@/]$/;
 const BASE_SAFE = /^[A-Za-z0-9\-._~!$&'()*+,;=:@/?#[\]]$/;
 
-/** Percent-encode everything outside `keep` (whitespace, quotes, non-ASCII...). */
-function encodeUrl(s, keep) {
+/**
+ * Percent-encode everything outside `keep` (whitespace, quotes, non-ASCII...).
+ * `keepEscapes` leaves an existing %XX alone, for a baseUrl the caller already
+ * encoded. File names are literal, so there a '%' always becomes %25.
+ */
+function encodeUrl(s, keep, { keepEscapes = false } = {}) {
   const str = String(s);
   let out = '';
   for (let i = 0; i < str.length;) {
     const ch = String.fromCodePoint(str.codePointAt(i));
     i += ch.length;
-    if (ch === '%' && /^[0-9A-Fa-f]{2}$/.test(str.slice(i, i + 2))) out += ch;
+    if (keepEscapes && ch === '%' && /^[0-9A-Fa-f]{2}$/.test(str.slice(i, i + 2))) out += ch;
     else if (keep.test(ch)) out += ch;
     else {
       try {
@@ -208,6 +214,36 @@ function readCache(cachePath) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Fail before anything is written when a planned file is over its encoder's
+ * size limit, as a long full-page screenshot is for AVIF and WebP.
+ */
+function checkDimensions(plan, input, srcW, srcH) {
+  for (const x of plan) {
+    const limit = MAX_DIMENSION[x.format];
+    if (!limit) continue;
+    const h = Math.max(1, Math.round((srcH * x.width) / srcW));
+    if (x.width <= limit && h <= limit) continue;
+    const maxW = Math.min(
+      ...plan
+        .filter((p) => MAX_DIMENSION[p.format])
+        .map((p) => Math.min(MAX_DIMENSION[p.format], Math.floor((MAX_DIMENSION[p.format] * srcW) / srcH))),
+    );
+    throw new Error(
+      `Cannot write ${input} as ${x.format} at ${x.width} px: the result would be ${x.width}x${h} px, ` +
+        `over the ${limit} px ${x.format} limit. ` +
+        (maxW >= 1
+          ? `Use widths up to ${maxW} (CLI: --widths) or crop the image.`
+          : 'No width fits: crop the image, or use png for formats and fallback (png has no size limit).'),
+    );
+  }
+}
+
+/** Say which input, format and width an encoder failure belongs to. */
+function encodeError(what, cause) {
+  return new Error(`Cannot write ${what}: ${cause?.message ?? cause}`, { cause });
 }
 
 function encode(pipeline, format, { quality, hasAlpha, background }) {
@@ -386,9 +422,6 @@ export async function processImage({
     }
   }
 
-  // Regenerate. Drop the old manifest first so a failed run is never a cache hit.
-  rmSync(cachePath, { force: true });
-
   const hasAlpha = Boolean(meta.hasAlpha);
   const transparent = hasAlpha && !(await img.clone().stats()).isOpaque;
 
@@ -419,38 +452,64 @@ export async function processImage({
       throw new Error(`Output ${p} would overwrite the source image ${input}. Pass a different name or output folder.`);
     }
   }
+  checkDimensions(plan, input, srcW, srcH);
+
+  // Regenerate. Drop the old manifest first so a failed run is never a cache hit.
+  rmSync(cachePath, { force: true });
 
   const enc = { quality: q, hasAlpha, background };
   const images = [];
-  for (const w of produce) {
-    const resized = img.clone().resize({ width: w, withoutEnlargement: true });
-    const jobs = plan.filter((x) => x.width === w);
-    const infos = await Promise.all(jobs.map((x) => encode(resized.clone(), x.format, enc).toFile(join(outDir, x.file))));
-    jobs.forEach((x, i) => images.push({ file: x.file, format: x.format, width: infos[i].width, height: infos[i].height, role: x.role }));
+  let lqip;
+  let manifest;
+  try {
+    for (const w of produce) {
+      const resized = img.clone().resize({ width: w, withoutEnlargement: true });
+      const jobs = plan.filter((x) => x.width === w);
+      // allSettled, not all: no sibling encode may still be writing when the cleanup below runs.
+      const settled = await Promise.allSettled(jobs.map((x) => encode(resized.clone(), x.format, enc).toFile(join(outDir, x.file))));
+      const bad = settled.findIndex((r) => r.status === 'rejected');
+      if (bad !== -1) throw encodeError(`${input} as ${jobs[bad].format} at ${w} px`, settled[bad].reason);
+      jobs.forEach((x, i) => images.push({ file: x.file, format: x.format, width: settled[i].value.width, height: settled[i].value.height, role: x.role }));
+    }
+
+    // LQIP: keep alpha (WebP) for transparent sources, otherwise a tiny JPEG.
+    const small = img.clone().resize({ width: Math.min(lqipW, srcW) });
+    let lqipBuf;
+    try {
+      lqipBuf = transparent
+        ? await small.webp({ quality: LQIP_QUALITY }).toBuffer()
+        : await (hasAlpha ? small.flatten({ background }) : small).jpeg({ quality: LQIP_QUALITY }).toBuffer();
+    } catch (cause) {
+      throw encodeError(`the placeholder for ${input}`, cause);
+    }
+    lqip = `data:image/${transparent ? 'webp' : 'jpeg'};base64,${lqipBuf.toString('base64')}`;
+    writeFileSync(lqipPath, lqip, 'utf8');
+
+    manifest = {
+      widths: produce,
+      skippedWidths,
+      formats: fmts,
+      fallbackFormat,
+      fallbackFile,
+      source: { format: meta.format, width: srcW, height: srcH, transparent },
+      images,
+    };
+    writeFileSync(
+      cachePath,
+      `${JSON.stringify({ pipeline: PIPELINE_VERSION, key, source: sourceRel, manifest }, null, 2)}\n`,
+      'utf8',
+    );
+  } catch (err) {
+    // A failed run leaves no manifest, so remove every file it may have written.
+    for (const f of [...plan.map((x) => x.file), lqipFile, `${name}.cache`]) {
+      try {
+        rmSync(join(outDir, f), { force: true });
+      } catch {
+        // best effort: report the original failure, not a cleanup error
+      }
+    }
+    throw err;
   }
-
-  // LQIP: keep alpha (WebP) for transparent sources, otherwise a tiny JPEG.
-  const small = img.clone().resize({ width: Math.min(lqipW, srcW) });
-  const lqipBuf = transparent
-    ? await small.webp({ quality: LQIP_QUALITY }).toBuffer()
-    : await (hasAlpha ? small.flatten({ background }) : small).jpeg({ quality: LQIP_QUALITY }).toBuffer();
-  const lqip = `data:image/${transparent ? 'webp' : 'jpeg'};base64,${lqipBuf.toString('base64')}`;
-  writeFileSync(lqipPath, lqip, 'utf8');
-
-  const manifest = {
-    widths: produce,
-    skippedWidths,
-    formats: fmts,
-    fallbackFormat,
-    fallbackFile,
-    source: { format: meta.format, width: srcW, height: srcH, transparent },
-    images,
-  };
-  writeFileSync(
-    cachePath,
-    `${JSON.stringify({ pipeline: PIPELINE_VERSION, key, source: sourceRel, manifest }, null, 2)}\n`,
-    'utf8',
-  );
 
   return toResult({ cached: false, outDir, input, name, lqip, manifest });
 }
@@ -459,8 +518,9 @@ export async function processImage({
  * Build a copy-pasteable `<picture>` HTML snippet.
  *
  * Pass the processImage result straight in (`{ ...result, alt }`) so the
- * srcset widths, formats and fallback file match what was written. File names
- * are URL-encoded and every attribute is HTML-escaped.
+ * srcset widths, formats and fallback file match what was written. `basename`
+ * is the literal stem on disk and is URL-encoded in full (a '%' becomes %25).
+ * Every attribute is HTML-escaped.
  *
  * @param {{
  *   basename: string,
@@ -474,6 +534,7 @@ export async function processImage({
  * }} opts
  *   fallbackFormat: extension of the <img src> file (default: the last of `formats`).
  *   baseUrl: prefix for every URL, e.g. '/img/' (default: bare file names).
+ *     Unsafe characters are encoded; existing %XX escapes are kept.
  * @returns {string}
  */
 export function buildPictureSnippet({
@@ -495,8 +556,8 @@ export function buildPictureSnippet({
   }
   if (loading !== 'lazy' && loading !== 'eager') throw new TypeError('buildPictureSnippet: loading must be "lazy" or "eager"');
 
-  const prefix = encodeUrl(baseUrl ?? '', BASE_SAFE);
-  const stemUrl = encodeUrl(name, NAME_SAFE);
+  const prefix = encodeUrl(baseUrl ?? '', BASE_SAFE, { keepEscapes: true });
+  const stemUrl = encodeUrl(name, NAME_SAFE); // a literal file name: '%' becomes %25
   const url = (w, ext) => escapeHtmlAttr(`${prefix}${stemUrl}-${w}.${ext}`);
   const safeSizes = escapeHtmlAttr(sizes ?? '100vw');
   const largest = sorted[sorted.length - 1];
@@ -568,6 +629,24 @@ function asUsage(fn) {
   } catch (err) {
     throw new UsageError(err.message);
   }
+}
+
+/**
+ * Reject a --base-url that is a Windows drive path. It is never a valid URL
+ * prefix (a browser reads `C:` as a scheme), and it is what Git Bash makes of
+ * `/img/`: MSYS rewrites a leading "/" argument before node sees it.
+ */
+function checkBaseUrl(u) {
+  if (/^[A-Za-z]:[\\/]/.test(u)) {
+    throw new UsageError(
+      `--base-url ${u} is a Windows path, not a URL prefix.` +
+        (process.env.MSYSTEM
+          ? ' Git Bash rewrote the leading "/". Put MSYS_NO_PATHCONV=1 in front of node' +
+            ' (MSYS_NO_PATHCONV=1 node .../bin/atelier images ... --base-url /img/).'
+          : ' Pass a URL path such as /img/.'),
+    );
+  }
+  return u;
 }
 
 /** Expand CLI inputs (files, file: URLs, folders) to a deduplicated file list. */
@@ -680,7 +759,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
       lqipWidth: v['lqip-width'] === undefined ? 24 : asUsage(() => toPositiveInt(v['lqip-width'], '--lqip-width')),
       alt: v.alt,
       sizes: v.sizes ?? '100vw',
-      baseUrl: v['base-url'] ?? '',
+      baseUrl: checkBaseUrl(v['base-url'] ?? ''),
       loading: v.loading ?? 'lazy',
       name: v.name === undefined ? undefined : asUsage(() => checkName(v.name)),
     };
