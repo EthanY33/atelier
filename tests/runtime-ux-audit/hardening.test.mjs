@@ -154,8 +154,12 @@ describe('CSS nesting bounds', () => {
   it('bounds the total of resolved nested selectors', () => {
     const list = Array.from({ length: 256 }, (_, i) => `.p${i}`).join(',');
     const { ms, value: m } = timed(() => model(`${list}{${'&{a:b}'.repeat(50_000)}}`));
-    expect(ms).toBeLessThan(10_000);
+    // The resolved-text budget caps the work: unbounded, all 50,001 rules
+    // resolve. The time bound is only a backstop, loose because coverage on
+    // a Windows runner runs this case about 15 times slower than a laptop.
+    expect(m.rules.length).toBeLessThan(5_000);
     expect(m.truncated).toBe(true);
+    expect(ms).toBeLessThan(30_000);
   });
 
   it('leaves ordinary nesting unchanged', () => {
