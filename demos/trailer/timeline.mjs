@@ -85,12 +85,12 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   const hide = (name) => { panels[name].out = t; };
 
   // Type into the input box: one keycap per character, the spacebar for spaces.
-  const type = (text) => {
+  const type = (text, kind = 'char') => {
     wait(0.25);
     let typed = '';
     for (const ch of text) {
       typed += ch;
-      ev('char', { typed });
+      ev(kind, { typed });
       if (ch === ' ') cue('key-enter', LEVEL.space * (0.9 + rand() * 0.2));
       else {
         let k;
@@ -128,18 +128,27 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   const ctx = (n, code) => `<span class="dim">${String(n).padStart(3)}  </span> ${code}`;
   const more = (n) => `<span class="dim">… +${n} line${n === 1 ? '' : 's'} (ctrl+o to expand)</span>`;
 
-  // Intro: the cursor glides to the Claude Code icon and clicks; the session
-  // opens on the welcome box with the marketplace already added.
-  marks.introClick = 1.05;
-  t = 1.05;
-  cue('click-soft', LEVEL.click * 1.3);
+  // Intro: the terminal is already open on a PowerShell prompt in the project
+  // folder. Typing `claude` starts Claude Code, which adds the marketplace.
+  marks.open = 0;
+  ev('shell');
+  wait(0.55);
+  type('claude', 'shellChar');
   wait(0.2);
-  marks.open = t;
+  ev('launch');
+  cue('key-enter', LEVEL.enter);
+  wait(0.45);
   ev('welcome');
-  ev('row', { html: '' });
-  ev('row', { html: '<span class="dim">›</span> /plugin marketplace add EthanY33/atelier', band: true });
-  ev('row', { html: '  <span class="dim gl">⎿</span>  Successfully added marketplace: <b>atelier</b>' });
-  wait(0.8);
+  marks.welcome = t;
+  wait(0.6);
+  type('/plugin marketplace add EthanY33/atelier');
+  submit('/plugin marketplace add EthanY33/atelier');
+  wait(0.35);
+  row('  <span class="dim gl">⎿</span>  Successfully added marketplace: <b>atelier</b>', 0);
+  // The terminal glides left and the marketplace listing rises beside it.
+  marks.market = t;
+  show('pkg');
+  wait(0.6);
 
   // 1. Install.
   type('/plugin install atelier@atelier');
@@ -147,7 +156,7 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   wait(0.5);
   row('  <span class="dim gl">⎿</span>  <span class="ok gl">✔</span> Successfully installed plugin: <b>atelier@atelier</b>', 0);
   cue('chime', LEVEL.chime);
-  show('pkg');
+  marks.installed = t;
   wait(1.1);
 
   // 2. Doctor.
@@ -163,14 +172,13 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   say('All six checks pass, so every skill can run here.', 0.2);
   done('Percolated');
   wait(0.8);
-  hide('pkg');
-  wait(0.15);
 
   // 3. Social cards.
   type('make social cards for every post in /blog');
   submit('make social cards for every post in /blog', 'Forging');
   tool('Skill', 'og-card-generator', 0.3, true, ['Successfully loaded skill']);
   wait(0.25);
+  hide('pkg'); // the cards panel takes over as the og command finishes
   tool('Bash', 'atelier og blog/pages.json --out og', 0.55, true, [
     'Generated 3 OG card(s):',
     '  og/launch-week.png',
@@ -214,14 +222,13 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   say('Tokens, all three cards and the icons now use the navy background.', 0.2);
   done('Crafted');
   wait(1.5);
-  hide('cards');
-  hide('diff');
-  hide('icons');
-  wait(0.3);
 
   // 5. runtime-ux-audit fails, then the fixes make it pass.
   type('/ux-audit site/index.html');
   submit('/ux-audit site/index.html', 'Cogitating');
+  hide('cards'); // the report takes over as the audit finishes
+  hide('diff');
+  hide('icons');
   tool('Bash', 'atelier ux site/index.html --out ux-report', 0.7, false, [
     '<span class="bad">Error: Exit code 1</span>',
     'Report written to: ux-report/ux-report.md',
@@ -241,28 +248,28 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   wait(0.7);
   type('yes');
   submit('yes', 'Brewing');
-  tool('Update', 'site/js/analytics.js', 0.3, true, [
+  marks.fix0 = tool('Update', 'site/js/analytics.js', 0.3, true, [
     'Updated <b>site/js/analytics.js</b> with <b>1</b> addition and <b>1</b> removal',
     del(3, "window.addEventListener('unload', function () {"),
     add(3, "window.addEventListener('pagehide', function () {"),
-  ]);
-  tool('Update', 'site/js/app.js', 0.3, true, [
+  ]).doneAt;
+  marks.fix1 = tool('Update', 'site/js/app.js', 0.3, true, [
     'Updated <b>site/js/app.js</b> with <b>4</b> additions and <b>2</b> removals',
     del(23, '  document.startViewTransition(function () {'),
     add(23, '  const reorder = function () {'),
     more(6),
-  ]);
-  tool('Update', 'site/css/site.css', 0.3, true, [
+  ]).doneAt;
+  marks.fix2 = tool('Update', 'site/css/site.css', 0.3, true, [
     'Updated <b>site/css/site.css</b> with <b>1</b> addition',
     ctx(40, '  height: 100vh;'),
     add(41, '  height: 100dvh;'),
-  ]);
-  tool('Update', 'site/css/site.css', 0.3, true, [
+  ]).doneAt;
+  marks.fix3 = tool('Update', 'site/css/site.css', 0.3, true, [
     'Updated <b>site/css/site.css</b> with <b>2</b> additions and <b>1</b> removal',
     del(74, '.product:hover .quick-view {'),
     add(74, '.product:hover .quick-view,'),
     add(75, '.product:focus-within .quick-view {'),
-  ]);
+  ]).doneAt;
   wait(0.2);
   // The report panel flips on the same frame as the passing summary line.
   ev('row', { html: '' });
@@ -276,7 +283,7 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   done('Brewed');
   wait(1.3);
   hide('report');
-  wait(0.25);
+  wait(0.45); // let the report finish its 0.5 s exit before CI rises
 
   // 6. CI: twelve jobs go green.
   show('ci');
