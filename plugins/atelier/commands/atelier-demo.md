@@ -5,7 +5,7 @@ argument-hint: "[output-dir]"
 
 Arguments (may be empty): `$ARGUMENTS`. The output directory is the first argument, or `atelier-demo` when there is none.
 
-Run it from the user's project directory, with the chosen directory in single quotes:
+Run it from the user's project directory, with the chosen directory in single quotes (POSIX quoting; write a single quote inside a value as `'\''`, here and in the `find` command below):
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" demo --out 'atelier-demo'

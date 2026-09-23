@@ -7,7 +7,7 @@ Arguments (may be empty): `$ARGUMENTS`
 
 The first argument is the dotted path. If there is none, ask the user which one (common: `brand.studio`, `palette.bg`, `palette.accent`, `typography.body`, `deploy.target`).
 
-Run it with the path in single quotes (add `--root '<dir>'` if the user gave `--root`):
+Run it with the path in single quotes (POSIX quoting; write a single quote inside a value as `'\''`). Add `--root '<dir>'` if the user gave `--root`:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand get '<dotted.path>' --raw

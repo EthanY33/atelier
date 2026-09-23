@@ -3,7 +3,7 @@ description: List the recommended fields missing from .atelier/brand.json, what 
 argument-hint: "[--root <dir>]"
 ---
 
-Arguments (may be empty): `$ARGUMENTS`. If they include `--root <dir>`, add `--root '<dir>'` to the commands below.
+Arguments (may be empty): `$ARGUMENTS`. If they include `--root <dir>`, add `--root '<dir>'` to the commands below (POSIX quoting; write a single quote inside the directory as `'\''`).
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand audit

@@ -8,9 +8,9 @@ Arguments (may be empty): `$ARGUMENTS`
 The target is the first argument: an `http(s)` URL, a `file://` URL, or a local HTML path. If there is none, ask for one. The output directory is the `--out` value, else `ux-report`.
 
 - Add `--dynamic` only if the user passed it. It loads the page in Chromium to estimate INP and check bfcache restore, focus return and tap targets. Without it the audit only reads the HTML, CSS and JS; it never runs page code.
-- Pass any other flags the user gave (`--area`, `--ignore`, `--brand`, `--no-brand`, `--root`, `--allow-origin`, `--timeout`, `--max-bytes`, `--timestamp`) through unchanged. Budgets come from `./.atelier/brand.json` when it exists.
+- Pass any other flags the user gave (`--area`, `--ignore`, `--brand`, `--no-brand`, `--root`, `--allow-origin`, `--timeout`, `--max-bytes`, `--timestamp`) through, each value single-quoted as below. Budgets come from `./.atelier/brand.json` when it exists.
 
-Run it from the user's project directory, with the target and each value in single quotes:
+Run it from the user's project directory, with the target and each flag value in single quotes (POSIX quoting; write a single quote inside a value as `'\''`):
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" ux '<url-or-file>' --out 'ux-report'
