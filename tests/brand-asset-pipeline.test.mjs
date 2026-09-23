@@ -342,6 +342,107 @@ describe('linked images', { timeout: 30_000 }, () => {
     writeFileSync(join(tmp, 'notes.txt'), 'hello');
     await expect(generateAssets({ markSvg, outDir })).rejects.toThrow(/not a supported image/);
   });
+
+  // On Windows each of these becomes \\host\share\... and would open over SMB,
+  // sending the user's credentials to that host. The .invalid host never resolves.
+  it.each([
+    '//atelier-test.invalid/share/x.png',
+    '\\\\atelier-test.invalid\\share\\x.png',
+    'file://atelier-test.invalid/share/x.png',
+    'file:\\\\atelier-test.invalid\\share\\x.png',
+    '/\\atelier-test.invalid\\share\\x.png',
+    '\\/atelier-test.invalid/share/x.png',
+    '&#47;&#47;atelier-test.invalid/share/x.png',
+    '//./pipe/atelier-test',
+    '\\\\?\\UNC\\atelier-test.invalid\\share\\x.png',
+  ])('refuses the network or device link %j before opening it', async (href) => {
+    const { markSvg, outDir } = setup(imageSvg(href));
+    await expect(generateAssets({ markSvg, outDir })).rejects.toThrow(/links to a network or device path .*no network calls/);
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  it('rejects a linked directory', async () => {
+    const { markSvg, outDir } = setup(imageSvg('sub'));
+    mkdirSync(join(tmp, 'sub'));
+    await expect(generateAssets({ markSvg, outDir })).rejects.toThrow(/"sub", which cannot be read \(not a regular file\)/);
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  it('rejects a linked file over 16 MB', async () => {
+    const { markSvg, outDir } = setup(imageSvg('big.png'));
+    writeFileSync(join(tmp, 'big.png'), Buffer.alloc(16 * 2 ** 20 + 1));
+    await expect(generateAssets({ markSvg, outDir })).rejects.toThrow(/"big.png", which cannot be read \(larger than 16 MB\)/);
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  /** mark.svg links a.svg n times, a.svg links b.svg n times, b.svg links red.png n times. */
+  async function fanOut(n) {
+    const many = (href) =>
+      `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">${`<image href="${href}" width="64" height="64"/>`.repeat(n)}</svg>`;
+    const { markSvg, outDir } = setup(many('a.svg'));
+    writeFileSync(join(tmp, 'a.svg'), many('b.svg'));
+    writeFileSync(join(tmp, 'b.svg'), many('red.png'));
+    writeFileSync(join(tmp, 'red.png'), await redPng());
+    return { markSvg, outDir };
+  }
+
+  it('renders a moderate fan-out of repeated links', async () => {
+    const { markSvg } = await fanOut(5); // 5 * (1 + 5 + 25) = 155 images
+    await expectRedIcon(markSvg);
+  });
+
+  it('caps the images a fan-out of links expands to', async () => {
+    const { markSvg, outDir } = await fanOut(6); // 6 * (1 + 6 + 36) = 258 images
+    await expect(generateAssets({ markSvg, outDir })).rejects.toThrow(/expands to more than 256 linked images/);
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  it('ignores an <image> inside a comment, as the renderer does', async () => {
+    const { markSvg, outDir } = setup(
+      MARK_SVG.replace('</svg>', '<!-- <image href="missing-old.png" width="10" height="10"/> --></svg>'),
+    );
+    const { files } = await generateAssets({ markSvg, outDir, targets: ['favicons'] });
+    expect(near(await pixel(fileNamed(files, 'favicon-64.png'), 'center', 'center'), [...MARK_COLOR, 255])).toBe(true);
+  });
+
+  it('ignores an <image> inside a CDATA section', async () => {
+    const { markSvg, outDir } = setup(
+      MARK_SVG.replace('<circle', '<style><![CDATA[ /* <image href="missing-old.png"/> */ ]]></style><circle'),
+    );
+    const { files } = await generateAssets({ markSvg, outDir, targets: ['favicons'] });
+    expect(near(await pixel(fileNamed(files, 'favicon-64.png'), 'center', 'center'), [...MARK_COLOR, 255])).toBe(true);
+  });
+
+  it('still embeds a live link next to a commented one, and still names a live missing one', async () => {
+    const { markSvg } = setup(imageSvg('red.png').replace('<image', '<!-- <image href="gone.png"/> --><image'));
+    writeFileSync(join(tmp, 'red.png'), await redPng());
+    await expectRedIcon(markSvg);
+
+    writeFileSync(markSvg, imageSvg('missing.png').replace('<image', '<!-- <image href="gone.png"/> --><image'));
+    await expect(generateAssets({ markSvg, outDir: join(tmp, 'out2') })).rejects.toThrow(/"missing.png", which cannot be read/);
+  });
+});
+
+describe('raster marks', { timeout: 30_000 }, () => {
+  it('turns a JPEG upright by its EXIF orientation', async () => {
+    tmp = mkdtempSync(join(tmpdir(), 'bap-test-'));
+    const markSvg = join(tmp, 'mark.jpg');
+    // Stored 400x200, blue left half and red right half. Orientation 6 displays it 200x400, blue on top.
+    const blue = await sharp({ create: { width: 200, height: 200, channels: 3, background: '#0000ff' } }).png().toBuffer();
+    await sharp({ create: { width: 400, height: 200, channels: 3, background: '#ff0000' } })
+      .composite([{ input: blue, left: 0, top: 0 }])
+      .jpeg({ quality: 95 })
+      .withMetadata({ orientation: 6 })
+      .toFile(markSvg);
+    expect((await sharp(markSvg).metadata()).orientation).toBe(6);
+
+    const { files } = await generateAssets({ markSvg, outDir: join(tmp, 'out'), targets: ['app-icons'] });
+    const f = fileNamed(files, 'android-chrome-512.png');
+    // Upright, the mark is 256x512 and centred, so the left and right quarters stay transparent.
+    expect((await pixel(f, 64, 256))[3]).toBe(0);
+    expect(near(await pixel(f, 256, 64), [0, 0, 255, 255], 16)).toBe(true);
+    expect(near(await pixel(f, 256, 448), [255, 0, 0, 255], 16)).toBe(true);
+  });
 });
 
 describe('brand.json defaults', { timeout: 30_000 }, () => {
@@ -405,6 +506,46 @@ describe('brand.json defaults', { timeout: 30_000 }, () => {
   it('names the palette.bg source when it is invalid', async () => {
     const { markSvg, outDir } = setup();
     await expect(generateAssets({ markSvg, outDir, brand: { palette: { bg: 'navy' } } })).rejects.toThrow(/Invalid brand palette.bg "navy"/);
+  });
+
+  // brand.json is repository content: an absolute, network or ../ logos.mark
+  // must fail before anything is opened (a //host path would reach SMB on Windows).
+  it.each([
+    '//atelier-test.invalid/share/mark.svg',
+    '\\\\atelier-test.invalid\\share\\mark.svg',
+    'C:/Users/someone/Pictures/mark.svg',
+    'C:mark.svg',
+    '/etc/mark.svg',
+    '\\mark.svg',
+    '../mark.svg',
+    'brand/../../mark.svg',
+    '.',
+  ])('refuses logos.mark %j outside the project root', async (mark) => {
+    const { projectRoot, outDir } = project({ logos: { mark } });
+    await expect(generateAssets({ projectRoot, outDir })).rejects.toThrow(
+      /brand.json logos.mark .* must be a relative path to a file inside the project root/,
+    );
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  it('refuses an absolute logos.mark even when the file exists', async () => {
+    const { projectRoot, outDir } = project();
+    const brand = { brand: { studio: 'T' }, logos: { mark: join(projectRoot, 'brand', 'mark.svg') } };
+    await expect(generateAssets({ brand, outDir })).rejects.toThrow(/logos.mark .* must be a relative path/);
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  it('accepts ./ in logos.mark', async () => {
+    const { projectRoot, outDir } = project({ logos: { mark: './brand/mark.svg' } });
+    const { files } = await generateAssets({ projectRoot, outDir, targets: ['favicons'] });
+    expect(files).toHaveLength(5);
+  });
+
+  it('lets an explicit markSvg bypass a refused logos.mark', async () => {
+    const { projectRoot, outDir } = project({ logos: { mark: '//atelier-test.invalid/share/mark.svg' } });
+    const markSvg = join(projectRoot, 'brand', 'mark.svg');
+    const { files } = await generateAssets({ projectRoot, outDir, markSvg, targets: ['favicons'] });
+    expect(files).toHaveLength(5);
   });
 
   it('fails clearly when projectRoot has no brand.json', async () => {

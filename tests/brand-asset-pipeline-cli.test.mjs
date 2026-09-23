@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -124,6 +124,26 @@ describe('brand-asset-pipeline CLI', { timeout: 30_000 }, () => {
     const { data } = await sharp(join(out, 'steam-header.png')).raw().toBuffer({ resolveWithObject: true });
     expect([...data.subarray(0, 4)]).toEqual([0, 0, 255, 255]);
   });
+
+  it('--root refuses a network logos.mark with exit 2 and writes nothing', async () => {
+    tmp = mkdtempSync(join(tmpdir(), 'bap-cli-'));
+    mkdirSync(join(tmp, '.atelier'));
+    writeFileSync(
+      join(tmp, '.atelier', 'brand.json'),
+      JSON.stringify({
+        brand: { studio: 'T' },
+        palette: { bg: '#00f' },
+        typography: { body: 'Inter' },
+        logos: { mark: '//atelier-test.invalid/share/mark.svg' },
+      }),
+    );
+    const out = join(tmp, 'out');
+    const r = await run(['--root', tmp, '--out', out]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/^atelier: brand.json logos.mark .* must be a relative path to a file inside the project root/);
+    expect(r.stderr).not.toContain('Usage:');
+    expect(existsSync(out)).toBe(false);
+  });
 });
 
 describe('brand-asset-pipeline CLI as a process', { timeout: 60_000 }, () => {
@@ -149,5 +169,30 @@ describe('brand-asset-pipeline CLI as a process', { timeout: 60_000 }, () => {
     const r = node(['--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(ENTRY).href)}); console.log('imported');`]);
     expect(r.status).toBe(0);
     expect(r.stdout.trim()).toBe('imported');
+  });
+
+  it('the SKILL.md JS API example runs as written, with the module path in argv[1]', () => {
+    const skillMd = readFileSync(join(PLUGIN, 'skills', 'brand-asset-pipeline', 'SKILL.md'), 'utf8');
+    const m = /^node --input-type=module -e "(.+)" "\$\{CLAUDE_SKILL_DIR\}\/index\.mjs"\r?$/m.exec(skillMd);
+    expect(m).not.toBeNull();
+    tmp = mkdtempSync(join(tmpdir(), 'bap-api-'));
+    mkdirSync(join(tmp, '.atelier'));
+    mkdirSync(join(tmp, 'brand'));
+    writeFileSync(join(tmp, 'brand', 'mark.svg'), MARK_SVG);
+    writeFileSync(
+      join(tmp, '.atelier', 'brand.json'),
+      JSON.stringify({ brand: { studio: 'T' }, palette: { bg: '#00f' }, typography: { body: 'Inter' } }),
+    );
+    // Claude Code substitutes the native skill path; on Windows that has backslashes.
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', m[1], ENTRY], {
+      cwd: tmp,
+      encoding: 'utf8',
+      shell: false,
+      timeout: 30_000,
+    });
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe('favicons,app-icons,social #00f 11');
+    expect(readdirSync(join(tmp, 'public', 'brand'))).toHaveLength(11);
   });
 });

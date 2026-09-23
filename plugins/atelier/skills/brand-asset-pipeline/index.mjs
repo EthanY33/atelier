@@ -6,8 +6,8 @@
  * has been validated and every image has rendered, so a bad argument or a
  * broken mark never leaves a half-written output directory.
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -63,6 +63,16 @@ const OPAQUE_ICON_MARK_RATIO = 0.8;
 const BANNER_MARK_RATIO = 0.5;
 /** Linked SVG images may nest this deep before we give up. */
 const MAX_LINK_DEPTH = 4;
+/**
+ * Caps on what one mark may pull in through <image> links. Images count every
+ * use, so a linked SVG used 30 times counts its own links 30 times: librsvg
+ * renders every copy, and fan-out (A links B 30 times, B links C 30 times)
+ * would otherwise grow as the product of the link counts.
+ */
+const MB = 2 ** 20;
+const MAX_LINKED_IMAGES = 256;
+const MAX_LINKED_FILE_BYTES = 16 * MB;
+const MAX_INLINED_BYTES = 32 * MB;
 
 // ---------------------------------------------------------------------------
 // Dependency loading
@@ -150,9 +160,32 @@ function brandBackground(brand) {
   return typeof bg === 'string' ? bg : undefined;
 }
 
+/**
+ * \\host\share, //host/share and the \\?\ and \\.\ device namespaces. On
+ * Windows, opening one of these (even a stat) connects over SMB and sends the
+ * user's credentials to that host.
+ */
+const isNetworkPath = (p) => /^[\\/]{2}/.test(p);
+
+/**
+ * logos.mark from brand.json, resolved inside the project root. brand.json is
+ * repository content, so an absolute, drive, network or ../ path is refused
+ * before anything is opened. A mark elsewhere can still be passed explicitly.
+ */
 function brandMark(brand, base) {
   const mark = own(own(brand, 'logos'), 'mark');
-  return typeof mark === 'string' && mark.trim() !== '' ? resolve(base, mark) : undefined;
+  if (typeof mark !== 'string' || mark.trim() === '') return undefined;
+  const root = resolve(base);
+  const refuse = () =>
+    new Error(
+      `brand.json logos.mark ${JSON.stringify(mark)} must be a relative path to a file inside the project root ${root}. Pass the mark file explicitly to use one elsewhere.`,
+    );
+  // /^[a-z]:/ also catches the drive-relative "C:mark.svg", which isAbsolute misses.
+  if (isAbsolute(mark) || /^[\\/]/.test(mark) || /^[a-z]:/i.test(mark)) throw refuse();
+  const target = resolve(root, mark);
+  const rel = relative(root, target);
+  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw refuse();
+  return target;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +236,11 @@ const decodeXmlEntities = (s) =>
     return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
   });
 
-const IMAGE_TAG = /<(?:[\w.-]+:)?(?:image|feImage)\b[^>]*>/gi;
+/**
+ * <image> and <feImage> tags. Comments and CDATA sections come first, so an
+ * <image> inside one is consumed by that match and left alone, as librsvg does.
+ */
+const IMAGE_TAG = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<(?:[\w.-]+:)?(?:image|feImage)\b[^>]*>/gi;
 const HREF_ATTR = /(\s(?:xlink:)?href\s*=\s*)(?:"([^"]*)"|'([^']*)')/gi;
 /** Data URI image types librsvg renders itself. Others (WebP, GIF, ...) render blank. */
 const RSVG_DATA_TYPES = /^image\/(png|jpe?g|svg\+xml)$/i;
@@ -215,80 +252,145 @@ async function toPngDataUri(sharp, buf) {
 }
 
 /**
- * Turn one <image> href into a self-contained data URI, or return null to
- * leave it unchanged. librsvg cannot resolve links from an in-memory SVG and
- * silently drops links outside the SVG's folder, so every local link is
- * embedded here. Remote links are refused: atelier makes no network calls.
+ * Link state for one mark: a cache of embedded files by path, and running
+ * totals of images and embedded bytes, checked against the caps above.
+ * @param {string} mark
  */
-async function resolveImageHref(sharp, href, fromFile, chain) {
-  if (href === '' || href.startsWith('#')) return null;
+const newLinkState = (mark) => ({ mark, cache: new Map(), images: 0, bytes: 0 });
 
-  if (/^data:/i.test(href)) {
-    const m = /^data:([^;,]*)((?:;[^;,]*)*),(.*)$/is.exec(href);
-    if (!m || RSVG_DATA_TYPES.test(m[1]) || !/;base64/i.test(m[2])) return null;
-    try {
-      return await toPngDataUri(sharp, Buffer.from(m[3], 'base64'));
-    } catch {
-      return null;
-    }
+/** Add one use of an embedded image to the totals, or throw past a cap. */
+function charge(state, { uri, images }) {
+  state.images += images;
+  state.bytes += uri.length;
+  if (state.images > MAX_LINKED_IMAGES) {
+    throw new Error(
+      `${state.mark} expands to more than ${MAX_LINKED_IMAGES} linked images (each repeat of a linked SVG counts its own links again). Flatten it into one SVG.`,
+    );
   }
-
-  let target;
-  if (/^[a-z]:[\\/]/i.test(href)) {
-    target = href;
-  } else {
-    let url;
-    try {
-      url = new URL(href, pathToFileURL(fromFile));
-    } catch {
-      throw new Error(`${fromFile}: cannot resolve image link ${JSON.stringify(href)}.`);
-    }
-    if (url.protocol === 'http:' || url.protocol === 'https:') {
-      throw new Error(
-        `${fromFile} links to a remote image (${href}). atelier makes no network calls: download the image and link it by a local path, or embed it in the SVG.`,
-      );
-    }
-    if (url.protocol !== 'file:') throw new Error(`${fromFile}: unsupported image link ${JSON.stringify(href)}.`);
-    target = fileURLToPath(url);
+  if (state.bytes > MAX_INLINED_BYTES) {
+    throw new Error(`${state.mark}: linked images add more than ${MAX_INLINED_BYTES / MB} MB to the mark. Flatten it or use smaller images.`);
   }
+  return uri;
+}
 
-  let buf;
+/**
+ * The local file an <image> href points to. Remote, network and device links
+ * are refused before any filesystem call: atelier makes no network calls, and
+ * on Windows even a stat of \\host\share connects to that host.
+ */
+function linkTarget(href, fromFile) {
+  const networkPath = () =>
+    new Error(
+      `${fromFile} links to a network or device path (${href}). atelier makes no network calls: copy the image next to the SVG and link it by a relative path.`,
+    );
+  if (isNetworkPath(href)) throw networkPath();
+  if (/^[a-z]:[\\/]/i.test(href)) return href;
+
+  let url;
   try {
-    buf = readFileSync(target);
+    url = new URL(href, pathToFileURL(fromFile));
+  } catch {
+    throw new Error(`${fromFile}: cannot resolve image link ${JSON.stringify(href)}.`);
+  }
+  if (url.protocol === 'http:' || url.protocol === 'https:') {
+    throw new Error(
+      `${fromFile} links to a remote image (${href}). atelier makes no network calls: download the image and link it by a local path, or embed it in the SVG.`,
+    );
+  }
+  if (url.protocol !== 'file:') throw new Error(`${fromFile}: unsupported image link ${JSON.stringify(href)}.`);
+  // file://host/share/x.png, /\host\share and \/host become \\host\share\x.png on Windows.
+  if (url.host !== '') throw networkPath();
+  let target;
+  try {
+    target = fileURLToPath(url);
+  } catch (err) {
+    throw new Error(`${fromFile}: cannot resolve image link ${JSON.stringify(href)} (${err.message}).`, { cause: err });
+  }
+  if (isNetworkPath(target)) throw networkPath();
+  return target;
+}
+
+/** Read a linked file, which must be a regular file no larger than MAX_LINKED_FILE_BYTES. */
+function readLinkedFile(target, href, fromFile) {
+  try {
+    const st = statSync(target);
+    if (!st.isFile()) throw new Error('not a regular file');
+    if (st.size > MAX_LINKED_FILE_BYTES) throw new Error(`larger than ${MAX_LINKED_FILE_BYTES / MB} MB`);
+    return readFileSync(target);
   } catch (err) {
     throw new Error(
       `${fromFile} links to ${JSON.stringify(href)}, which cannot be read (${err.code === 'ENOENT' ? 'file not found' : err.message}).`,
       { cause: err },
     );
   }
+}
 
+/**
+ * Turn one <image> href into a self-contained data URI, or return null to
+ * leave it unchanged. librsvg cannot resolve links from an in-memory SVG and
+ * silently drops links outside the SVG's folder, so every local link is
+ * embedded here. Remote, network and device links are refused.
+ */
+async function resolveImageHref(sharp, href, fromFile, chain, state) {
+  if (href === '' || href.startsWith('#')) return null;
+
+  if (/^data:/i.test(href)) {
+    const m = /^data:([^;,]*)((?:;[^;,]*)*),(.*)$/is.exec(href);
+    if (!m || RSVG_DATA_TYPES.test(m[1]) || !/;base64/i.test(m[2])) return null;
+    let uri;
+    try {
+      uri = await toPngDataUri(sharp, Buffer.from(m[3], 'base64'));
+    } catch {
+      return null;
+    }
+    return charge(state, { uri, images: 0 });
+  }
+
+  const target = linkTarget(href, fromFile);
+  const key = pathKey(target);
+  if (chain.includes(key)) throw new Error(`${fromFile}: SVG image links form a cycle through ${target}.`);
+  const cached = state.cache.get(key);
+  if (cached !== undefined) return charge(state, cached);
+
+  const buf = readLinkedFile(target, href, fromFile);
+  let entry;
   if (!rasterType(buf)) {
     const text = decodeSvgText(buf);
     if (looksLikeSvg(text)) {
-      const key = pathKey(target);
-      if (chain.includes(key)) throw new Error(`${fromFile}: SVG image links form a cycle through ${target}.`);
       if (chain.length >= MAX_LINK_DEPTH) throw new Error(`${fromFile}: SVG image links nest deeper than ${MAX_LINK_DEPTH} levels.`);
-      const inner = await inlineLinkedImages(sharp, dropXmlEncoding(text), target, [...chain, key]);
-      return `data:image/svg+xml;base64,${Buffer.from(inner, 'utf8').toString('base64')}`;
+      const before = { images: state.images, bytes: state.bytes };
+      const inner = await inlineLinkedImages(sharp, dropXmlEncoding(text), target, [...chain, key], state);
+      // The nested links were charged while inlining. Undo that and charge the
+      // whole expanded SVG below, on this use and on every cached reuse.
+      const nested = state.images - before.images;
+      state.images = before.images;
+      state.bytes = before.bytes;
+      entry = { uri: `data:image/svg+xml;base64,${Buffer.from(inner, 'utf8').toString('base64')}`, images: 1 + nested };
     }
   }
-  try {
-    return await toPngDataUri(sharp, buf);
-  } catch (err) {
-    throw new Error(`${fromFile} links to ${JSON.stringify(href)}, which is not a supported image (${err.message}).`, { cause: err });
+  if (entry === undefined) {
+    try {
+      entry = { uri: await toPngDataUri(sharp, buf), images: 1 };
+    } catch (err) {
+      throw new Error(`${fromFile} links to ${JSON.stringify(href)}, which is not a supported image (${err.message}).`, { cause: err });
+    }
   }
+  state.cache.set(key, entry);
+  return charge(state, entry);
 }
 
 /** Replace every local <image>/<feImage> link in `text` with an embedded data URI. */
-async function inlineLinkedImages(sharp, text, fromFile, chain) {
+async function inlineLinkedImages(sharp, text, fromFile, chain, state) {
   let out = '';
   let last = 0;
   for (const tag of text.matchAll(IMAGE_TAG)) {
+    // A comment or CDATA section: librsvg ignores the tags inside, so keep it verbatim.
+    if (tag[0].startsWith('<!')) continue;
     let rewritten = '';
     let tagLast = 0;
     for (const attr of tag[0].matchAll(HREF_ATTR)) {
       const raw = attr[2] ?? attr[3];
-      const replacement = await resolveImageHref(sharp, decodeXmlEntities(raw.trim()), fromFile, chain);
+      const replacement = await resolveImageHref(sharp, decodeXmlEntities(raw.trim()), fromFile, chain, state);
       if (replacement === null) continue;
       rewritten += tag[0].slice(tagLast, attr.index) + `${attr[1]}"${replacement}"`;
       tagLast = attr.index + attr[0].length;
@@ -318,7 +420,7 @@ async function loadMark(sharp, markPath) {
     const text = decodeSvgText(buf);
     if (looksLikeSvg(text)) {
       const key = pathKey(markPath);
-      const inlined = await inlineLinkedImages(sharp, dropXmlEncoding(text), markPath, [key]);
+      const inlined = await inlineLinkedImages(sharp, dropXmlEncoding(text), markPath, [key], newLinkState(markPath));
       input = Buffer.from(inlined, 'utf8');
       isSvg = true;
     }
@@ -347,10 +449,15 @@ function densityFor(mark, boxPx) {
   return Math.min(100_000, Math.max(1, (72 * 2 * boxPx) / mark.longSide));
 }
 
-/** Fit the mark inside a transparent w x h box. */
+/**
+ * Fit the mark inside a transparent w x h box. A raster mark is turned upright
+ * by its EXIF orientation first, as image viewers show it.
+ */
 async function renderMark(sharp, mark, w, h) {
   try {
-    const img = mark.isSvg ? sharp(mark.input, { density: densityFor(mark, Math.max(w, h)) }) : sharp(mark.input);
+    const img = mark.isSvg
+      ? sharp(mark.input, { density: densityFor(mark, Math.max(w, h)) })
+      : sharp(mark.input, { autoOrient: true });
     return await img.resize(w, h, { fit: 'contain', background: TRANSPARENT }).png().toBuffer();
   } catch (err) {
     throw new Error(`Cannot render ${mark.path} at ${w}x${h}: ${err.message}`, { cause: err });
@@ -404,8 +511,9 @@ async function makeBanner(sharp, mark, w, h, bg) {
  * (reads <projectRoot>/.atelier/brand.json). Then `targets` defaults to
  * favicons, app-icons and social plus steam when deploy.stores lists steam,
  * `backgroundColor` defaults to palette.bg, and `markSvg` defaults to
- * logos.mark resolved against projectRoot (or the working directory).
- * Explicit options always win.
+ * logos.mark resolved against projectRoot (or the working directory). That
+ * logos.mark must be a relative path inside the root; pass `markSvg` to use a
+ * file elsewhere. Explicit options always win.
  *
  * @param {{
  *   markSvg?: string,
@@ -476,8 +584,8 @@ Options:
                          #rgb, #rgba, #rrggbb or #rrggbbaa (the # is optional).
                          Default: brand.json palette.bg, else ${DEFAULT_BACKGROUND}.
       --root <dir>       Project root. Reads <dir>/.atelier/brand.json for the
-                         defaults above; its logos.mark is used when <mark.svg>
-                         is omitted.
+                         defaults above; its logos.mark (a relative path
+                         inside <dir>) is used when <mark.svg> is omitted.
       --json             Print the result as JSON.
   -h, --help             Show this help.
 
