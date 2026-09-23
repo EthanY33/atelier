@@ -150,7 +150,7 @@ Inside a Claude Code session the plugin's `bin/` is on the PATH, so `atelier doc
 
 ## Proven on a real site
 
-atelier was built for and dogfooded on [goneidle.com](https://goneidle.com) before its first release: image payload down 96% (a 3.89 MB PNG hero became a 167 KB AVIF across seven pages), zero critical or serious WCAG AA violations, and OG cards, favicons and tokens regenerated from the same brand file. The `backdrop-filter` rules in `runtime-ux-audit` come from a modal-stutter fix on that site.
+atelier was built for and dogfooded on [goneidle.com](https://goneidle.com) before its first release: 3.89 MB of site PNGs became 167 KB of 1280px AVIF, zero critical or serious WCAG AA violations, and OG cards, favicons and tokens regenerated from the same brand file. The `backdrop-filter` rules in `runtime-ux-audit` come from a modal-stutter fix on that site.
 
 ## Stability
 
