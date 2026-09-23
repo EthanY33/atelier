@@ -151,7 +151,17 @@ export const speculationRulesImmediateAbuse = {
 const EFFECTIVE_DIRECTIVES = ['script-src-elem', 'script-src', 'default-src'];
 const NONCE_OR_HASH_RE = /^'(nonce-|sha(256|384|512)-)/i;
 
-const normB64 = (s) => String(s).replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+// A SHA-512 digest is 88 base64 characters with padding; longer hash sources
+// cannot match and are not normalized.
+const MAX_HASH_SOURCE = 128;
+
+/** base64url to base64, trailing '=' padding removed. The trim is a linear scan: /=+$/ is quadratic on a long '=' run that is not at the end. */
+function normB64(s) {
+  const t = String(s).replace(/-/g, '+').replace(/_/g, '/');
+  let end = t.length;
+  while (end > 0 && t.charCodeAt(end - 1) === 61) end--; // '='
+  return t.slice(0, end);
+}
 
 function digest(alg, text) {
   return createHash(alg).update(String(text), 'utf8').digest('base64');
@@ -163,11 +173,17 @@ function allowsInline(tokens, nonce, text) {
   if (lowered.includes("'inline-speculation-rules'")) return true;
   const hasNonceOrHash = tokens.some((t) => NONCE_OR_HASH_RE.test(t));
   if (lowered.includes("'unsafe-inline'") && !hasNonceOrHash && !lowered.includes("'strict-dynamic'")) return true;
+  // One digest per algorithm, however many hash sources the policy lists.
+  const digests = new Map();
+  const digestOf = (alg) => {
+    if (!digests.has(alg)) digests.set(alg, normB64(digest(alg, text)));
+    return digests.get(alg);
+  };
   for (const t of tokens) {
     const n = /^'nonce-(.+)'$/i.exec(t);
     if (n && nonce && n[1] === nonce) return true;
     const h = /^'(sha256|sha384|sha512)-(.+)'$/i.exec(t);
-    if (h && normB64(h[2]) === normB64(digest(h[1].toLowerCase(), text))) return true;
+    if (h && h[2].length <= MAX_HASH_SOURCE && normB64(h[2]) === digestOf(h[1].toLowerCase())) return true;
   }
   return false;
 }

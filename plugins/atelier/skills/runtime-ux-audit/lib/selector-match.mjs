@@ -14,7 +14,7 @@
  * compileSelector returns null, matches() returns null and
  * querySelectorAll() returns [].
  */
-import { STATE_PSEUDOS } from './css-values.mjs';
+import { STATE_PSEUDOS, stripCssComments } from './css-values.mjs';
 
 const STATE = new Set(STATE_PSEUDOS);
 const LEGACY_PSEUDO_ELEMENTS = new Set(['before', 'after', 'first-line', 'first-letter']);
@@ -249,7 +249,7 @@ export function compileSelector(text) {
   if (cache.has(key)) return cache.get(key);
   let compiled;
   try {
-    compiled = parseList(key.replace(/\/\*[\s\S]*?\*\//g, ' ').trim());
+    compiled = parseList(stripCssComments(key).trim());
   } catch (err) {
     if (!(err instanceof Unsupported)) throw err;
     compiled = null;
@@ -276,7 +276,7 @@ function attrMatches(meta, a) {
   }
 }
 
-function matchCompound(adapter, el, c, negated) {
+function matchCompound(adapter, el, c, negated, memo) {
   const meta = adapter(el);
   if (c.tag && c.tag !== meta.tag) return false;
   for (const id of c.ids) if (meta.id !== id) return false;
@@ -285,8 +285,8 @@ function matchCompound(adapter, el, c, negated) {
   for (const p of c.pseudos) {
     switch (p.kind) {
       case 'state': if (negated) return false; break;
-      case 'not': if (p.list.some((cx) => matchComplex(adapter, el, cx, cx.length - 1, true))) return false; break;
-      case 'is': if (!p.list.some((cx) => matchComplex(adapter, el, cx, cx.length - 1, negated))) return false; break;
+      case 'not': if (p.list.some((cx) => matchComplex(adapter, el, cx, cx.length - 1, true, memo))) return false; break;
+      case 'is': if (!p.list.some((cx) => matchComplex(adapter, el, cx, cx.length - 1, negated, memo))) return false; break;
       case 'root': case 'scope': if (meta.parent !== null) return false; break;
       case 'first-child': if (meta.childIndex !== 1) return false; break;
       case 'last-child': if (meta.childIndex !== meta.siblingCount) return false; break;
@@ -308,29 +308,64 @@ function matchCompound(adapter, el, c, negated) {
   return true;
 }
 
-function matchComplex(adapter, el, parts, idx, negated) {
-  if (!matchCompound(adapter, el, parts[idx].compound, negated)) return false;
+// Memo for one top-level match: (parts, negated) -> el -> idx -> boolean.
+// Without it the ' ' and '~' combinators retry every ancestor/sibling for
+// every partial match, which is exponential in the number of compounds.
+function memoSlot(memo, parts, negated, el) {
+  let byParts = memo.get(parts);
+  if (!byParts) { byParts = [new Map(), new Map()]; memo.set(parts, byParts); }
+  const byEl = byParts[negated ? 1 : 0];
+  let slot = byEl.get(el);
+  if (!slot) { slot = new Map(); byEl.set(el, slot); }
+  return slot;
+}
+
+function matchComplex(adapter, el, parts, idx, negated, memo) {
+  const slot = memoSlot(memo, parts, negated, el);
+  const hit = slot.get(idx);
+  if (hit !== undefined) return hit;
+  const result = matchComplexUncached(adapter, el, parts, idx, negated, memo);
+  slot.set(idx, result);
+  return result;
+}
+
+// True when el, or any element reached from it by following `link` (parent
+// for ' ', prev for '~'), matches parts[0..idx]. Iterative and memoized, so
+// each (el, idx, link) is decided once and deep trees cannot overflow the stack.
+function matchChain(adapter, el, parts, idx, negated, memo, link) {
+  const key = `${link}:${idx}`;
+  const pending = [];
+  let result = false;
+  for (let cur = el; cur !== null; cur = adapter(cur)[link]) {
+    const slot = memoSlot(memo, parts, negated, cur);
+    const hit = slot.get(key);
+    if (hit !== undefined) { result = hit; break; }
+    pending.push(slot);
+    if (matchComplex(adapter, cur, parts, idx, negated, memo)) { result = true; break; }
+  }
+  for (const slot of pending) slot.set(key, result);
+  return result;
+}
+
+function matchComplexUncached(adapter, el, parts, idx, negated, memo) {
+  if (!matchCompound(adapter, el, parts[idx].compound, negated, memo)) return false;
   if (idx === 0) return true;
   const comb = parts[idx].combinator;
   if (comb === '>') {
     const p = adapter(el).parent;
-    return p !== null && matchComplex(adapter, p, parts, idx - 1, negated);
+    return p !== null && matchComplex(adapter, p, parts, idx - 1, negated, memo);
   }
   if (comb === ' ') {
-    for (let a = adapter(el).parent; a !== null; a = adapter(a).parent) {
-      if (matchComplex(adapter, a, parts, idx - 1, negated)) return true;
-    }
-    return false;
+    const p = adapter(el).parent;
+    return p !== null && matchChain(adapter, p, parts, idx - 1, negated, memo, 'parent');
   }
   if (comb === '+') {
     const s = adapter(el).prev;
-    return s !== null && matchComplex(adapter, s, parts, idx - 1, negated);
+    return s !== null && matchComplex(adapter, s, parts, idx - 1, negated, memo);
   }
   if (comb === '~') {
-    for (let s = adapter(el).prev; s !== null; s = adapter(s).prev) {
-      if (matchComplex(adapter, s, parts, idx - 1, negated)) return true;
-    }
-    return false;
+    const s = adapter(el).prev;
+    return s !== null && matchChain(adapter, s, parts, idx - 1, negated, memo, 'prev');
   }
   return false;
 }
@@ -344,7 +379,8 @@ function matchComplex(adapter, el, parts, idx, negated) {
 export function matchesSelector(adapter, el, selector) {
   const compiled = compileSelector(selector);
   if (compiled === null) return null;
-  return compiled.some((cx) => matchComplex(adapter, el, cx, cx.length - 1, false));
+  const memo = new Map();
+  return compiled.some((cx) => matchComplex(adapter, el, cx, cx.length - 1, false, memo));
 }
 
 /**
@@ -356,5 +392,6 @@ export function matchesSelector(adapter, el, selector) {
 export function selectAll(adapter, elements, selector) {
   const compiled = compileSelector(selector);
   if (compiled === null) return [];
-  return elements.filter((el) => compiled.some((cx) => matchComplex(adapter, el, cx, cx.length - 1, false)));
+  const memo = new Map();
+  return elements.filter((el) => compiled.some((cx) => matchComplex(adapter, el, cx, cx.length - 1, false, memo)));
 }

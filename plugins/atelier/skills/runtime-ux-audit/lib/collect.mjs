@@ -9,7 +9,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { decodeText } from '../../../lib/io.mjs';
 import { UxAuditError } from './errors.mjs';
-import { classifyInput, createPageUrls, isInside, safeRealpath } from './url.mjs';
+import { classifyInput, createPageUrls, isInside, isInternalHost, safeRealpath } from './url.mjs';
 import { fetchBounded } from './fetch.mjs';
 import { buildHtmlModel } from './html-model.mjs';
 import { parseCss, isPrintOnlyMedia } from './css-model.mjs';
@@ -30,8 +30,11 @@ const JS_TYPES = new Set(['', 'text/javascript', 'application/javascript', 'appl
   'text/javascript1.3', 'text/javascript1.4', 'text/javascript1.5', 'text/jscript', 'text/livescript', 'text/x-ecmascript',
   'text/x-javascript']);
 
-/** Reasons that mark a resource as third party: they never affect completeness. */
-const THIRD_PARTY_REASONS = new Set(['cross-origin', 'scheme-not-allowed', 'redirect-cross-origin', 'bare-specifier']);
+/**
+ * Skip reasons that never affect completeness: third-party resources, and
+ * print-only stylesheets (listed in Coverage, but they never apply on screen).
+ */
+export const COMPLETE_SKIP_REASONS = Object.freeze(new Set(['cross-origin', 'scheme-not-allowed', 'redirect-cross-origin', 'bare-specifier', 'print-media']));
 
 /** Strip a leading BOM and convert CRLF / CR to LF. */
 export function normalizeText(text) {
@@ -62,12 +65,101 @@ function pngSize(bytes) {
   return { width: u32(16), height: u32(20) };
 }
 
-function parseImport(params) {
-  const m = /^\s*(?:url\(\s*(["']?)(.*?)\1\s*\)|(["'])(.*?)\3)\s*(.*)$/is.exec(String(params ?? ''));
-  if (!m) return null;
-  const href = m[2] ?? m[4] ?? '';
-  const media = String(m[5] ?? '').replace(/layer(\([^)]*\))?/i, '').replace(/supports\([^)]*\)/i, '').trim();
-  return { href, media };
+const isCssSpace = (c) => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f';
+
+/**
+ * Parse @import params into { href, media }, or null. A linear scanner: the
+ * regex it replaces had overlapping quantifiers and took minutes on
+ * '@import url(' followed by a long run of spaces.
+ * @param {string} params
+ * @returns {{ href: string, media: string }|null}
+ */
+export function parseImport(params) {
+  const s = String(params ?? '');
+  const n = s.length;
+  let i = 0;
+  const skipSpace = () => { while (i < n && isCssSpace(s[i])) i++; };
+  const quoted = () => {
+    const end = s.indexOf(s[i], i + 1);
+    if (end < 0) return null;
+    const v = s.slice(i + 1, end);
+    i = end + 1;
+    return v;
+  };
+  skipSpace();
+  let href;
+  if (s.slice(i, i + 4).toLowerCase() === 'url(') {
+    i += 4;
+    skipSpace();
+    if (s[i] === '"' || s[i] === "'") {
+      href = quoted();
+      if (href === null) return null;
+      skipSpace();
+      if (s[i] !== ')') return null;
+      i++;
+    } else {
+      const end = s.indexOf(')', i);
+      if (end < 0) return null;
+      href = s.slice(i, end).trimEnd();
+      i = end + 1;
+    }
+  } else if (s[i] === '"' || s[i] === "'") {
+    href = quoted();
+    if (href === null) return null;
+  } else return null;
+  return { href, media: stripImportConditions(s.slice(i)) };
+}
+
+/**
+ * The media query list of @import params: the first layer / layer(...) and
+ * supports(...) removed. Same result as
+ * .replace(/layer(\([^)]*\))?/i, '').replace(/supports\([^)]*\)/i, ''), but
+ * linear: those regexes rescan to the end for every 'supports(' with no ')'.
+ */
+function stripImportConditions(rest) {
+  let s = rest;
+  const layer = /layer/i.exec(s);
+  if (layer) {
+    let end = layer.index + 5;
+    if (s[end] === '(') {
+      const close = s.indexOf(')', end);
+      if (close >= 0) end = close + 1;
+    }
+    s = s.slice(0, layer.index) + s.slice(end);
+  }
+  const supports = /supports\(/i.exec(s);
+  if (supports) {
+    const close = s.indexOf(')', supports.index + 9);
+    if (close >= 0) s = s.slice(0, supports.index) + s.slice(close + 1);
+  }
+  return s.trim();
+}
+
+/**
+ * The media a stylesheet link applies to once its onload handler has run, for
+ * the async CSS patterns (loadCSS, Beasties, Angular CLI):
+ *   <link rel="stylesheet" media="print" onload="this.media='all'">
+ *   <link rel="preload" as="style" onload="this.rel='stylesheet'">
+ * Returns undefined when there is no onload handler. Otherwise returns the
+ * media the handler assigns, or null for 'all' or when it cannot be read,
+ * since the swap almost always targets all media.
+ */
+function onloadMedia(onload) {
+  if (onload === null || onload === undefined) return undefined;
+  const m = /\bmedia\s*=\s*(["'`])([^"'`]{0,256})\1/i.exec(String(onload).slice(0, 4096));
+  const media = m ? m[2].trim() : '';
+  return media && media.toLowerCase() !== 'all' ? media : null;
+}
+
+/** Why a redirect of the document is refused, or null. Relative to where the audit started. */
+function documentRedirectPolicy(startUrl) {
+  const start = new URL(startUrl);
+  const startInternal = isInternalHost(start.hostname);
+  return (hop) => {
+    if (!startInternal && isInternalHost(hop.hostname)) return 'redirect-private-address';
+    if (start.protocol === 'https:' && hop.protocol === 'http:') return 'redirect-downgrade';
+    return null;
+  };
 }
 
 /**
@@ -112,14 +204,21 @@ export async function collect(input, opts = {}) {
     page = { kind: 'file', docUrl: pathToFileURL(realDoc).href, origin: null, status: null, headers: {}, root: rootDir };
   } else {
     fetchCount++;
+    // A public page must not bounce the audit to a loopback, link-local or
+    // private address (cloud metadata, local admin ports), or from https to
+    // http. Hosts are checked as written: a DNS name that resolves to a
+    // private address is not caught.
     const res = await fetchBounded(target.url, {
       kind: 'document', timeoutMs: limits.timeoutMs, maxBytes: limits.maxBytes, maxRedirects: limits.maxRedirects,
-      signal: totalSignal, fetchImpl,
+      signal: totalSignal, fetchImpl, policy: documentRedirectPolicy(target.url),
     });
     if (!res.ok) {
-      throw new UxAuditError('COLLECT_FAILED', `Could not load ${target.url}: ${res.reason}`, {
-        hint: res.reason === 'timeout' ? 'Check the URL, or raise --timeout.' : res.reason === 'too-large' ? 'Raise --max-bytes.' : 'Check that the URL is reachable.',
-      });
+      const redirectRefused = res.reason === 'redirect-private-address' || res.reason === 'redirect-downgrade';
+      let hint = 'Check that the URL is reachable.';
+      if (res.reason === 'timeout') hint = 'Check the URL, or raise --timeout.';
+      else if (res.reason === 'too-large') hint = 'Raise --max-bytes.';
+      else if (redirectRefused) hint = `The page redirected to ${res.url}; audit that URL directly if that was intended.`;
+      throw new UxAuditError('COLLECT_FAILED', `Could not load ${target.url}: ${res.reason}`, { hint });
     }
     rawDoc = decodeText(Buffer.from(res.bytes));
     page = { kind: 'http', docUrl: res.url, origin: new URL(res.url).origin, status: res.httpStatus, headers: res.headers, root: null };
@@ -266,9 +365,12 @@ export async function collect(input, opts = {}) {
       if (node.type !== 'atrule' || String(node.name).toLowerCase() !== 'import') continue;
       const imp = parseImport(node.params);
       if (!imp || !imp.href) continue;
-      if (imp.media && isPrintOnlyMedia(imp.media)) continue;
       const abs = urls.resolveFrom(imp.href, sheet.url);
       if (!abs) continue;
+      if (imp.media && isPrintOnlyMedia(imp.media)) {
+        addResource({ order: nextOrder++, kind: 'stylesheet', displayPath: urls.toDisplay(abs), status: 'skipped', reason: 'print-media' });
+        continue;
+      }
       if (depth + 1 > limits.maxImportDepth) {
         addResource({ order: nextOrder++, kind: 'stylesheet', displayPath: urls.toDisplay(abs), status: 'skipped', reason: 'depth' });
         continue;
@@ -375,11 +477,24 @@ export async function collect(input, opts = {}) {
       const rel = (html.attr(el, 'rel') ?? '').toLowerCase().split(/\s+/).filter(Boolean);
       const href = html.attr(el, 'href');
       if (href === null) continue;
-      if (rel.includes('stylesheet') && !rel.includes('alternate')) {
-        const media = html.attr(el, 'media');
-        if (media && isPrintOnlyMedia(media)) continue;
+      // <link rel="preload" as="style" onload="this.rel='stylesheet'"> turns
+      // into a stylesheet once loaded (loadCSS pattern).
+      const asyncStyle = rel.includes('preload') && (html.attr(el, 'as') ?? '').trim().toLowerCase() === 'style'
+        && /stylesheet/i.test(html.attr(el, 'onload') ?? '');
+      if ((rel.includes('stylesheet') || asyncStyle) && !rel.includes('alternate')) {
         const abs = urls.resolve(href);
         if (!abs) continue;
+        let media = html.attr(el, 'media');
+        if (media && isPrintOnlyMedia(media)) {
+          // media="print" plus an onload swap is the async CSS pattern: the
+          // sheet applies on screen once loaded. Without one it is print only.
+          const swapped = onloadMedia(html.attr(el, 'onload'));
+          if (swapped === undefined || (swapped && isPrintOnlyMedia(swapped))) {
+            addResource({ order: nextOrder++, kind: 'stylesheet', displayPath: urls.toDisplay(abs), status: 'skipped', reason: 'print-media' });
+            continue;
+          }
+          media = swapped;
+        }
         await addSheet({ origin: 'link', el, absUrl: abs, media: media && media.trim().toLowerCase() !== 'all' ? media.trim() : null });
       } else if (rel.includes('manifest') && !manifestLink) {
         manifestLink = el;
@@ -484,7 +599,7 @@ export async function collect(input, opts = {}) {
     addResource({ order, kind: 'image', displayPath: res.display, status: 'parsed', reason: size ? null : 'not-png' });
   }
 
-  const firstParty = (kinds) => resources.filter((r) => kinds.includes(r.kind) && !(r.status === 'skipped' && THIRD_PARTY_REASONS.has(r.reason)) && r.reason !== 'duplicate');
+  const firstParty = (kinds) => resources.filter((r) => kinds.includes(r.kind) && !(r.status === 'skipped' && COMPLETE_SKIP_REASONS.has(r.reason)) && r.reason !== 'duplicate');
   const cssComplete = firstParty(['stylesheet']).every((r) => r.status === 'parsed');
   const jsComplete = firstParty(['script', 'module']).every((r) => r.status === 'parsed');
 

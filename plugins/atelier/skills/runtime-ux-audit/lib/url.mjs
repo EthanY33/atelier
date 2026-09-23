@@ -56,6 +56,36 @@ export function normalizeOrigin(value) {
   return url.origin;
 }
 
+/**
+ * True for a URL hostname that names this machine or a private network:
+ * localhost and *.localhost, 0/8, 10/8, 100.64/10, 127/8, 169.254/16
+ * (link-local, cloud metadata), 172.16/12, 192.168/16, ::, ::1, fc00::/7,
+ * fe80::/10 and IPv4-mapped IPv6 forms of those. The check is literal (as
+ * the WHATWG URL parser normalizes the host); DNS is not resolved.
+ * @param {string} hostname - URL.hostname (IPv6 in brackets)
+ * @returns {boolean}
+ */
+export function isInternalHost(hostname) {
+  let h = String(hostname ?? '').toLowerCase().replace(/\.$/, '');
+  if (h.startsWith('[')) h = h.slice(1, -1);
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(h);
+  if (mapped) {
+    const hi = Number.parseInt(mapped[1], 16);
+    const lo = Number.parseInt(mapped[2], 16);
+    h = `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+  }
+  const v4 = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(h);
+  if (v4) {
+    const a = Number(v4[1]);
+    const b = Number(v4[2]);
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+  }
+  if (h.includes(':')) return h === '::' || h === '::1' || /^f[cd][0-9a-f]{0,2}:/.test(h) || /^fe[89ab][0-9a-f]?:/.test(h);
+  return false;
+}
+
 /** True when `p` equals `root` or sits inside it. Case-insensitive on win32. */
 export function isInside(root, p) {
   const a = process.platform === 'win32' ? root.toLowerCase() : root;

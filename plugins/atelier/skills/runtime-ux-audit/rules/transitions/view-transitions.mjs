@@ -190,7 +190,7 @@ function rootProblem(d) {
   if (!v || GLOBAL_KEYWORDS.has(v) || v.includes('var(')) return null;
   switch (d.prop) {
     case 'opacity': {
-      const m = /^([+-]?(?:\d+\.?\d*|\.\d+))(%?)$/.exec(v);
+      const m = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%?)$/.exec(v);
       if (!m) return null;
       const n = Number(m[1]) / (m[2] ? 100 : 1);
       return n < 1 ? 'Opacity below 1' : null;

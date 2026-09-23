@@ -72,6 +72,7 @@ async function runDynamic(options, collected, budgets) {
       budgets,
       limits: options.dynamicLimits,
       launch: launchUxChromium,
+      allowOrigins: options.allowOrigins,
     });
   } catch (err) {
     const mapped = fromPreflight(err);

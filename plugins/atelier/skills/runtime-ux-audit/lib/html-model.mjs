@@ -4,8 +4,42 @@
  * Elements are parse5 element nodes. <template> contents are excluded (parse5
  * keeps them in template.content, which is never walked).
  */
-import { parse } from 'parse5';
+import { parse, defaultTreeAdapter } from 'parse5';
 import { matchesSelector, selectAll } from './selector-match.mjs';
+import { UxAuditError } from './errors.mjs';
+
+/**
+ * Deepest element nesting the parser accepts. Chromium's HTML parser caps DOM
+ * depth at 512 too. parse5 scans the whole stack of open elements for many
+ * start tags, so parsing time grows with depth squared: 100,000 unclosed
+ * <div>s (500 KB) took four minutes. Past this depth the audit stops with
+ * COLLECT_FAILED (exit 2) instead of hanging.
+ */
+export const MAX_HTML_DEPTH = 512;
+
+function depthGuardedAdapter(max, displayPath) {
+  const depth = new WeakMap();
+  const place = (parent, child) => {
+    const d = (depth.get(parent) ?? 0) + 1;
+    if (d > max) {
+      throw new UxAuditError('COLLECT_FAILED', `${displayPath} nests elements more than ${max} deep.`, {
+        hint: 'Close unclosed elements (browsers stop nesting past 512 levels), or audit a smaller page.',
+      });
+    }
+    depth.set(child, d);
+  };
+  return {
+    ...defaultTreeAdapter,
+    appendChild(parent, child) {
+      place(parent, child);
+      defaultTreeAdapter.appendChild(parent, child);
+    },
+    insertBefore(parent, child, ref) {
+      place(parent, child);
+      defaultTreeAdapter.insertBefore(parent, child, ref);
+    },
+  };
+}
 
 const TEXT_SKIP = new Set(['script', 'style', 'template', 'noscript']);
 
@@ -49,7 +83,7 @@ export function buildHtmlModel(text, meta = {}) {
   const source = meta.source ?? 'static';
   const displayPath = meta.displayPath ?? (source === 'rendered' ? '(rendered DOM)' : 'index.html');
   const resolveHref = typeof meta.resolve === 'function' ? meta.resolve : () => null;
-  const document = parse(String(text ?? ''), { sourceCodeLocationInfo: true });
+  const document = parse(String(text ?? ''), { sourceCodeLocationInfo: true, treeAdapter: depthGuardedAdapter(MAX_HTML_DEPTH, displayPath) });
 
   const elements = [];
   const metas = new Map();

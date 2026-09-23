@@ -34,14 +34,40 @@ function matches(text, ruleId) {
   return all || ids.has(ruleId);
 }
 
-function precedingComments(node) {
-  const out = [];
+// Both indexes below are built once per node or script and hold only the
+// comments that carry a marker (usually none), so checking a finding costs a
+// few lookups instead of a scan over every comment of the sheet or script.
+
+/** CSS node -> texts of the marked comments directly before it. */
+const markedBeforeNode = new WeakMap();
+function markedPrecedingComments(node) {
+  let out = markedBeforeNode.get(node);
+  if (out) return out;
+  out = [];
   let prev = typeof node?.prev === 'function' ? node.prev() : undefined;
   while (prev && prev.type === 'comment') {
-    out.push(prev.text);
+    if (MARK_RE.test(String(prev.text ?? ''))) out.push(prev.text);
     prev = prev.prev();
   }
+  markedBeforeNode.set(node, out);
   return out;
+}
+
+/** Script record -> end line -> comments that carry a marker. */
+const markedByScript = new WeakMap();
+function markedCommentsByEndLine(script) {
+  let byLine = markedByScript.get(script);
+  if (byLine) return byLine;
+  byLine = new Map();
+  for (const c of script.comments ?? []) {
+    const end = c.loc?.end?.line;
+    if (!end || !MARK_RE.test(String(c.value ?? ''))) continue;
+    const list = byLine.get(end);
+    if (list) list.push(c);
+    else byLine.set(end, [c]);
+  }
+  markedByScript.set(script, byLine);
+  return byLine;
 }
 
 /**
@@ -65,14 +91,14 @@ export function createSuppressor() {
     // CSS: a comment right before the node or before any enclosing rule/at-rule.
     if (meta.cssNode) {
       for (let n = meta.cssNode; n && n.type !== 'root' && n.type !== 'document'; n = n.parent) {
-        if (precedingComments(n).some((t) => matches(t, ruleId))) return true;
+        if (markedPrecedingComments(n).some((t) => matches(t, ruleId))) return true;
       }
     }
     // JS: a comment ending on the same line or the line before.
     if (meta.script && meta.jsLine) {
-      for (const c of meta.script.comments ?? []) {
-        const end = c.loc?.end?.line;
-        if ((end === meta.jsLine || end === meta.jsLine - 1) && matches(c.value, ruleId)) return true;
+      const byLine = markedCommentsByEndLine(meta.script);
+      for (const line of [meta.jsLine, meta.jsLine - 1]) {
+        for (const c of byLine.get(line) ?? []) if (matches(c.value, ruleId)) return true;
       }
     }
     return false;

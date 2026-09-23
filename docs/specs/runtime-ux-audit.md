@@ -437,15 +437,16 @@ The skill shipped in atelier 1.0. This section records where it differs from the
 
 ### Exit codes
 
-- `0` pass, `1` critical or serious findings, `2` the audit could not run (usage, missing input, failed document fetch, invalid brand.json, missing Playwright or Chromium, dynamic failure). The spec's "an uncaught throw exits 1" would let CI mistake "did not run" for "found problems".
+- `0` pass, `1` critical or serious findings, `2` the audit could not run (usage, missing input, failed or refused document fetch, HTML nested past 512 levels, invalid brand.json, missing Playwright or Chromium, dynamic failure). The spec's "an uncaught throw exits 1" would let CI mistake "did not run" for "found problems".
 
 ### Measurement (`--dynamic`)
 
 - No `web-vitals` dependency. INP is estimated from the Event Timing API directly: a `PerformanceObserver` of type `event` with `durationThreshold: 16`, entries grouped by `interactionId`, and web-vitals' rule of skipping one outlier per 50 interactions. `metrics.inpP75Ms` keeps the spec's name but holds this lab estimate (Pixel 7 profile, 4x CPU through CDP), not a field p75.
 - Full Chromium (`channel: 'chromium'`, new headless) with Playwright's default `--disable-back-forward-cache` switch removed. Verified on Playwright 1.63 and Chromium 153: the headless shell never restores from the back/forward cache and reports `masked` for every page.
 - A settle phase (1 s plus two animation frames at 4x CPU) runs before the interaction probe. Without it the first interaction on a trivial page measured 416 ms.
-- Local files are served from a loopback server (127.0.0.1, GET and HEAD only, confined to the site root), so bfcache, module scripts and same-origin fetches behave as in production. Served URLs are mapped back to file paths before they reach the report.
-- The dynamic pass only collects facts (Event Timing entries, long animation frames, a DOM sweep, dialog focus results, bfcache restore); the area rules judge them. It taps and tabs through safe controls only (never links, downloads or form submits) and closes popups.
+- Local files are served from a loopback server (127.0.0.1, GET and HEAD only, confined to the site root, dot-named files and folders refused except `.well-known`), so bfcache, module scripts and same-origin fetches behave as in production. Served URLs are mapped back to file paths before they reach the report. For local inputs the browser context blocks requests (including WebSockets) to any origin other than the loopback server and `--allow-origin` entries, and blocks service workers, so page scripts cannot send files from the root elsewhere; blocked origins are listed as a `network` probe error.
+- The dynamic pass only collects facts (Event Timing entries, long animation frames, a DOM sweep, dialog focus results, bfcache restore); the area rules judge them. It taps and tabs through safe controls only (never links, downloads, or submit buttons of a form whose method is not `dialog`, whether or not the form has an `action`) and closes popups.
+- Chromium launches with its OS sandbox (Playwright's default is `--no-sandbox`). On Linux, when the sandbox cannot start, the launch is retried without it and a one-line warning goes to stderr.
 
 ### Static analysis
 
@@ -455,6 +456,19 @@ The skill shipped in atelier 1.0. This section records where it differs from the
 - Findings that rest on missing evidence go to "Needs review" (the raw `incomplete` list) and never fail the audit: a same-origin file that could not be read, plus the calibration cases below.
 - Suppression: `--ignore <rule-id>`, `data-atelier-ignore` on an element or ancestor, and `atelier-ignore` comments in CSS and JS.
 - Output is deterministic: fixed ordering by code unit, no durations or machine paths, and `--timestamp` for the report time. Runtime findings keep the order their rule emits (longest script first, targets in DOM order).
+- Async stylesheets are read as screen styles: `<link rel="stylesheet" media="print" onload="...">` (the loadCSS and Beasties pattern, with the media the handler assigns) and `<link rel="preload" as="style" onload="...rel='stylesheet'">`. Print-only sheets and `@import ... print` are listed in Coverage as skipped with reason `print-media` and do not make coverage incomplete.
+
+### Hostile input
+
+The static pass reads untrusted pages and runs in CI, so its cost is bounded by the input size and a page cannot hang it or forge its report:
+
+- Selector matching memoizes each (element, compound) pair per query and walks ancestor and sibling chains iteratively, so descendant and `~` chains are polynomial and deep trees cannot overflow the stack.
+- `@import` params, CSS comments, selector normalization, CSP hash sources and CSS numbers are parsed by linear scanners or unambiguous regexes (the earlier regexes were quadratic or cubic on long runs of spaces, parentheses, digits or `=`).
+- CSS nesting stops at 64 levels, resolved nested selectors at 4 KB each and 1 MiB in total; rules past a bound are not analyzed, and the model reports `complete: false`, so findings that rest on absence move to Needs review.
+- HTML nested deeper than 512 elements (Chromium's parser limit) stops the audit with `COLLECT_FAILED`, exit 2: parse5's work grows with depth squared. `--timeout` bounds network requests only.
+- A document redirect from a public host to a loopback, link-local or private address, or from https to http, is refused with exit 2. Hosts are checked as written; DNS is not resolved.
+- `atelier-ignore` comments are indexed once per script or CSS node, not scanned per finding.
+- `ux-report.md` renders page-derived text on one line: selectors and snippets inside code spans with whitespace collapsed, and locations, paths, URLs and messages with backslashes, backticks, `<`, `[`, `]` and block-starting characters escaped. The report is appended to GitHub step summaries by the Action.
 
 ### Rule set: 65 shipped, from a catalog of 72
 

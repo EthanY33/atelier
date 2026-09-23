@@ -116,7 +116,8 @@ describe('CLI', () => {
     const { dir, cleanup } = tempDir();
     try {
       const r = run([ENTRY, CLEAN, join(dir, 'out'), '--dynamic', '--no-brand', '--timestamp', '2026-01-01T00:00:00Z']);
-      expect(r.stderr).toBe('');
+      // Where Chromium's sandbox cannot start (some Linux runners) the one-line fallback warning is expected.
+      expect(r.stderr.replace(/^atelier: the Chromium sandbox cannot start here[^\n]*\n?/m, '')).toBe('');
       expect(r.code).toBe(0);
       expect(r.stdout).toMatch(/INP est\.: .+ \(budget 200 ms\)/);
       const md = readFileSync(join(dir, 'out', 'ux-report.md'), 'utf8');
@@ -131,6 +132,51 @@ describe('CLI', () => {
     const r = run(['--input-type=module', '-e', `import(${JSON.stringify(pathToFileURL(ENTRY).href)}).then((m) => console.log(typeof m.auditRuntimeUx))`]);
     expect(r.code).toBe(0);
     expect(r.stdout.trim()).toBe('function');
+  });
+
+  it('does not run the CLI when this file is passed to node -e as argv[1]', () => {
+    // The SKILL.md JS API form puts this file in argv[1]; isMain alone would
+    // then start the CLI with no arguments (usage on stderr, exit 2).
+    const code = "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href); console.log(typeof m.auditRuntimeUx);";
+    for (const evalFlag of ['-e', '--eval']) {
+      const r = run(['--input-type=module', evalFlag, code, `${SKILL_DIR}/index.mjs`]);
+      expect(r.code, `${evalFlag}: ${r.stderr}`).toBe(0);
+      expect(r.stderr).toBe('');
+      expect(r.stdout.trim()).toBe('function');
+    }
+  });
+
+  it('the JS API line in SKILL.md runs as written', () => {
+    const skillMd = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
+    const snippet = skillMd.match(/^node --input-type=module -e "(.+)" "\$\{CLAUDE_SKILL_DIR\}\/index\.mjs"\r?$/m);
+    expect(snippet, 'API line not found in SKILL.md').not.toBeNull();
+    const code = snippet[1];
+    expect(code).toMatch(/^const \{ pathToFileURL \} = await import\('node:url'\); const m = await import\(pathToFileURL\(process\.argv\[1\]\)\.href\);/);
+    // Inside bash double quotes these would be expanded; the snippet must not rely on them.
+    expect(code).not.toMatch(/["$`\\]/);
+    const { dir, cleanup } = tempDir();
+    try {
+      mkdirSync(join(dir, 'dist'));
+      writeFileSync(join(dir, 'dist', 'index.html'), readFileSync(CLEAN));
+      // What Claude Code produces: the skill dir substituted, then "/index.mjs" (mixed separators on Windows).
+      const r = run(['--input-type=module', '-e', code, `${SKILL_DIR}/index.mjs`], { cwd: dir });
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stderr).toBe('');
+      expect(r.stdout.trim()).toMatch(/^true \{ critical: 0, serious: 0, moderate: 0, minor: 0 \} null$/);
+      expect(existsSync(join(dir, 'ux-report', 'ux-report.md'))).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('documents every CLI flag, and SKILL.md names only real flags', () => {
+    const skillMd = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
+    const usageFlags = new Set([...USAGE.matchAll(/(?<![\w-])--[a-z][a-z-]*/g)].map((m) => m[0]));
+    const skillFlags = new Set([...skillMd.matchAll(/(?<![\w-])--[a-z][a-z-]*/g)].map((m) => m[0]));
+    // Node's own flags in the JS API line are not atelier flags.
+    skillFlags.delete('--input-type');
+    for (const f of skillFlags) expect(usageFlags.has(f), `${f} is in SKILL.md but not in --help`).toBe(true);
+    for (const f of usageFlags) if (f !== '--help') expect(skillFlags.has(f), `${f} is in --help but not in SKILL.md`).toBe(true);
   });
 });
 

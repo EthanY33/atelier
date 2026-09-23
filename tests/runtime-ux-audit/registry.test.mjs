@@ -111,7 +111,7 @@ describe('SKILL.md', () => {
     expect(fm[1].length).toBeLessThanOrEqual(400);
     expect([...SKILL_MD].filter((c) => c.charCodeAt(0) > 0x7e)).toEqual([]);
     expect(SKILL_MD).toContain('node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" ux');
-    expect(SKILL_MD).toContain('"${CLAUDE_SKILL_DIR}"');
+    expect(SKILL_MD).toContain('"${CLAUDE_SKILL_DIR}/index.mjs"');
     expect(SKILL_MD).not.toMatch(/plugins\/atelier\/|scripts\//);
   });
 });

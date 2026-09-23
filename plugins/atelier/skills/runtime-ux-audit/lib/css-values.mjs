@@ -60,15 +60,71 @@ export function splitTopLevel(value, sep = ',') {
 // ---------------------------------------------------------------------------
 
 /**
+ * Remove CSS comments. Same result as str.replace(/\/\*[\s\S]*?\*\//g, ' ')
+ * in linear time: the lazy regex rescans to the end of the input for every
+ * unterminated '/*', which is quadratic on page-controlled text.
+ * @param {string} input
+ * @returns {string}
+ */
+export function stripCssComments(input) {
+  const str = String(input ?? '');
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const open = str.indexOf('/*', i);
+    if (open === -1) break;
+    const close = str.indexOf('*/', open + 2);
+    if (close === -1) break; // no later '/*' can close either
+    out += `${str.slice(i, open)} `;
+    i = close + 2;
+  }
+  return i === 0 ? str : out + str.slice(i);
+}
+
+const isNameChar = (c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c === '_' || c === '-';
+const isSpace = (c) => c !== undefined && /\s/.test(c);
+
+/**
  * Canonical selector text: comments removed, whitespace collapsed, one space
  * around the > + ~ combinators, ', ' between list items, no padding inside
  * (...) or [...]. Case is preserved.
+ *
+ * The output is built as a list of chunks, so trimming and last-character
+ * checks never copy or rescan the whole output. The function is linear in the
+ * input length, even for page-controlled selectors with thousands of '(' or ','.
  * @param {string} input
  * @returns {string}
  */
 export function normalizeSelector(input) {
-  const s = String(input ?? '').replace(/\/\*[\s\S]*?\*\//g, ' ');
-  let out = '';
+  const s = stripCssComments(input);
+  const parts = [];
+  const push = (t) => { if (t) parts.push(t); };
+  const lastCh = () => {
+    const p = parts[parts.length - 1];
+    return p === undefined ? undefined : p[p.length - 1];
+  };
+  const trimOut = () => {
+    while (parts.length) {
+      const t = parts[parts.length - 1].trimEnd();
+      if (t) { parts[parts.length - 1] = t; return; }
+      parts.pop();
+    }
+  };
+  // The ':name' or '::name' right before a '(' (what /(::?[\w-]+)$/ finds on
+  // the output so far), scanning back over the trailing name only.
+  const trailingPseudo = () => {
+    let pi = parts.length - 1;
+    let ci = pi >= 0 ? parts[pi].length - 1 : -1;
+    const prev = () => {
+      while (pi >= 0 && ci < 0) { pi--; ci = pi >= 0 ? parts[pi].length - 1 : -1; }
+      return pi >= 0 ? parts[pi][ci--] : undefined;
+    };
+    let name = '';
+    let c = prev();
+    while (c !== undefined && isNameChar(c)) { name = c + name; c = prev(); }
+    if (!name || c !== ':') return null;
+    return (prev() === ':' ? '::' : ':') + name;
+  };
   const stack = [];
   let pendingSpace = false;
   const top = () => stack[stack.length - 1];
@@ -76,64 +132,69 @@ export function normalizeSelector(input) {
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
     if (ch === '\\') {
-      if (pendingSpace && out && !/[\s([]$/.test(out)) out += ' ';
+      const l = lastCh();
+      if (pendingSpace && l !== undefined && !(isSpace(l) || l === '(' || l === '[')) push(' ');
       pendingSpace = false;
-      out += s.slice(i, i + 2);
+      push(s.slice(i, i + 2));
       i++;
       continue;
     }
     if (ch === '"' || ch === "'") {
-      if (pendingSpace && out && !/[\s([=]$/.test(out)) out += ' ';
+      const l = lastCh();
+      if (pendingSpace && l !== undefined && !(isSpace(l) || l === '(' || l === '[' || l === '=')) push(' ');
       pendingSpace = false;
       let j = i + 1;
       while (j < s.length && s[j] !== ch) { if (s[j] === '\\') j++; j++; }
-      out += s.slice(i, j + 1);
+      push(s.slice(i, j + 1));
       i = j;
       continue;
     }
     if (/\s/.test(ch)) { pendingSpace = true; continue; }
     if (top() === '[') {
-      if (ch === ']') { stack.pop(); out += ']'; }
-      else if ('=~|^$*'.includes(ch)) out += ch;
+      if (ch === ']') { stack.pop(); push(']'); }
+      else if ('=~|^$*'.includes(ch)) push(ch);
       else {
-        if (pendingSpace && !/[[=]$/.test(out)) out += ' ';
-        out += ch;
+        const l = lastCh();
+        if (pendingSpace && !(l === '[' || l === '=')) push(' ');
+        push(ch);
       }
       pendingSpace = false;
       continue;
     }
     if (ch === '[') {
-      if (pendingSpace && out && !/[\s(]$/.test(out)) out += ' ';
+      const l = lastCh();
+      if (pendingSpace && l !== undefined && !(isSpace(l) || l === '(')) push(' ');
       pendingSpace = false;
       stack.push('[');
-      out += '[';
+      push('[');
       continue;
     }
     if (ch === '(') {
-      const m = /(::?[\w-]+)$/.exec(out);
-      stack.push(m ? m[1].toLowerCase() : '(');
-      out += '(';
+      const m = trailingPseudo();
+      stack.push(m ? m.toLowerCase() : '(');
+      push('(');
       pendingSpace = false;
       continue;
     }
     if (ch === ')') {
       stack.pop();
-      out = out.trimEnd();
-      out += ')';
+      trimOut();
+      push(')');
       pendingSpace = false;
       continue;
     }
     if (inSelectorContext() && (ch === '>' || ch === '+' || ch === '~' || ch === ',')) {
-      out = out.trimEnd();
-      out += ch === ',' ? ', ' : (out === '' || out.endsWith('(') ? `${ch} ` : ` ${ch} `);
+      trimOut();
+      push(ch === ',' ? ', ' : (parts.length === 0 || lastCh() === '(' ? `${ch} ` : ` ${ch} `));
       pendingSpace = false;
       continue;
     }
-    if (pendingSpace && out && !/[\s(]$/.test(out)) out += ' ';
+    const l = lastCh();
+    if (pendingSpace && l !== undefined && !(isSpace(l) || l === '(')) push(' ');
     pendingSpace = false;
-    out += ch;
+    push(ch);
   }
-  return out.trim();
+  return parts.join('').trim();
 }
 
 /**
@@ -342,7 +403,9 @@ export function inSupports(context, re) {
 // Values
 // ---------------------------------------------------------------------------
 
-const NUM = '[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:e[+-]?\\d+)?';
+// Unambiguous number grammar: \d+ and \d* never split the same digit run, so a
+// long run of digits followed by a bad suffix fails in linear time.
+const NUM = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:e[+-]?\\d+)?';
 const TIME_RE = new RegExp(`^(${NUM})(ms|s)$`, 'i');
 const LENGTH_RE = new RegExp(`^(${NUM})([a-z%]*)$`, 'i');
 
@@ -353,7 +416,7 @@ const LENGTH_RE = new RegExp(`^(${NUM})([a-z%]*)$`, 'i');
  */
 export function parseTimeMs(token) {
   const t = String(token ?? '').trim();
-  if (/^[+-]?0*\.?0+$/.test(t)) return 0;
+  if (/^[+-]?(?:0*\.)?0+$/.test(t)) return 0;
   const m = TIME_RE.exec(t);
   if (!m) return null;
   const n = Number(m[1]);
@@ -434,7 +497,7 @@ export function parseAnimationList(value) {
       if (t !== null && /[a-z]$/i.test(tok)) {
         if (duration === null) { duration = t; durationToken = tok; } else if (delay === null) delay = t;
       } else if (TIMING_KEYWORDS.has(lower) || TIMING_FN_RE.test(tok)) continue;
-      else if (ANIM_KEYWORDS.has(lower) || /^[+-]?(\d+\.?\d*|\.\d+)$/.test(tok)) continue;
+      else if (ANIM_KEYWORDS.has(lower) || /^[+-]?(\d+(?:\.\d*)?|\.\d+)$/.test(tok)) continue;
       else if (lower === 'none') sawNone = true;
       else if (/^[a-z_-][\w-]*$/i.test(tok) || /^["']/.test(tok)) { if (name === null) name = tok.replace(/^["']|["']$/g, ''); }
       else unknown.push(tok);

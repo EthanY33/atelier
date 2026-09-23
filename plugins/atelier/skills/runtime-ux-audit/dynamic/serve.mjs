@@ -6,6 +6,9 @@
  * a local file is served from http://127.0.0.1:<port>/ rooted at the audit
  * root. GET and HEAD only; no directory listing; no cache headers. Every
  * path is resolved and realpath'd, and anything outside the root is a 404.
+ * Page scripts can read what this server serves, so dot-named files and
+ * folders (.env, .git/, .ssh/, .npmrc) are a 404 too, before and after
+ * following links; .well-known/ is the one exception.
  */
 import { createReadStream, statSync } from 'node:fs';
 import http from 'node:http';
@@ -54,6 +57,11 @@ export function contentTypeFor(name) {
   return CONTENT_TYPES[extname(String(name)).toLowerCase()] ?? 'application/octet-stream';
 }
 
+/** True when a root-relative path has a dot-named segment other than .well-known. */
+export function hasHiddenSegment(rel) {
+  return String(rel).split(/[\\/]/).some((seg) => seg.startsWith('.') && seg !== '.well-known');
+}
+
 function send(res, status, body = '') {
   res.writeHead(status, { 'Content-Type': TEXT('text/plain'), 'Content-Length': Buffer.byteLength(body) });
   res.end(body);
@@ -95,6 +103,7 @@ export async function startServer(root) {
       return send(res, 404, 'Not Found');
     }
     if (!st.isFile()) return send(res, 404, 'Not Found');
+    if (hasHiddenSegment(relative(rootDir, abs)) || hasHiddenSegment(relative(rootDir, real))) return send(res, 404, 'Not Found');
     res.writeHead(200, { 'Content-Type': contentTypeFor(real), 'Content-Length': st.size });
     if (req.method === 'HEAD') return res.end();
     const stream = createReadStream(real);

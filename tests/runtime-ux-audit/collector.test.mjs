@@ -139,6 +139,7 @@ describe('local resource graph', () => {
       ['stylesheet', 'e.css', 'skipped', 'depth'],
       ['stylesheet', 'a.css', 'skipped', 'duplicate'],
       ['stylesheet', 'style:inline(1)', 'parsed', null],
+      ['stylesheet', 'b.css', 'skipped', 'print-media'],
       ['stylesheet', 'd.css', 'skipped', 'duplicate'],
     ]);
     const ctx = await contextFor({

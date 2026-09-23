@@ -20,7 +20,7 @@ Pass: no (0 critical, 5 serious)
 - Help: https://developer.mozilla.org/en-US/docs/Web/CSS/backdrop-filter
 - Instances (1):
   - `dialog.trailer` at css/panels.css:42:18: `dialog.trailer { backdrop-filter: blur(8px) }`
-    backdrop-filter on a modal that holds <video> or <iframe> (#trailer); the blur re-runs every frame
+    backdrop-filter on a modal that holds \<video> or \<iframe> (#trailer); the blur re-runs every frame
 
 #### atelier/runtime-ux/destructive-dialog-closedby-any
 - Description: A destructive confirmation <dialog> uses closedby="any", so a stray click outside dismisses it.
@@ -98,7 +98,7 @@ Pass: no (0 critical, 5 serious)
 - Help: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/dialog
 - Instances (1):
   - `body > div.modal:nth-of-type(3)` at index.html:66:20: `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="legacy-title">`
-    <div role="dialog" aria-modal="true">: use <dialog> with showModal()
+    \<div role="dialog" aria-modal="true">: use \<dialog> with showModal()
 
 #### atelier/runtime-ux/fixed-nav-backdrop-filter-under-modal
 - Description: A fixed element keeps its backdrop-filter while a modal covers it, so the blur is recomputed under the modal on every paint.
@@ -122,7 +122,7 @@ Pass: no (0 critical, 5 serious)
 - Help: https://developer.mozilla.org/en-US/docs/Web/CSS/@starting-style
 - Instances (1):
   - `[popover].dropdown` at css/panels.css:50:3: `[popover].dropdown { transition: opacity 0.2s, display 0.2s allow-discrete }`
-    "[popover].dropdown" transitions without a matching @starting-style, so the entry is not animated
+    "\[popover\].dropdown" transitions without a matching @starting-style, so the entry is not animated
 
 #### atelier/runtime-ux/z-index-literal-smell
 - Description: A magic "always on top" z-index such as 9999 or 2147483647; the top layer (showModal, popover) replaces it.
@@ -166,9 +166,9 @@ Pass: no (0 critical, 5 serious)
 - Help: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/dialog
 - Instances (2):
   - `body > script:nth-of-type(1)` at index.html:70:9: `<script src="js/vendor/focus-trap.umd.js">`
-    loads js/vendor/focus-trap.umd.js next to a native <dialog>
+    loads js/vendor/focus-trap.umd.js next to a native \<dialog>
   - `script[src="js/panels.js"]` at js/panels.js:3:14: `window.focusTrap.createFocusTrap('#settings')`
-    createFocusTrap() next to a native <dialog>
+    createFocusTrap() next to a native \<dialog>
 
 #### atelier/runtime-ux/inert-with-showmodal
 - Description: Code that calls showModal() also sets inert by hand; a modal dialog already makes the rest of the page inert.

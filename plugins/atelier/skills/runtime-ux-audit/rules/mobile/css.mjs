@@ -16,7 +16,7 @@ const lower = (v) => String(v ?? '').trim().toLowerCase();
 // vh units
 // ---------------------------------------------------------------------------
 
-const NUM = '[+-]?(?:\\d+\\.?\\d*|\\.\\d+)';
+const NUM = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)';
 const DYNAMIC_UNIT_RE = new RegExp(`(?<![\\w.])${NUM}(?:dvh|svh|lvh|dvb|svb|lvb)(?![\\w-])|-webkit-fill-available|(?<![\\w-])stretch(?![\\w-])`, 'i');
 const LEGACY_SUPPORTS_RE = /not\s*\([^)]*(?:dvh|svh|lvh)/i;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

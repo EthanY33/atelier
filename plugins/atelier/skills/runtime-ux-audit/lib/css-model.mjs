@@ -3,7 +3,7 @@
  * lookup indices. Sheets come from the collector (see collect.mjs).
  */
 import postcss from 'postcss';
-import { normalizeSelector, splitSelectorList } from './css-values.mjs';
+import { normalizeSelector, splitSelectorList, stripCssComments } from './css-values.mjs';
 
 const EMPTY_CONTEXT = Object.freeze({
   media: Object.freeze([]), supports: Object.freeze([]), layer: Object.freeze([]), container: Object.freeze([]),
@@ -12,8 +12,7 @@ const EMPTY_CONTEXT = Object.freeze({
 
 /** Lowercase, collapse whitespace, drop padding inside parentheses. */
 export function normalizePrelude(params) {
-  return String(params ?? '')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  return stripCssComments(params)
     .replace(/\s+/g, ' ')
     .replace(/\(\s+/g, '(')
     .replace(/\s+\)/g, ')')
@@ -64,12 +63,27 @@ function freezeCtx(c) {
 }
 
 const MAX_SELECTORS = 256;
+// '&' substitution multiplies selector length at every nesting level, and
+// walk() recurses once per level, so page-controlled CSS could otherwise build
+// selectors of millions of characters or overflow the stack. Rules past these
+// bounds are not analyzed and the model reports truncated (complete: false).
+export const MAX_SELECTOR_LENGTH = 4096;
+export const MAX_NESTING_DEPTH = 64;
+/** Total characters of resolved nested selectors per model. */
+const MAX_RESOLVED_CHARS = 1024 * 1024;
 
+const TOO_LONG = Symbol('too long');
+
+/**
+ * Replace each '&' outside strings and attribute brackets with parent.
+ * Returns null when sel has no such '&', and TOO_LONG once the result passes
+ * MAX_SELECTOR_LENGTH. One linear pass.
+ */
 function replaceNesting(sel, parent) {
-  // Replace '&' outside strings and attribute brackets.
   let out = '';
   let quote = null;
   let bracket = 0;
+  let replaced = false;
   for (let i = 0; i < sel.length; i++) {
     const ch = sel[i];
     if (ch === '\\') { out += sel.slice(i, i + 2); i++; continue; }
@@ -77,19 +91,35 @@ function replaceNesting(sel, parent) {
     if (ch === '"' || ch === "'") { quote = ch; out += ch; continue; }
     if (ch === '[') bracket++;
     if (ch === ']') bracket--;
-    out += ch === '&' && bracket === 0 ? parent : ch;
+    if (ch === '&' && bracket === 0) { out += parent; replaced = true; } else out += ch;
+    if (out.length > MAX_SELECTOR_LENGTH) return TOO_LONG;
   }
-  return out;
+  return replaced ? out : null;
 }
 
-function resolveSelectors(selectorText, parentSelectors) {
+function resolveSelectors(selectorText, parentSelectors, budget) {
+  if (parentSelectors && parentSelectors.length > 0 && budget.chars >= MAX_RESOLVED_CHARS) {
+    budget.dropped = true;
+    return [];
+  }
   const items = splitSelectorList(selectorText);
   if (!parentSelectors || parentSelectors.length === 0) return items;
   const out = [];
   for (const p of parentSelectors) {
     for (const s of items) {
-      const hasAmp = /&/.test(s.replace(/"[^"]*"|'[^']*'|\[[^\]]*\]/g, ''));
-      out.push(normalizeSelector(hasAmp ? replaceNesting(s, p) : `${p} ${s}`));
+      if (budget.chars >= MAX_RESOLVED_CHARS) {
+        budget.dropped = true;
+        return [...new Set(out)];
+      }
+      // The resolved selector is never shorter than the nested one.
+      const nested = s.length > MAX_SELECTOR_LENGTH ? TOO_LONG : replaceNesting(s, p);
+      const joined = nested === null ? `${p} ${s}` : nested;
+      if (joined === TOO_LONG || joined.length > MAX_SELECTOR_LENGTH || budget.chars + joined.length > MAX_RESOLVED_CHARS) {
+        budget.dropped = true;
+        continue;
+      }
+      budget.chars += joined.length;
+      out.push(normalizeSelector(joined));
       if (out.length >= MAX_SELECTORS) return [...new Set(out)];
     }
   }
@@ -147,8 +177,10 @@ export function buildCssModel(sheetRecords, { complete = true } = {}) {
     cascade.push(s);
   };
   for (const s of topLevel) addWithImports(s);
-  // Orphans (parent missing) keep resource order.
-  for (const s of sheets) if (s.origin !== 'style-attr' && !cascade.includes(s)) cascade.push(s);
+  // Orphans (parent missing) keep resource order. A Set, not cascade.includes():
+  // a page can hold any number of <style> elements.
+  const placed = new Set(cascade);
+  for (const s of sheets) if (s.origin !== 'style-attr' && !placed.has(s)) cascade.push(s);
   cascade.push(...attrSheets);
 
   const addDecl = (node, sheet, context, rule, atRule) => {
@@ -161,15 +193,24 @@ export function buildCssModel(sheetRecords, { complete = true } = {}) {
     return info;
   };
 
-  const walk = (container, sheet, context, parentRule, parentAt) => {
+  let truncated = false;
+  const budget = { chars: 0, dropped: false };
+  const walk = (container, sheet, context, parentRule, parentAt, depth = 0) => {
     for (const node of container.nodes ?? []) {
       if (node.type === 'decl') {
         const d = addDecl(node, sheet, context, parentRule, parentAt);
         if (parentRule && container === parentRule.node) parentRule.decls.push(d);
+      } else if (depth >= MAX_NESTING_DEPTH) {
+        truncated = true;
       } else if (node.type === 'rule') {
+        budget.dropped = false;
         const selectors = context.keyframes !== null
           ? splitSelectorList(node.selector)
-          : resolveSelectors(node.selector, parentRule?.selectors);
+          : resolveSelectors(node.selector, parentRule?.selectors, budget);
+        if (budget.dropped) truncated = true;
+        // Every selector over budget: skip the subtree, so its children are
+        // not resolved as if they were top-level rules.
+        if (budget.dropped && selectors.length === 0) continue;
         const ruleDecls = [];
         const info = {
           node, selectorText: selectors.join(', '), selectors: Object.freeze(selectors), sheet, context,
@@ -177,17 +218,17 @@ export function buildCssModel(sheetRecords, { complete = true } = {}) {
         };
         rules.push(info);
         infoByNode.set(node, { kind: 'rule', info, sheet });
-        walk(node, sheet, context, info, null);
+        walk(node, sheet, context, info, null, depth + 1);
         Object.freeze(ruleDecls);
         Object.freeze(info);
       } else if (node.type === 'atrule') {
         const name = String(node.name).toLowerCase();
-        const params = String(node.params ?? '').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\s+/g, ' ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();
+        const params = stripCssComments(node.params).replace(/\s+/g, ' ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();
         const at = Object.freeze({ node, name, params, sheet, context, rule: parentRule });
         atRules.push(at);
         infoByNode.set(node, { kind: 'atrule', info: at, sheet });
         if (name === 'media' && isPrintOnlyMedia(node.params)) continue;
-        if (node.nodes) walk(node, sheet, extendContext(context, name, node.params), parentRule, at);
+        if (node.nodes) walk(node, sheet, extendContext(context, name, node.params), parentRule, at, depth + 1);
       }
     }
   };
@@ -242,7 +283,9 @@ export function buildCssModel(sheetRecords, { complete = true } = {}) {
   };
 
   return Object.freeze({
-    complete: Boolean(complete),
+    complete: Boolean(complete) && !truncated,
+    // Some nested rules were not analyzed (depth or selector-length bounds).
+    truncated,
     sheets: Object.freeze(sheets),
     rules: Object.freeze(rules),
     decls: Object.freeze(decls),

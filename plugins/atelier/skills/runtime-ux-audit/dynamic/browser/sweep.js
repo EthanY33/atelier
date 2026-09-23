@@ -233,13 +233,26 @@
 
   const CLOSE_QUERY = 'button[aria-label*="close" i], [data-close], [data-bs-dismiss], .close, form[method="dialog" i] button';
 
+  // True when activating el would submit its form: a submit button
+  // (<button> with no type or type=submit, input submit/image) owned by a
+  // form whose effective method is not "dialog". A missing action attribute
+  // still submits, to the document URL.
+  function submitsForm(el) {
+    const tag = tagOf(el);
+    const type = String(el.type || '').toLowerCase();
+    const submit = (tag === 'button' && type === 'submit') || (tag === 'input' && (type === 'submit' || type === 'image'));
+    if (!submit || !el.form) return false;
+    const method = String((has(el, 'formmethod') && el.formMethod) || el.form.method || 'get').toLowerCase();
+    return method !== 'dialog';
+  }
+
   const probe = {
     before: new Set(),
     current: null,
     trigger: null,
     triggerPath: null,
 
-    /** Up to max tap candidates in DOM order (never links, downloads or form submits with an action). */
+    /** Up to max tap candidates in DOM order (never links, downloads or form submits). */
     tapCandidates(max) {
       const out = [];
       for (const el of all(document, 'button, summary, input, [role], [aria-expanded], [popovertarget]')) {
@@ -250,8 +263,7 @@
           || (tag === 'input' && (type === 'checkbox' || type === 'radio'));
         if (!kind) continue;
         if (closestSel.call(el, 'a[href]') || has(el, 'download') || has(el, 'target')) continue;
-        const submit = (tag === 'button' && type === 'submit') || (tag === 'input' && (type === 'submit' || type === 'image'));
-        if (submit && el.form && (has(el.form, 'action') || has(el, 'formaction'))) continue;
+        if (submitsForm(el)) continue;
         if (isDisabled(el) || !isVisible(el)) continue;
         out.push(cssPath(el));
       }
@@ -274,7 +286,7 @@
             return !!t && dialogLike(t);
           });
         }
-        if (!ok || isDisabled(el) || !isVisible(el)) continue;
+        if (!ok || submitsForm(el) || isDisabled(el) || !isVisible(el)) continue;
         out.push(cssPath(el));
       }
       return out;

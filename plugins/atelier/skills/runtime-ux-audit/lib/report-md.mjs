@@ -1,19 +1,30 @@
 /**
  * ux-report.md: a pure function of the audit result.
+ *
+ * Selectors, locations, file names, URLs and messages come from the audited
+ * page, and the report is appended to GitHub step summaries, so every
+ * page-derived string is rendered on one line and either inside a code span
+ * or with Markdown and HTML metacharacters escaped. A page cannot add
+ * headings, links, images or HTML to the report.
  */
 import { AREAS } from './options.mjs';
 import { SEVERITIES } from './runner.mjs';
+import { COMPLETE_SKIP_REASONS } from './collect.mjs';
 
 const AREA_TITLES = Object.freeze({ transitions: 'Transitions', inp: 'INP', panels: 'Panels', mobile: 'Mobile' });
 const SEVERITY_TITLES = Object.freeze({ critical: 'Critical', serious: 'Serious', moderate: 'Moderate', minor: 'Minor' });
 const SHOWN_NODES = 5;
-const THIRD_PARTY = new Set(['cross-origin', 'scheme-not-allowed', 'redirect-cross-origin', 'bare-specifier']);
 
-/** Inline code with a fence longer than any backtick run inside. */
+/**
+ * Inline code with a fence longer than any backtick run inside. Whitespace,
+ * newlines included, collapses to single spaces: a blank line would end the
+ * list item and let the rest render as Markdown blocks.
+ */
 export function code(text) {
-  const s = String(text ?? '');
+  const s = String(text ?? '').replace(/\s+/g, ' ').trim();
   if (!s) return '``';
-  const longest = Math.max(0, ...[...s.matchAll(/`+/g)].map((m) => m[0].length));
+  let longest = 0;
+  for (const m of s.matchAll(/`+/g)) longest = Math.max(longest, m[0].length);
   const fence = '`'.repeat(longest + 1);
   const pad = s.startsWith('`') || s.endsWith('`') ? ' ' : '';
   return `${fence}${pad}${s}${pad}${fence}`;
@@ -22,6 +33,22 @@ export function code(text) {
 const cell = (s) => String(s).replace(/\|/g, '\\|');
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+
+// A line start that would open a block: ATX heading, block quote, bullet
+// list, thematic break, setext underline or ~~~ fence.
+const BLOCK_START_RE = /^(?:#{1,6}(?:\s|$)|>|[-+*](?:\s|$)|[-*_](?:\s*[-*_]){2,}\s*$|=+\s*$|~{3})/;
+
+/**
+ * Page-derived prose on one line, safe to render as Markdown: backslashes,
+ * backticks, '<' (raw HTML) and '[' ']' (links and images) are escaped, and so
+ * is a leading character that would start a block (heading, quote, list,
+ * fence, setext underline).
+ */
+export function inline(text) {
+  const s = oneLine(text).replace(/[\\`<[\]]/g, '\\$&');
+  if (BLOCK_START_RE.test(s)) return `\\${s}`;
+  return s.replace(/^(\d{1,9})([.)])(?=\s|$)/, '$1\\$2');
+}
 
 function inpHighlight(result) {
   const budget = result.budgets.inpBudgetMs;
@@ -52,15 +79,15 @@ function renderEntry(lines, v) {
   lines.push(`- Help: ${v.helpUrl}`);
   lines.push(`- Instances (${total}):`);
   for (const n of v.nodes.slice(0, SHOWN_NODES)) {
-    lines.push(`  - ${code(n.selector)} at ${n.location}${n.snippet ? `: ${code(n.snippet)}` : ''}`);
-    if (n.message) lines.push(`    ${oneLine(n.message)}`);
+    lines.push(`  - ${code(n.selector)} at ${inline(n.location)}${n.snippet ? `: ${code(n.snippet)}` : ''}`);
+    if (n.message) lines.push(`    ${inline(n.message)}`);
     if (n.confidence) lines.push(`    Confidence: ${n.confidence}`);
   }
   if (total > SHOWN_NODES) lines.push(`  - ... and ${total - SHOWN_NODES} more`);
 }
 
 function missingInputs(resources) {
-  const firstParty = resources.filter((r) => r.kind !== 'document' && !(r.status === 'skipped' && THIRD_PARTY.has(r.reason)) && r.reason !== 'duplicate' && r.status !== 'parsed');
+  const firstParty = resources.filter((r) => r.kind !== 'document' && !(r.status === 'skipped' && COMPLETE_SKIP_REASONS.has(r.reason)) && r.reason !== 'duplicate' && r.status !== 'parsed');
   const count = (kinds, pred) => firstParty.filter((r) => kinds.includes(r.kind) && pred(r)).length;
   const parts = [];
   const cssParse = count(['stylesheet'], (r) => r.status === 'parse-error');
@@ -85,7 +112,7 @@ function resourceLine(resources) {
   if (n(['image'])) counts.push(plural(n(['image']), 'image'));
   const list = (items) => {
     if (!items.length) return 'none';
-    const shown = items.slice(0, 20).map((r) => `${r.displayPath} (${r.reason ?? r.status})`);
+    const shown = items.slice(0, 20).map((r) => `${inline(r.displayPath)} (${inline(r.reason ?? r.status)})`);
     if (items.length > 20) shown.push(`... and ${items.length - 20} more`);
     return shown.join(', ');
   };
@@ -107,7 +134,7 @@ export function buildMarkdownReport(result) {
   const totalInstances = SEVERITIES.reduce((n, s) => n + summary.instances[s], 0);
 
   lines.push('# Runtime UX audit', '');
-  lines.push(`URL: ${result.url}`);
+  lines.push(`URL: ${inline(result.url)}`);
   lines.push(`Timestamp: ${result.timestamp}`);
   lines.push(`Mode: ${modeLine(result)}`);
   lines.push(`Total violations: ${plural(totalRules, 'rule')}, ${plural(totalInstances, 'instance')} (${SEVERITIES.map((s) => `${s}: ${summary.rules[s]}`).join(', ')})`);
@@ -160,11 +187,11 @@ export function buildMarkdownReport(result) {
   lines.push(resourceLine(result.resources));
   lines.push(`- Rules: ${statuses.length} total; ${count((r) => r.status === 'failed')} failed, ${count((r) => r.status === 'incomplete')} incomplete, ${count((r) => r.status === 'passed')} passed, ${count((r) => r.status === 'notApplicable')} not applicable, ${count((r) => r.status === 'skipped' && r.reason === 'dynamic-only')} skipped (dynamic only), ${count((r) => r.status === 'skipped' && r.reason === 'ignored')} ignored, ${plural(count((r) => r.status === 'error'), 'error')}`);
   lines.push(`- Suppressed instances: ${run.suppressed}`);
-  for (const e of result.errors.filter((x) => x.phase === 'rule')) lines.push(`- Rule error: ${e.ruleId}: ${oneLine(e.message)}`);
+  for (const e of result.errors.filter((x) => x.phase === 'rule')) lines.push(`- Rule error: ${inline(e.ruleId)}: ${inline(e.message)}`);
   if (result.mode.dynamic) {
     lines.push('- Dynamic findings reflect Chromium-only APIs.');
     const probe = result.errors.filter((x) => x.phase === 'dynamic');
-    lines.push(`- Probe errors: ${probe.length ? probe.map((e) => oneLine(e.message)).join('; ') : 'none'}`);
+    lines.push(`- Probe errors: ${probe.length ? probe.map((e) => inline(e.message)).join('; ') : 'none'}`);
   }
   return `${lines.join('\n').replace(/\n+$/, '')}\n`;
 }

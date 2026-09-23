@@ -3,7 +3,7 @@
  * rules in rules/<area>/ judge them.
  *
  * runDynamicPass({ page: { kind, url, filePath, root }, toDisplay, budgets,
- * limits, launch }) resolves to DynamicFacts:
+ * limits, launch, allowOrigins }) resolves to DynamicFacts:
  *   engine, profile, navigation, rendered, sweep, interactions, dialogs,
  *   bfcache (each null when its probe did not run or failed), errors[].
  *
@@ -15,6 +15,8 @@
  *   6. dialogs    open each dialog trigger by keyboard, close it, check where focus went
  *   7. bfcache    about:blank and back; restored or notRestoredReasons
  * A launch failure (Chromium or Playwright missing) is thrown, not recorded.
+ * For local inputs the page can only reach the loopback server and the
+ * allowOrigins origins; other requests are blocked and listed in errors[].
  */
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DYNAMIC_LIMITS } from '../lib/options.mjs';
@@ -78,6 +80,42 @@ function defaultToDisplay(target, server, targetUrl) {
   return (absUrl) => urls.toDisplay(absUrl);
 }
 
+const MAX_BLOCKED_SHOWN = 5;
+
+/**
+ * Local inputs: page scripts run against the loopback server, so they could
+ * read files under the root and send them anywhere. Only the server's origin
+ * and --allow-origin origins are reachable; every other http(s) or ws(s)
+ * request is aborted. Returns the set of blocked origins.
+ */
+async function restrictEgress(context, allowed) {
+  const blocked = new Set();
+  const originOf = (u) => {
+    try {
+      const url = new URL(u);
+      if (url.protocol === 'ws:') url.protocol = 'http:';
+      else if (url.protocol === 'wss:') url.protocol = 'https:';
+      return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : null;
+    } catch {
+      return null;
+    }
+  };
+  const permitted = (u) => {
+    const origin = originOf(u);
+    if (origin === null || allowed.has(origin)) return true; // data:, blob: and the like never leave the machine
+    blocked.add(origin);
+    return false;
+  };
+  await context.route('**/*', (route) => (permitted(route.request().url()) ? route.continue() : route.abort('blockedbyclient')).catch(() => {}));
+  if (typeof context.routeWebSocket === 'function') {
+    await context.routeWebSocket(/.*/, (ws) => {
+      if (permitted(ws.url())) ws.connectToServer();
+      else ws.close().catch(() => {});
+    });
+  }
+  return blocked;
+}
+
 function lowercaseHeaders(headers) {
   const out = {};
   for (const [k, v] of Object.entries(headers ?? {})) out[String(k).toLowerCase()] = String(v);
@@ -91,7 +129,8 @@ function lowercaseHeaders(headers) {
  *   toDisplay?: (absUrl: string) => string,
  *   budgets?: object,
  *   limits?: Partial<typeof DYNAMIC_LIMITS>,
- *   launch?: (launchOptions: object) => Promise<import('playwright').Browser>
+ *   launch?: (launchOptions: object) => Promise<import('playwright').Browser>,
+ *   allowOrigins?: string[]   // local inputs: origins page requests may reach besides the loopback server
  * }} input
  * @returns {Promise<object>} DynamicFacts
  */
@@ -171,12 +210,21 @@ export async function runDynamicPass(input = {}) {
   let browser = null;
   let context = null;
   let launching = null;
+  let blockedOrigins = null;
+  const noteBlocked = () => {
+    if (!blockedOrigins?.size) return;
+    const list = [...blockedOrigins].sort();
+    const shown = list.slice(0, MAX_BLOCKED_SHOWN).join(', ') + (list.length > MAX_BLOCKED_SHOWN ? ` and ${list.length - MAX_BLOCKED_SHOWN} more` : '');
+    errors.push({ probe: 'network', message: `blocked requests to ${shown}; a local page only reaches the loopback server and --allow-origin origins` });
+  };
   try {
     const setup = async () => {
       launching = Promise.resolve().then(() => launch({ ...LAUNCH_OPTIONS }));
       browser = await launching;
       const device = await deviceDescriptor();
-      context = await browser.newContext({ ...device });
+      // Service worker fetches would bypass the request routing below.
+      context = await browser.newContext(server ? { ...device, serviceWorkers: 'block' } : { ...device });
+      if (server) blockedOrigins = await restrictEgress(context, new Set([server.origin, ...(input.allowOrigins ?? [])]));
       const page = await context.newPage();
       // Popups would hold an opener and block the bfcache; dialogs would block the page.
       context.on('page', (p) => {
@@ -252,6 +300,7 @@ export async function runDynamicPass(input = {}) {
       if (bfcache) facts.bfcache = bfcache.value;
     }
     if (expired) noteTimeout();
+    noteBlocked();
     return facts;
   } finally {
     clearTimeout(timer);

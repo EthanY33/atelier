@@ -40,14 +40,35 @@ export async function ensureChromium({ chromium } = {}) {
   return path;
 }
 
+/** Playwright's messages when Chromium's own sandbox cannot start (Linux). */
+const SANDBOX_FAILED = /Chromium sandboxing failed|No usable sandbox|crbug\.com\/(?:357670|638180)/i;
+
 /**
  * Launch Chromium through the shared helper; a missing browser or Playwright
  * becomes UxAuditError CHROMIUM_MISSING / PLAYWRIGHT_MISSING with the fix kept.
+ *
+ * The dynamic pass runs third-party page code, so Chromium starts with its OS
+ * sandbox on (Playwright defaults to --no-sandbox). Where the sandbox cannot
+ * start (Linux without unprivileged user namespaces, or running as root) the
+ * launch is retried without it and a one-line warning goes to stderr. An
+ * explicit launchOptions.chromiumSandbox is used as given, with no retry.
  * @param {import('playwright').LaunchOptions} [launchOptions]
+ * @param {{ platform?: string, warn?: (message: string) => void, launch?: typeof launchChromium }} [hooks] - test hooks
  */
-export async function launchUxChromium(launchOptions = {}) {
+export async function launchUxChromium(launchOptions = {}, hooks = {}) {
+  const platform = hooks.platform ?? process.platform;
+  const warn = hooks.warn ?? ((m) => process.stderr.write(`${m}\n`));
+  const launch = hooks.launch ?? launchChromium;
+  const opts = { chromiumSandbox: true, ...launchOptions };
   try {
-    return await launchChromium(launchOptions);
+    try {
+      return await launch(opts);
+    } catch (err) {
+      const message = `${err?.message ?? err} ${err?.cause?.message ?? ''}`;
+      if (platform !== 'linux' || launchOptions.chromiumSandbox !== undefined || !SANDBOX_FAILED.test(message)) throw err;
+      warn('atelier: the Chromium sandbox cannot start here, so the page runs without it. Only audit pages you trust with --dynamic.');
+      return await launch({ ...opts, chromiumSandbox: false });
+    }
   } catch (err) {
     throw fromPreflight(err);
   }

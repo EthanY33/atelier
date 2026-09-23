@@ -133,7 +133,9 @@ Options:
                             comma separated (default: all four)
   --ignore <rule-id>        skip a rule, short or full id; repeatable
   --allow-origin <origin>   also fetch subresources from this origin; repeatable
-  --timeout <ms>            per-request timeout (default 10000)
+                            (under --dynamic, a local page may reach only
+                            these origins besides the loopback server)
+  --timeout <ms>            per-request network timeout (default 10000)
   --max-bytes <n>           per-resource size cap in bytes (default 2097152)
   --timestamp <iso>         fixed report timestamp, for reproducible output
   --out <dir>               same as the outDir argument

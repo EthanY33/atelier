@@ -57,7 +57,7 @@ Pass: no (1 critical, 3 serious)
 - Help: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/dialog
 - Instances (1):
   - `#menu-sheet` at index.html:51:36: `<div class="sheet" id="menu-sheet" role="dialog" aria-modal="true" aria-label="Menu" hidden>`
-    <div role="dialog" aria-modal="true">: use <dialog> with showModal()
+    \<div role="dialog" aria-modal="true">: use \<dialog> with showModal()
 
 #### atelier/runtime-ux/z-index-literal-smell
 - Description: A magic "always on top" z-index such as 9999 or 2147483647; the top layer (showModal, popover) replaces it.
