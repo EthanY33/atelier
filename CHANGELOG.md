@@ -47,16 +47,10 @@ atelier 1.0 is the first release you can install straight from the marketplace a
 
 - **Installation.** 0.2.1 could not be installed from the marketplace: the marketplace `owner` and plugin `author` were strings (both rejected), the manifest sat outside `.claude-plugin/`, and the installed copy had no dependencies and no schema, so every skill failed at import. All of this is fixed and tested on every OS in CI.
 - **html-to-video** recorded on the wall clock, so page animations played two to four times too fast and clips ended on blank frames. It now drives a virtual clock (Playwright clock plus stepped CSS, Web Animations and SMIL), so frame N shows the page at N/fps seconds. It also waits for fonts before the first frame, checks for ffmpeg before launching Chromium, rounds odd sizes up to even for H.264, and cleans up temporary frames on every failure.
+- **html-to-video** recorded HTTP 4xx and 5xx error pages as if they were the page; they now fail with exit 2 unless `--allow-http-error` is given. A new `--timeout` bounds navigation.
 - **responsive-image-pipeline** ignored EXIF orientation (sideways phone photos), upscaled small sources while labeling them with larger widths, pointed its `<img>` fallback at a file it never wrote, reused stale cache entries after option changes, let same-named sources overwrite each other, and turned transparent LQIP placeholders black.
 - **design-token-sync** produced an invalid `tailwind.config.js` and `tokens.d.ts` for hyphenated or reserved-word palette keys, wrapped whole font stacks in one quoted string so none of the fonts applied, and nested absolute `outDir` paths under the project.
-- **og-card-generator** corrupted titles containing `# Changelog
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
- patterns, broke multi-word font names such as `Press Start 2P`, rendered white text on light backgrounds when `palette.fg` was missing, and let long titles push the footer off the canvas.
+- **og-card-generator** corrupted titles containing `$` patterns, broke multi-word font names such as `Press Start 2P`, rendered white text on light backgrounds when `palette.fg` was missing, and let long titles push the footer off the canvas.
 - **accessibility-design-audit** ran axe before late stylesheets and fonts loaded (missing contrast issues), audited 404 and 500 error pages as if they were the real page, could hang forever on a busy page, and exited 0 without auditing when run through a symlink.
 - **brand-asset-pipeline** crashed on 3-digit hex backgrounds, failed on large SVG canvases, produced blank icons for SVGs with linked images, rejected UTF-16 SVGs, and wrote a transparent `apple-touch-icon.png` that iOS fills with black.
 - **brand-memory** failed on brand.json files saved with a byte order mark, dropped five of the eight `/brand-init` answers, and returned inherited members such as `constructor` from `getPath`.
@@ -69,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - design-token-sync escapes every brand value for its output format, so a typography value cannot inject CSS or break out of a generated file.
 - brand.json typography values are capped at 300 characters and reject `< > { } ;`, backslashes and control characters, so a hand-edited brand file cannot inject HTML or CSS.
 - brand-memory's `setPath` could pollute `Object.prototype` through a `__proto__` path segment; `__proto__`, `constructor` and `prototype` segments are now rejected.
+- brand-asset-pipeline refuses network and device paths for linked images (`//host/share`, `\\host\share`, `\\?\`), which on Windows would connect over SMB and send the user's credentials. `logos.mark` in brand.json must be a relative path inside the project, and linked images are capped in size and count.
 - accessibility-design-audit escapes page-controlled text in its Markdown report.
 - responsive-image-pipeline validates widths and formats and URL-encodes file names in the `<picture>` snippet.
 - runtime-ux-audit never executes page JavaScript in its static pass, fetches only same-origin subresources by default, and caps every response by size and time.
