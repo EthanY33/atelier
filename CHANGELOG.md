@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-09-22
+## [1.0.0] - 2026-09-23
 
 atelier 1.0 is the first release you can install straight from the marketplace and use anywhere. It adds an eighth skill, `runtime-ux-audit`, a single `atelier` CLI, a GitHub Action, and fixes to every existing skill. Upgrading from 0.x: reinstall the plugin, use Node 22 or newer, and see **Changed** for the few breaking changes.
 
