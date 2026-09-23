@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { delimiter, isAbsolute, join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { findOnPath } from '../../plugins/atelier/lib/preflight.mjs';
@@ -40,7 +40,10 @@ describe('findOnPath with win32 rules', () => {
   it('accepts a name that already carries .exe, in any case', () => {
     const exe = touch(join(tmp, 'bin', 'tool.exe'));
     expect(findOnPath('tool.exe', win(join(tmp, 'bin')))).toBe(exe);
-    expect(findOnPath('tool.EXE', win(join(tmp, 'bin')))?.toLowerCase()).toBe(exe.toLowerCase());
+    // Only a case-insensitive filesystem (Windows, default macOS) can find tool.EXE.
+    if (existsSync(join(tmp, 'bin', 'TOOL.EXE'))) {
+      expect(findOnPath('tool.EXE', win(join(tmp, 'bin')))?.toLowerCase()).toBe(exe.toLowerCase());
+    }
   });
 
   it('skips a directory named like the binary and keeps searching', () => {

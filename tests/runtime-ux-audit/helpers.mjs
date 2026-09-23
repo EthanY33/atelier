@@ -7,7 +7,7 @@
  *   expectGolden(name, text) -> compare with tests/runtime-ux-audit/__golden__/<name>
  *   chromiumAvailable        -> true when Playwright's Chromium is installed
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -41,7 +41,8 @@ export function writeFiles(dir, files) {
 
 /** A fresh temp directory; call cleanup() when done. */
 export function tempDir(prefix = 'ux-test-') {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
+  // Real path: on macOS tmpdir() is under /var, a symlink to /private/var.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 

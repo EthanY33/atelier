@@ -4,7 +4,7 @@
  * paths, and running through a symlink or Windows junction.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,8 @@ let tmp;
 let server;
 
 beforeAll(async () => {
-  tmp = mkdtempSync(join(tmpdir(), 'a11y-cli-'));
+  // Real path: on macOS tmpdir() is under /var, a symlink to /private/var.
+  tmp = realpathSync(mkdtempSync(join(tmpdir(), 'a11y-cli-')));
   writeFileSync(join(tmp, 'bad.html'), BAD_HTML, 'utf8');
   writeFileSync(join(tmp, 'clean.html'), CLEAN_HTML, 'utf8');
   server = await startServer();

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import * as nodeModule from 'node:module';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -31,7 +31,8 @@ const edgeBrand = {
 
 let scratch;
 beforeAll(() => {
-  scratch = mkdtempSync(join(tmpdir(), 'atelier-dts-'));
+  // Real path: on macOS tmpdir() is under /var, a symlink to /private/var.
+  scratch = realpathSync(mkdtempSync(join(tmpdir(), 'atelier-dts-')));
 });
 afterAll(() => {
   if (scratch) rmSync(scratch, { recursive: true, force: true });
