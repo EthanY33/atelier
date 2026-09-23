@@ -44,11 +44,12 @@
   .ripple { position: absolute; width: 60px; height: 60px; border-radius: 50%; border: 2px solid rgba(244,241,222,.7); }
 
   /* terminal: Claude Code in a Windows Terminal tab, in Claude Code's dark theme */
-  .term { --cc-bg: #0c0c0c; --cc-text: #e4e4e4; --cc-dim: #8a8a8a; --cc-orange: #d77757; --cc-green: #4eba65; --cc-red: #ff6b80; --cc-amber: #ffc107; --cc-sel: #b1b9f9; --cc-band: #262626;
+  .term { --cc-bg: #0c0c0c; --cc-text: #e4e4e4; --cc-dim: #8a8a8a; --cc-orange: #d77757; --cc-green: #4eba65; --cc-red: #ff6b80; --cc-amber: #ffc107; --cc-sel: #b1b9f9; --cc-band: #262626; --cc-session: #5f8fd7;
     position: absolute; left: 40px; top: 76px; width: 704px; height: 612px; border-radius: 10px; background: var(--cc-bg); border: 1px solid #2c2c2c; box-shadow: 0 30px 80px rgba(0,0,0,.6); overflow: hidden; transform-origin: 560px 250px; }
   .tabs { height: 36px; display: flex; align-items: flex-end; gap: 6px; padding: 0 0 0 8px; background: #1c1c1c; font: 400 12.5px 'Geist', sans-serif; color: #c8c8c8; }
   .tab { height: 30px; width: 220px; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--cc-bg); border-radius: 7px 7px 0 0; }
-  .tab .ic { color: var(--cc-orange); font-size: 13px; }
+  .tab .ps { width: 16px; height: 16px; border-radius: 3px; background: #2f6fd6; color: #fff; font: 700 11px/16px 'Geist Mono', monospace; text-align: center; flex: none; }
+  .tab .ic { color: #e4e4e4; font-size: 12px; }
   .tab .x { margin-left: auto; color: #8a8a8a; font-size: 12px; }
   .tabs .plus { height: 30px; display: flex; align-items: center; color: #9a9a9a; font-size: 16px; padding: 0 6px; }
   .tabs .win { margin-left: auto; height: 36px; display: flex; align-items: center; gap: 26px; padding: 0 18px; color: #bdbdbd; font-size: 13px; }
@@ -66,9 +67,26 @@
   .body .welcome .r { height: 22px; }
   .body .spin, .body .spin .g { color: var(--cc-orange); }
   .body .rule { height: 22px; position: relative; }
-  .body .rule::after { content: ''; position: absolute; left: 0; right: 0; top: 11px; border-top: 1px solid #6a6a6a; }
+  .body .rule::after { content: ''; position: absolute; left: 0; right: 0; top: 11px; border-top: 1px solid var(--cc-session); }
+  .body .sesh { position: absolute; right: 10px; top: 2px; z-index: 1; height: 18px; padding: 0 6px; background: var(--cc-session); color: #0c0c0c; font: 400 13.5px/18px 'Geist Mono', monospace; }
+  .body .pr { color: #e4e4e4; font-weight: 700; }
+  .sl .dk { color: #3a3a3a; } .sl .teal { color: #5fd7d7; } .sl .rose { color: #ff5f87; } .sl .amber { color: #ffaf5f; }
+  .sl .mint { color: #87d787; font-weight: 700; } .sl .gray { color: #8a8a8a; } .sl .wh { color: #eeeeee; } .sl .lilac { color: #d7afff; }
+  .sl .bypass { color: #ff6b80; }
+  .sl .bar { display: inline-block; width: calc(20 * 0.6em); height: 3px; vertical-align: 4px; background: #4e4e4e; position: relative; }
+  .sl .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: #87d7ff; }
   .body .menu .r { color: var(--cc-dim); }
   .body .menu .r.on { color: var(--cc-sel); }
+  /* Geist Mono lacks ⎿ ✔ ✻ and the spinner stars; the fallback font draws them
+     wider than a cell, so pin each to one cell or the columns after it drift. */
+  .body .gl { display: inline-block; width: 0.6em; overflow: visible; }
+  .body .spin .g, .body .dim .gl { display: inline-flex; justify-content: center; width: 0.6em; }
+  .body .del, .body .add { display: inline-block; width: calc(100% - 3em); color: #e4e4e4; }
+  .body .del { background: #5c2128; } .body .add { background: #1f4a28; }
+  .sl .cn { display: inline-block; width: 0.6em; height: 22px; vertical-align: top; position: relative; }
+  .sl .cn::after { content: ''; position: absolute; left: 50%; right: -1px; border: 0 solid #3a3a3a; }
+  .sl .cn.top::after { top: 11px; bottom: 0; border-left-width: 1px; border-top-width: 1px; border-top-left-radius: 6px; }
+  .sl .cn.bot::after { top: 0; height: 11px; border-left-width: 1px; border-bottom-width: 1px; border-bottom-left-radius: 6px; }
   .caret { display: inline-block; width: 9px; height: 18px; background: var(--cc-text); vertical-align: -4px; }
 
   /* right-hand panels */
@@ -138,7 +156,7 @@
   </div>
 
   <div class="term" id="term">
-    <div class="tabs"><div class="tab"><span class="ic">✳</span><span>Claude Code</span><span class="x">✕</span></div><div class="plus">+</div><div class="win"><span>─</span><span>▢</span><span>✕</span></div></div>
+    <div class="tabs"><div class="tab"><span class="ps">&gt;</span><span class="ic" id="tabglyph">◑</span><span>Kiln Launch</span><span class="x">✕</span></div><div class="plus">+</div><div class="win"><span>─</span><span>▢</span><span>✕</span></div></div>
     <div class="body" id="tbody"></div>
   </div>
 
@@ -156,7 +174,7 @@
       <div class="dh">.atelier/brand.json</div>
       <div class="dl"><span class="p">"palette": {</span></div>
       <div class="dl" id="bgline"></div>
-      <div class="dl">  <span class="k">"fg"</span><span class="p">: </span><span class="s">"#f4f1de"</span><span class="p">,</span></div>
+      <div class="dl">  <span class="k">"fg"</span><span class="p">: </span><span class="s">"#f4f1de"</span></div>
       <div class="dl"><span class="p">}</span></div>
     </div>
 
@@ -170,7 +188,7 @@
     </div>
 
     <div class="panel card ci" id="p-ci">
-      <div class="cap">CI · main</div>
+      <div class="cap">atelier CI · main</div>
       <h4 id="cih">12 checks</h4>
       <div id="jobs"></div>
     </div>
@@ -246,20 +264,34 @@ function terminalHtml(t) {
     bottom.push('<div class="r"></div>', `<div class="r spin"><span class="g">${glyph}</span> ${spin.verb}… <span class="dim">(${Math.floor(t - spin.t)}s · esc to interrupt)</span></div>`);
   }
   const caretOn = typed.length > 0 || Math.floor(t * 1.9) % 2 === 0;
-  bottom.push('<div class="rule"></div>',
-    `<div class="r"><span class="dim">›</span> ${esc(typed)}<span class="caret" style="opacity:${caretOn ? 1 : 0}"></span></div>`,
-    '<div class="rule bottom"></div>');
+  bottom.push('<div class="rule"><span class="sesh">Kiln Launch</span></div>',
+    `<div class="r"><span class="pr">❯</span> ${esc(typed)}<span class="caret" style="opacity:${caretOn ? 1 : 0}"></span></div>`,
+    '<div class="rule"></div>');
   const menu = /^\/[\w-]*$/.test(typed) ? COMMANDS.filter(([c]) => c.startsWith(typed)).slice(0, 5) : [];
   if (menu.length) {
     bottom.push(`<div class="menu">${menu.map(([c, d], i) => `<div class="r${i === 0 ? ' on' : ''}">  ${c.padEnd(18)}${d}</div>`).join('')}</div>`);
-  } else bottom.push('<div class="r dim">  ? for shortcuts</div>');
-  const used = (spin ? 2 : 0) + 3 + Math.max(1, menu.length);
+  } else bottom.push(statusLine(hist.length));
+  const used = (spin ? 2 : 0) + 3 + (menu.length || 3);
 
   // Scroll: keep the newest history rows that fit above the input area.
   let room = ROWS - used;
   const shown = [];
-  for (let i = hist.length - 1; i >= 0 && room >= hist[i].h; i--) { shown.unshift(hist[i].html); room -= hist[i].h; }
+  let i = hist.length - 1;
+  for (; i >= 0 && room >= hist[i].h; i--) { shown.unshift(hist[i].html); room -= hist[i].h; }
+  if (i >= 0 && room > 0) shown.unshift(`<div style="height:${room * 22}px;overflow:hidden"><div style="margin-top:${(room - hist[i].h) * 22}px">${hist[i].html}</div></div>`);
   return shown.join('') + bottom.join('');
+}
+// Context grows with the transcript; fmt() matches the statusline script.
+function fmt(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e5 ? Math.floor(n / 1000) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
+function statusLine(rows) {
+  const used = 21400 + rows * 610;
+  const pct = Math.round((used / 1e6) * 100);
+  const sep = '<span class="dk">  │  </span>', dot = '<span class="dk"> · </span>';
+  return '<div class="sl">' +
+    `<div class="r">  <span class="cn top"></span> <span class="teal"><b>ethan</b></span><span class="gray">@</span><span class="teal">ETHOSPC</span>${sep}<span class="rose">Opus 5.5 (1M context)</span>${sep}<span class="amber">~/sites/kiln</span>${dot}<span class="mint">main</span></div>` +
+    `<div class="r">  <span class="cn bot"></span> <span class="bar"><i style="width:${Math.round((pct / 100) * 20) * 5}%"></i></span> <span class="wh"><b>${pct}%</b></span><span class="gray"> ctx</span>${dot}<span class="wh">${fmt(used)}</span><span class="gray">/</span><span class="wh">1.0M</span>${sep}<span class="lilac">◈ xhigh</span></div>` +
+    '<div class="r">  <span class="bypass"><span style="letter-spacing:-3px">⏵⏵</span> bypass permissions on</span> <span class="gray">(shift+tab to cycle)</span></div>' +
+    '</div>';
 }
 function esc(s) { return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
@@ -297,6 +329,10 @@ function render(t) {
   $('hdr').style.opacity = open;
 
   $('tbody').innerHTML = terminalHtml(t);
+  // Windows Terminal tab: the session glyph turns while Claude is working.
+  let busy = null;
+  for (const e of TL.term) { if (e.t > t) break; if (e.kind === 'spin') busy = e; else if (e.kind === 'spinEnd') busy = null; }
+  $('tabglyph').textContent = busy ? '◐◓◑◒'[Math.floor((t - busy.t) * 6) % 4] : '◑';
 
   // install package card
   const pk = panelState('pkg', t);
@@ -327,8 +363,8 @@ function render(t) {
   const ed = easeIO(prog(t, M.diffEdit ?? 1e9, 0.35));
   const from = '#14110f', to = '#16305f';
   $('bgline').innerHTML = ed < 0.5
-    ? `  <span class="sw" style="background:${from}"></span><span class="k">"bg"</span><span class="p">: </span><span class="s">"${from}"</span><span class="p">,</span>`
-    : `  <span class="sw" style="background:${to};outline:1px solid #3e5fa8"></span><span class="k">"bg"</span><span class="p">: </span><span class="s">"${to}"</span><span class="p">,</span>`;
+    ? `  <span class="k">"bg"</span><span class="p">: </span><span class="sw" style="background:${from}"></span><span class="s">"${from}"</span><span class="p">,</span>`
+    : `  <span class="k">"bg"</span><span class="p">: </span><span class="sw" style="background:${to};outline:1px solid #3e5fa8"></span><span class="s">"${to}"</span><span class="p">,</span>`;
   $('bgline').style.background = ed > 0 && ed < 1 ? `rgba(242,204,143,${0.18 * (1 - Math.abs(ed - 0.5) * 2)})` : ed >= 1 ? 'rgba(129,178,154,.10)' : 'transparent';
 
   // icons recolor (appear with the regenerate)

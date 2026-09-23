@@ -39,15 +39,16 @@ export const CI_JOBS = [
 ];
 
 // Slash commands the menu filters while a command is typed, with the
-// descriptions from each command file (atelier's are shortened to fit a row).
+// descriptions from each command file, shortened to 57 characters so a menu
+// row fits the 77-column terminal.
 export const COMMANDS = [
   ['/add-dir', 'Add a new working directory'],
   ['/agents', 'Manage agent configurations'],
-  ['/atelier-demo', 'Run every atelier skill on the bundled sample brand (atelier)'],
+  ['/atelier-demo', 'Run every skill on the bundled sample brand (atelier)'],
   ['/atelier-doctor', 'Check that atelier can run here (atelier)'],
-  ['/brand-audit', 'List the recommended fields missing from brand.json (atelier)'],
+  ['/brand-audit', 'List recommended fields missing from brand.json (atelier)'],
   ['/plugin', 'Manage Claude Code plugins'],
-  ['/ux-audit', 'Audit a URL or local HTML file for runtime UX problems (atelier)'],
+  ['/ux-audit', 'Audit a URL or HTML file for runtime UX issues (atelier)'],
 ];
 
 const KEYS = ['key-1', 'key-2', 'key-3', 'key-4', 'key-5', 'key-6'];
@@ -105,23 +106,26 @@ export function buildTimeline(seed = 0x5a7e11e7) {
     wait(0.22);
     ev('submit', { text });
     cue('key-enter', LEVEL.enter);
-    wait(0.3);
-    if (verb) { spinStart = t; ev('spin', { verb }); wait(0.25); }
+    if (verb) { spinStart = t; ev('spin', { verb }); }
+    wait(verb ? 0.55 : 0.3);
   };
   const done = (past) => {
     const secs = Math.max(1, Math.round(t - spinStart));
     ev('spinEnd');
-    block(`<span class="dim">✻ ${past} for ${secs}s</span>`, 0);
+    block(`<span class="dim"><span class="gl">✻</span> ${past} for ${secs}s</span>`, 0);
   };
   // A tool call shows a blinking dot until its result lands, then green or red.
   const tool = (name, arg, secs, ok, lines) => {
     ev('row', { html: '' });
     const call = ev('tool', { html: `<b>${name}</b>(${arg})`, ok, doneAt: t + secs });
     wait(secs);
-    lines.forEach((l, i) => row(`${i === 0 ? '  <span class="dim">⎿</span>  ' : '     '}${l}`, 0.05));
+    lines.forEach((l, i) => row(`${i === 0 ? '  <span class="dim gl">⎿</span>  ' : '     '}${l}`, 0.05));
     return call;
   };
   const say = (html, gap = 0.06) => block(`<span class="say">●</span> ${html}`, gap);
+  const del = (n, code) => `<span class="del">${String(n).padStart(3)} - ${code}</span>`;
+  const add = (n, code) => `<span class="add">${String(n).padStart(3)} + ${code}</span>`;
+  const ctx = (n, code) => `<span class="dim">${String(n).padStart(3)}  </span> ${code}`;
   const more = (n) => `<span class="dim">… +${n} line${n === 1 ? '' : 's'} (ctrl+o to expand)</span>`;
 
   // Intro: the cursor glides to the Claude Code icon and clicks; the session
@@ -134,14 +138,14 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   ev('welcome');
   ev('row', { html: '' });
   ev('row', { html: '<span class="dim">›</span> /plugin marketplace add EthanY33/atelier', band: true });
-  ev('row', { html: '  <span class="dim">⎿</span>  Successfully added marketplace: <b>atelier</b>' });
+  ev('row', { html: '  <span class="dim gl">⎿</span>  Successfully added marketplace: <b>atelier</b>' });
   wait(0.8);
 
   // 1. Install.
   type('/plugin install atelier@atelier');
   submit('/plugin install atelier@atelier');
   wait(0.5);
-  row('  <span class="dim">⎿</span>  <span class="ok">✔</span> Successfully installed plugin: <b>atelier@atelier</b>', 0);
+  row('  <span class="dim gl">⎿</span>  <span class="ok gl">✔</span> Successfully installed plugin: <b>atelier@atelier</b>', 0);
   cue('chime', LEVEL.chime);
   show('pkg');
   wait(1.1);
@@ -237,10 +241,28 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   wait(0.7);
   type('yes');
   submit('yes', 'Brewing');
-  tool('Update', 'site/js/analytics.js', 0.3, true, ['Updated <b>site/js/analytics.js</b> with <b>1</b> addition and <b>1</b> removal']);
-  tool('Update', 'site/js/app.js', 0.3, true, ['Updated <b>site/js/app.js</b> with <b>4</b> additions and <b>2</b> removals']);
-  tool('Update', 'site/css/site.css', 0.3, true, ['Updated <b>site/css/site.css</b> with <b>1</b> addition']);
-  tool('Update', 'site/css/site.css', 0.3, true, ['Updated <b>site/css/site.css</b> with <b>2</b> additions and <b>1</b> removal']);
+  tool('Update', 'site/js/analytics.js', 0.3, true, [
+    'Updated <b>site/js/analytics.js</b> with <b>1</b> addition and <b>1</b> removal',
+    del(3, "window.addEventListener('unload', function () {"),
+    add(3, "window.addEventListener('pagehide', function () {"),
+  ]);
+  tool('Update', 'site/js/app.js', 0.3, true, [
+    'Updated <b>site/js/app.js</b> with <b>4</b> additions and <b>2</b> removals',
+    del(23, '  document.startViewTransition(function () {'),
+    add(23, '  const reorder = function () {'),
+    more(6),
+  ]);
+  tool('Update', 'site/css/site.css', 0.3, true, [
+    'Updated <b>site/css/site.css</b> with <b>1</b> addition',
+    ctx(40, '  height: 100vh;'),
+    add(41, '  height: 100dvh;'),
+  ]);
+  tool('Update', 'site/css/site.css', 0.3, true, [
+    'Updated <b>site/css/site.css</b> with <b>2</b> additions and <b>1</b> removal',
+    del(74, '.product:hover .quick-view {'),
+    add(74, '.product:hover .quick-view,'),
+    add(75, '.product:focus-within .quick-view {'),
+  ]);
   wait(0.2);
   // The report panel flips on the same frame as the passing summary line.
   ev('row', { html: '' });
@@ -248,7 +270,7 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   wait(0.6);
   marks.reportPass = rerun.doneAt;
   cue('chime', LEVEL.chime);
-  row('  <span class="dim">⎿</span>  Report written to: ux-report/ux-report.md', 0.05);
+  row('  <span class="dim gl">⎿</span>  Report written to: ux-report/ux-report.md', 0.05);
   row('     Violations: <span class="ok">critical 0, serious 0</span>, moderate 3, minor 0', 0.3);
   say('All four fixed. The audit passes (exit 0); 3 moderate notes remain.', 0.2);
   done('Brewed');
