@@ -107,11 +107,25 @@ jobs:
         run: node scripts/smoke-installed-plugin.mjs
 
   action:
-    name: GitHub Action self-test
+    name: GitHub Action self-test (caller on Node ${{ matrix.caller-node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Older than 22: the action installs Node 22, which stays on PATH.
+          - caller-node: '20'
+            expect-node: '22'
+          # 22 or newer: the action uses the job's Node and leaves it alone.
+          - caller-node: '24'
+            expect-node: '24'
 
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.caller-node }}
 
       - name: Run the composite action against the bundled example page
         uses: ./
@@ -124,3 +138,11 @@ jobs:
           test -s action-reports/a11y/a11y-report.md
           test -s action-reports/ux/ux-report.md
           test -s action-reports/ux/ux-raw.json
+
+      - name: Job's Node after the action
+        env:
+          EXPECT: ${{ matrix.expect-node }}
+        run: |
+          major="$(node -p 'process.versions.node.split(".")[0]')"
+          echo "node $(node -v) after the action; expected major $EXPECT"
+          test "$major" = "$EXPECT"
