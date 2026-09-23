@@ -100,9 +100,15 @@ function contrastRatio(a, b) {
 // Fonts
 // ---------------------------------------------------------------------------
 
+// Vendor system-font keywords. Like the generics they stay unquoted (Safari
+// ignores -apple-system once quoted) and are never taken as the brand's own
+// font, but they keep their spelling: Chromium matches BlinkMacSystemFont as
+// a family name.
+const VENDOR_SYSTEM_FONTS = new Set(['-apple-system', 'blinkmacsystemfont']);
 const GENERIC_FAMILIES = new Set([
   'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'ui-serif',
   'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'math', 'emoji', 'fangsong',
+  ...VENDOR_SYSTEM_FONTS,
 ]);
 
 /**
@@ -142,7 +148,10 @@ function parseFontStack(stack) {
 /** Render parsed families as a valid CSS font-family value. */
 function fontStackCss(families) {
   if (families.length === 0) return 'system-ui';
-  return families.map((f) => (f.generic ? f.name.toLowerCase() : cssString(f.name))).join(', ');
+  return families.map((f) => {
+    if (!f.generic) return cssString(f.name);
+    return VENDOR_SYSTEM_FONTS.has(f.name.toLowerCase()) ? f.name : f.name.toLowerCase();
+  }).join(', ');
 }
 
 const FONT_FORMATS = {

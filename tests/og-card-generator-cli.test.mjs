@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { sharp } from './helpers/plugin-deps.mjs';
@@ -186,5 +186,35 @@ describe('og-card-generator CLI: process', () => {
     expect(r.stderr).toBe('');
     expect(r.status).toBe(0);
     expect(existsSync(join(dir, 'og', 'home.png'))).toBe(true);
+  });
+
+  it('does not start the CLI when node -e imports the file named in argv[1]', () => {
+    const code = "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href); console.log(typeof m.generateCards);";
+    for (const flag of ['-e', '--eval']) {
+      const r = node(['--input-type=module', flag, code, entry]);
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(0);
+      expect(r.stdout.trim()).toBe('function');
+    }
+  });
+
+  it('the JS API snippet in SKILL.md runs as written with a native or forward-slash path', async () => {
+    const skillMd = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
+    const snippet = skillMd.match(/node --input-type=module -e "([\s\S]*?)" "\$\{CLAUDE_SKILL_DIR\}\/index\.mjs"/);
+    expect(snippet, 'API snippet not found in SKILL.md').not.toBeNull();
+    const code = snippet[1];
+    // Inside bash double quotes these would be expanded; the snippet must not rely on them.
+    expect(code).not.toMatch(/["$`\\]/);
+    // Claude Code substitutes the native install path; on Windows that has backslashes.
+    for (const target of new Set([`${skillDir}/index.mjs`, `${skillDir.split(sep).join('/')}/index.mjs`])) {
+      const dir = project();
+      const r = node(['--input-type=module', '-e', code, target], dir);
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(0);
+      expect(r.stdout.trim()).toBe(join('public', 'og', 'home.png'));
+      const meta = await sharp(join(dir, 'public', 'og', 'home.png')).metadata();
+      expect([meta.width, meta.height]).toEqual([1200, 630]);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

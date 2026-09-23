@@ -14,19 +14,17 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" og --title "TideWane" --subtitle "A dee
 
 `pages.json` is `{ "pages": [ { "slug": "home", "title": "...", "subtitle": "..." } ] }` or a bare array of pages.
 
-JS API:
+JS API (the module path goes in as an argument and is loaded through `pathToFileURL`, so the import also works with Windows paths; importing it does not start the CLI):
 
 ```bash
-node --input-type=module -e "
-import { generateCards } from '${CLAUDE_SKILL_DIR}/index.mjs';
-import { loadBrand } from '${CLAUDE_SKILL_DIR}/../brand-memory/index.mjs';
-const paths = await generateCards({
+node --input-type=module -e "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href);
+const { loadBrand } = await import(new URL('../brand-memory/index.mjs', pathToFileURL(process.argv[1])).href);
+const paths = await m.generateCards({
   brand: loadBrand(process.cwd()),
   pages: [{ slug: 'home', title: 'TideWane', subtitle: 'A deep-sea idle dungeon crawler' }],
   outDir: 'public/og',
 });
-console.log(paths.join('\n'));
-"
+for (const p of paths) console.log(p);" "${CLAUDE_SKILL_DIR}/index.mjs"
 ```
 
 Also exported: `generateCard({ brand, page, outPath })` for one card, and `buildCardHtml(brand, page)` for the HTML without rendering.
@@ -38,6 +36,7 @@ CLI:
 - `--title <text>`, `--subtitle <text>`, `--slug <slug>`, `--out <dir>`: one card without a manifest.
 - `--project <dir>`: where `.atelier/brand.json` lives (default: current directory).
 - `--font-display <file>`, `--font-body <file>`: font files (.woff2, .woff, .ttf, .otf) for the brand fonts.
+- `-h`, `--help`: print usage and exit 0.
 
 API (both functions): `fonts: { display?, body? }` (font file paths), `browser` (reuse an open Playwright browser; it is left open), `onWarning(message)` (default: printed to stderr).
 
@@ -66,7 +65,7 @@ Warnings (stderr, cards are still written): text contrast below 4.5:1, a brand f
 ## Notes
 
 - Fonts: without a font file the card uses fonts installed on the rendering machine, so web fonts such as Inter usually fall back. Pass the file to get the real font; it is inlined, never fetched.
-- Font stacks are quoted per family, so names like `Press Start 2P` work.
+- Font stacks are quoted per family, so names like `Press Start 2P` work. Generic keywords (`sans-serif`, `system-ui`, ...) and the vendor keywords `-apple-system` and `BlinkMacSystemFont` stay unquoted and are skipped when picking the brand font: the installed-font check and a `--font-display`/`--font-body` file apply to the first named family in the stack.
 - Every slug is checked before anything is written: a slug that could leave `outDir` (`..`, `:`, backslashes, dots) or two pages writing the same file is an error.
 - Page text is HTML-escaped. The card page runs with JavaScript disabled and all network requests blocked, so a title or brand value cannot run script or fetch anything.
 - Needs Playwright Chromium. Check with `node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" doctor`.

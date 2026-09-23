@@ -279,6 +279,27 @@ describe('og-card-generator: fonts', () => {
     expect(html).toContain('--font-display:"Inter", "Helvetica Neue", "Serif", sans-serif');
   });
 
+  it('keeps -apple-system and BlinkMacSystemFont bare and never takes them as the brand font', async () => {
+    const stack = '-apple-system, BlinkMacSystemFont, "Segoe UI", SANS-SERIF';
+    const html = buildCardHtml({ ...brand, typography: { body: stack } }, {});
+    expect(html).toContain('--font-body:-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif');
+    // Quoted, it is a family name like any other.
+    expect(buildCardHtml({ ...brand, typography: { body: '"-apple-system", serif' } }, {})).toContain('--font-body:"-apple-system", serif');
+
+    // A font file registers under the first named family, not a vendor keyword.
+    scratch();
+    const file = join(tmp, 'brand.woff2');
+    writeFileSync(file, 'placeholder');
+    expect(buildCardHtml({ ...brand, typography: { body: stack } }, {}, { fonts: { body: file } })).toContain('@font-face{font-family:"Segoe UI";');
+
+    // The installed-font check skips the keywords too.
+    const vendorOnly = await render({ ...brand, typography: { display: stack, body: '-apple-system, BlinkMacSystemFont, sans-serif' } }, { title: 'T' });
+    expect(vendorOnly.warnings.join('\n')).not.toMatch(/apple-system|BlinkMacSystemFont/i);
+    const named = await render({ ...brand, typography: { body: '-apple-system, BlinkMacSystemFont, NoSuchFontAtelierXyz, sans-serif' } }, { title: 'T' });
+    expect(named.warnings.join('\n')).toMatch(/"NoSuchFontAtelierXyz" is not installed/);
+    expect(named.warnings.join('\n')).not.toMatch(/apple-system|BlinkMacSystemFont/i);
+  });
+
   it('uses system-ui when typography is empty', () => {
     const html = buildCardHtml({ palette: { bg: '#000' } }, {});
     expect(html).toContain('--font-display:system-ui;--font-body:system-ui');
