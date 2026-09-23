@@ -9,17 +9,13 @@ description: WCAG 2.1 A and AA accessibility audit of a URL or local HTML file w
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" a11y https://staging.example.com
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" a11y dist/index.html --out a11y-report
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" a11y http://localhost:3000 --wait-for "#app main" --tags wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" a11y --help
 ```
 
-JS API (pass the skill dir as an argument so the import also works with Windows paths):
+JS API, for scripts that need the violation objects. The module path is passed as an argument and turned into a file URL, so the same line works on Windows, macOS and Linux:
 
 ```bash
-node --input-type=module -e "
-import { pathToFileURL } from 'node:url';
-const { auditPage } = await import(pathToFileURL(process.argv[1] + '/index.mjs').href);
-const { violations, reportPath } = await auditPage({ url: 'dist/index.html', outDir: 'a11y-report' });
-console.log(violations.critical.length, violations.serious.length, reportPath);
-" "${CLAUDE_SKILL_DIR}"
+node --input-type=module -e "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href); const { violations, reportPath } = await m.auditPage({ url: 'dist/index.html', outDir: 'a11y-report' }); console.log(violations.critical.length, violations.serious.length, reportPath);" "${CLAUDE_SKILL_DIR}/index.mjs"
 ```
 
 `auditPage` resolves to `{ violations: { critical, serious, moderate, minor, all }, reportPath, rawPath, url, tags }`; each list holds axe violation objects. It throws an `AuditError` (with `code`) when the audit cannot run. Also exported: `DEFAULT_TAGS`, `buildMarkdownReport`, `runCli(argv, { stdout, stderr })`, which returns the exit code.
@@ -34,19 +30,20 @@ console.log(violations.critical.length, violations.serious.length, reportPath);
 - `--settle-timeout <ms>` / `settleTimeoutMs`: max wait for network idle and web fonts after load. Default 10000. Best effort: a page that never goes idle is still audited.
 - `--analyze-timeout <ms>` / `analyzeTimeoutMs`: max time for the axe run. Default 60000.
 - `--allow-http-error` / `allowHttpError`: audit a page that answers HTTP 4xx or 5xx instead of failing.
+- `-h`, `--help`: print usage to stdout and exit 0.
 - API only, `browser`: a Playwright Browser to reuse across audits; it is left open.
 
 ## Output
 
 - `<outDir>/a11y-report.md`: URL, axe-core version, tags and counts, then one section per impact (critical, serious, moderate, minor). Each rule lists its help text, help URL and up to 5 affected selectors. `>>>` in a selector enters a shadow root and `>>frame>>` enters an iframe. Page-controlled text is escaped, so it cannot add markdown or HTML to the report.
 - `<outDir>/a11y-raw.json`: the full axe result (violations, passes, incomplete, inapplicable, node HTML).
-- stdout: the report path and one line of counts per impact.
+- stdout: the report path, then one line with the violation count for each impact.
 
 Nothing is written when the audit fails. Existing reports in `outDir` are overwritten.
 
 ## Exit codes
 
-- `0`: no critical or serious violations (moderate and minor do not fail).
+- `0`: no critical or serious violations (moderate and minor do not fail), or `--help`.
 - `1`: at least one critical or serious violation.
 - `2`: usage error (message plus usage on stderr), or the audit could not run (`atelier: <message>` on stderr): file not found, HTTP 4xx/5xx, navigation, load or axe timeout, unknown tag, missing Chromium.
 

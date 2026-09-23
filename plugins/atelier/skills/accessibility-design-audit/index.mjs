@@ -406,7 +406,8 @@ Options:
   --tags <list>             comma-separated axe tags
                             (default: ${DEFAULT_TAGS.join(',')})
   --wait-for <selector>     wait until this CSS selector is in the DOM
-  --timeout <ms>            navigation and load event timeout (default: ${DEFAULTS.timeoutMs})
+  --timeout <ms>            navigation, load event and wait-for timeout
+                            (default: ${DEFAULTS.timeoutMs})
   --settle-timeout <ms>     max wait for network idle and fonts (default: ${DEFAULTS.settleTimeoutMs})
   --analyze-timeout <ms>    max time for the axe run (default: ${DEFAULTS.analyzeTimeoutMs})
   --allow-http-error        audit the page even when it answers HTTP 4xx or 5xx

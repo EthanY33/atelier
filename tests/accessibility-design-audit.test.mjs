@@ -339,6 +339,27 @@ describe('runCli', () => {
     }
   });
 
+  it('SKILL.md and --help document the same flags, and the parser accepts each one', async () => {
+    const skillMd = readFileSync(new URL('../plugins/atelier/skills/accessibility-design-audit/SKILL.md', import.meta.url), 'utf8');
+    const longFlags = (text) => new Set([...text.matchAll(/(?<![\w-])--([a-z][a-z-]*[a-z])/g)].map((m) => `--${m[1]}`));
+    const documented = longFlags(skillMd);
+    documented.delete('--input-type'); // node's own flag in the JS API line
+    const inHelp = longFlags(USAGE);
+    expect([...documented].sort()).toEqual([...inHelp].sort());
+    for (const short of ['-o', '-h']) {
+      expect(skillMd).toContain(`\`${short}\``);
+      expect(USAGE).toMatch(new RegExp(`^ {2}${short}, --`, 'm'));
+    }
+    for (const flag of inHelp) {
+      if (flag === '--help') continue;
+      const takesValue = new RegExp(`${flag} <`).test(USAGE);
+      const io = captureIo();
+      // No <url|file>: a known flag gets as far as the missing-argument check.
+      expect(await runCli(takesValue ? [flag, '1'] : [flag], io), flag).toBe(2);
+      expect(io.err, flag).toMatch(/^atelier: missing <url\|file>/);
+    }
+  });
+
   it('usage errors print usage to stderr and return 2', async () => {
     const cases = [
       [[], /missing <url\|file>/],

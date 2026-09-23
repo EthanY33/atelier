@@ -114,17 +114,32 @@ describe('accessibility-design-audit CLI (spawned)', () => {
     expect(existsSync(join(tmp, 'out-link', 'a11y-report.md'))).toBe(true);
   });
 
-  it('the JS API snippet in SKILL.md runs as written and does not trigger the CLI', async () => {
+  it('importing index.mjs under node -e with its path as argv[1] does not start the CLI', async () => {
+    // The SKILL.md JS API form puts this file in argv[1]; isMain alone would
+    // then run the CLI with no arguments (usage on stderr, exit 2).
+    const code = "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href); console.log(typeof m.auditPage);";
+    for (const evalFlag of ['-e', '--eval']) {
+      const r = await run(['--input-type=module', evalFlag, code, `${SKILL_DIR}/index.mjs`]);
+      expect(r.status, `${evalFlag}: ${r.stderr}`).toBe(0);
+      expect(r.stderr).toBe('');
+      expect(r.stdout.trim()).toBe('function');
+    }
+  });
+
+  it('the JS API line in SKILL.md runs as written and does not trigger the CLI', async () => {
     const skillMd = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
-    const snippet = skillMd.match(/node --input-type=module -e "\r?\n([\s\S]*?)\r?\n" "\$\{CLAUDE_SKILL_DIR\}"/);
-    expect(snippet, 'API snippet not found in SKILL.md').not.toBeNull();
+    const snippet = skillMd.match(/^node --input-type=module -e "(.+)" "\$\{CLAUDE_SKILL_DIR\}\/index\.mjs"\r?$/m);
+    expect(snippet, 'API line not found in SKILL.md').not.toBeNull();
     const code = snippet[1];
+    expect(code).toMatch(/^const \{ pathToFileURL \} = await import\('node:url'\); const m = await import\(pathToFileURL\(process\.argv\[1\]\)\.href\);/);
     // Inside bash double quotes these would be expanded; the snippet must not rely on them.
     expect(code).not.toMatch(/["$`\\]/);
     mkdirSync(join(tmp, 'dist'), { recursive: true });
     writeFileSync(join(tmp, 'dist', 'index.html'), BAD_HTML, 'utf8');
 
-    const r = await run(['--input-type=module', '-e', code, SKILL_DIR]);
+    // Exactly what Claude Code produces: the skill dir substituted, then "/index.mjs"
+    // (mixed separators on Windows).
+    const r = await run(['--input-type=module', '-e', code, `${SKILL_DIR}/index.mjs`]);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stderr).toBe('');
     expect(r.stdout.trim()).toBe(`1 1 ${join('a11y-report', 'a11y-report.md')}`);
