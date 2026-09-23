@@ -91,4 +91,4 @@ See [SECURITY.md](../SECURITY.md) for reporting.
 | Installed-plugin smoke (3 OS) | A marketplace-style install works and every skill runs from it |
 | GitHub Action self-test | `action.yml` runs both audits end to end |
 
-Releases are cut by pushing a `vX.Y.Z` tag; the release workflow checks that the tag matches every version string and publishes the matching `CHANGELOG.md` section.
+Releases are cut by pushing a `vX.Y.Z` tag. The release workflow checks that the tag matches every version string, publishes the matching `CHANGELOG.md` section, and moves the floating major tag (for example `v1`, which `uses: EthanY33/atelier@v1` resolves) when the release is the newest of its major. See [releasing.md](releasing.md).

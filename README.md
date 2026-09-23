@@ -133,7 +133,7 @@ Both audits exit `1` on critical or serious findings, `0` when clean, and `2` wh
     brand: .atelier/brand.json          # optional budgets
 ```
 
-Both reports are appended to the job summary and written to `atelier-reports/`. Outside GitHub, the same checks run with `atelier a11y <target>` and `atelier ux <target>`.
+Both reports are appended to the job summary and written to `atelier-reports/`. The action uses the job's Node when it is 22 or newer and installs Node 22 otherwise. Outside GitHub, the same checks run with `atelier a11y <target>` and `atelier ux <target>`.
 
 ## Commands and CLI
 
