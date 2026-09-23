@@ -3,13 +3,22 @@
  * with Playwright Chromium and ffmpeg.
  *
  * Capture runs on a virtual clock, so frame N always shows the page exactly
- * N / fps seconds after the first frame, however long each screenshot takes:
- *   - JS time (Date, performance.now, setTimeout/setInterval,
- *     requestAnimationFrame) is driven by Playwright's clock API: paused
- *     before navigation, then advanced 1000 / fps ms between screenshots.
+ * N / fps seconds after the first frame, however long each screenshot takes.
+ * Between two screenshots the clock advances 1000 / fps ms in equal
+ * sub-steps of at most one 60 Hz display frame (1000 / 60 ms); the last
+ * sub-step lands on the frame time. At each sub-step:
+ *   - JS time (Date, performance.now, setTimeout/setInterval) is driven by
+ *     Playwright's clock API: paused before navigation, then run forward to
+ *     the sub-step time.
+ *   - requestAnimationFrame is a queue (Playwright's own fires on a 16 ms
+ *     grid, off the frame times) that runs once per sub-step with the
+ *     sub-step time as its timestamp: at least 60 times per page second, and
+ *     exactly at the frame time just before each screenshot.
  *   - CSS animations, CSS transitions and Web Animations are frozen at
  *     creation (CDP Animation.setPlaybackRate(0)) and stepped by setting each
- *     animation's currentTime before every screenshot.
+ *     animation's currentTime. One that starts between sub-steps (timer,
+ *     event) begins at the next sub-step, at most 1/60 s late, as on a 60 Hz
+ *     display.
  *   - SVG SMIL animations are paused and seeked with setCurrentTime().
  * <video>/<audio> playback, Web Workers, cross-origin iframes' CSS animations
  * and document.timeline.currentTime are not driven by this clock.
@@ -30,7 +39,14 @@ const FORMAT_BY_EXT = { '.mp4': 'mp4', '.webm': 'webm' };
 const MAX_DIMENSION = 8192;
 const MAX_FPS = 240;
 const FONT_WAIT_MS = 10_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
 const TEMP_PREFIX = 'atelier-h2v-frames-';
+// Longest virtual-clock step between animation syncs and rAF runs: one 60 Hz
+// display frame.
+const DISPLAY_FRAME_MS = 1000 / 60;
+
+// Playwright errors append a multi-line "Call log:" wrapped in ANSI dim codes.
+const firstLine = (err) => String(err?.message ?? err).replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/)[0].trim();
 
 // ---------------------------------------------------------------------------
 // Option handling
@@ -145,6 +161,8 @@ function normalizeOptions({
   audioSource,
   browser,
   signal,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  allowHttpError = false,
 } = {}) {
   if (typeof outPath !== 'string' || outPath.trim() === '') {
     throw new TypeError('outPath is required: the .mp4 or .webm file to write');
@@ -153,6 +171,7 @@ function normalizeOptions({
   checkPositiveNumber('fps', fps, MAX_FPS);
   checkDimension('width', width);
   checkDimension('height', height);
+  checkPositiveNumber('timeoutMs', timeoutMs);
   const totalFrames = Math.round(duration * fps);
   if (totalFrames < 1) {
     throw new TypeError(`duration x fps must give at least one frame (duration ${duration}, fps ${fps})`);
@@ -185,6 +204,8 @@ function normalizeOptions({
     audioSource: audioSource || undefined,
     browser,
     signal: signal ?? undefined,
+    timeoutMs,
+    allowHttpError: Boolean(allowHttpError),
   };
 }
 
@@ -254,65 +275,124 @@ function moveInto(src, dest) {
 // ---------------------------------------------------------------------------
 
 /**
- * Runs inside every frame of the page before each screenshot. `t` is the
- * virtual time in ms since the first frame. Must stay self-contained: it is
- * serialized into the page.
+ * Init script, added after Playwright's clock so it replaces the clock's
+ * requestAnimationFrame. Playwright fires rAF on its own 16 ms grid (with the
+ * grid tick as the timestamp), which drifts up to 16 ms from the frame times.
+ * Here callbacks wait in a queue that stepPageClock runs once per sub-step,
+ * all with that sub-step's performance.now(), as a browser does once per
+ * display frame. Must stay self-contained: it is serialized into the page.
+ */
+function installFrameQueue() {
+  if (window.__atelierRaf) return;
+  const queue = new Map();
+  let nextId = 1;
+  window.__atelierRaf = {
+    /** Run the callbacks queued before this call; returns how many ran. */
+    flush() {
+      const ts = performance.now();
+      let ran = 0;
+      for (const id of [...queue.keys()]) {
+        const callback = queue.get(id);
+        if (!callback) continue; // cancelled by an earlier callback in this batch
+        queue.delete(id);
+        ran++;
+        try {
+          callback(ts);
+        } catch (err) {
+          if (typeof reportError === 'function') reportError(err);
+          else console.error(err);
+        }
+      }
+      return ran;
+    },
+  };
+  window.requestAnimationFrame = function requestAnimationFrame(callback) {
+    if (typeof callback !== 'function') {
+      throw new TypeError("Failed to execute 'requestAnimationFrame' on 'Window': parameter 1 is not of type 'Function'.");
+    }
+    const id = nextId++;
+    queue.set(id, callback);
+    return id;
+  };
+  window.cancelAnimationFrame = function cancelAnimationFrame(id) {
+    queue.delete(id);
+  };
+}
+
+/**
+ * Runs inside every frame of the page at each sub-step, after the JS clock
+ * has run to it. `t` is the virtual time in ms since the first frame. Must
+ * stay self-contained: it is serialized into the page.
+ *
+ * Order, as in a browser's rendering update: bring animations to `t`, run
+ * the requestAnimationFrame queue, then sync again so an animation the
+ * callbacks started begins at `t`.
  *
  * Web Animations (CSS animations and transitions included) are frozen by the
  * CDP playback rate, so each one is advanced by (t - last t) x playbackRate
- * from where it was. An animation first seen at this frame keeps its current
+ * from where it was. An animation first seen at this step keeps its current
  * time, which is where it was created (usually 0). Animations the page paused
  * are left alone, and a page seek (currentTime changed by the page) is
  * respected.
  */
-function syncPageClock(t) {
+async function stepPageClock(t) {
   const key = '__atelierHtmlToVideo';
   const state = window[key] || (window[key] = { anims: new WeakMap(), svgs: new WeakMap() });
-  for (const anim of document.getAnimations()) {
-    try {
-      if (anim.timeline !== document.timeline) continue;
-      const current = anim.currentTime;
-      if (typeof current !== 'number') continue;
-      const rec = state.anims.get(anim);
-      if (!rec) {
-        state.anims.set(anim, { t, current });
-        continue;
-      }
-      if (anim.playState === 'paused') {
+  const sync = () => {
+    for (const anim of document.getAnimations()) {
+      try {
+        if (anim.timeline !== document.timeline) continue;
+        const current = anim.currentTime;
+        if (typeof current !== 'number') continue;
+        const rec = state.anims.get(anim);
+        if (!rec) {
+          state.anims.set(anim, { t, current });
+          continue;
+        }
+        if (anim.playState === 'paused') {
+          rec.t = t;
+          rec.current = current;
+          continue;
+        }
+        const base = Math.abs(current - rec.current) > 1 ? current : rec.current;
+        const next = base + (t - rec.t) * anim.playbackRate;
+        anim.currentTime = next;
         rec.t = t;
-        rec.current = current;
-        continue;
+        rec.current = next;
+      } catch {
+        // A detached or exotic animation must not stop the capture.
       }
-      const base = Math.abs(current - rec.current) > 1 ? current : rec.current;
-      const next = base + (t - rec.t) * anim.playbackRate;
-      anim.currentTime = next;
-      rec.t = t;
-      rec.current = next;
-    } catch {
-      // A detached or exotic animation must not stop the capture.
     }
-  }
-  for (const svg of document.querySelectorAll('svg')) {
-    if (svg.ownerSVGElement || typeof svg.setCurrentTime !== 'function') continue;
-    let born = state.svgs.get(svg);
-    if (born === undefined) {
-      born = t;
-      state.svgs.set(svg, born);
-      svg.pauseAnimations();
+    for (const svg of document.querySelectorAll('svg')) {
+      if (svg.ownerSVGElement || typeof svg.setCurrentTime !== 'function') continue;
+      let born = state.svgs.get(svg);
+      if (born === undefined) {
+        born = t;
+        state.svgs.set(svg, born);
+        svg.pauseAnimations();
+      }
+      svg.setCurrentTime((t - born) / 1000);
     }
-    svg.setCurrentTime((t - born) / 1000);
+  };
+  sync();
+  if (window.__atelierRaf && window.__atelierRaf.flush() > 0) {
+    // Let promise callbacks the rAF callbacks queued run first.
+    await Promise.resolve();
+    sync();
   }
 }
 
-async function syncAllFrames(page, t) {
-  await Promise.all(page.frames().map((frame) => frame.evaluate(syncPageClock, t).catch(() => {})));
+async function stepAllFrames(page, t) {
+  await Promise.all(page.frames().map((frame) => frame.evaluate(stepPageClock, t).catch(() => {})));
 }
 
 /**
  * Open the page on a paused virtual clock and wait until it is ready for the
- * first frame (load event plus web fonts).
+ * first frame (load event plus web fonts). A page that cannot be opened, that
+ * misses its load event within timeoutMs, or that answers HTTP 4xx/5xx
+ * (unless allowHttpError) is an error.
  */
-async function openPage(browser, { pageUrl, width, height }) {
+async function openPage(browser, { pageUrl, width, height, timeoutMs, allowHttpError }) {
   const context = await browser.newContext({ viewport: { width, height } });
   try {
     const page = await context.newPage();
@@ -330,7 +410,25 @@ async function openPage(browser, { pageUrl, width, height }) {
     const start = Date.now();
     await page.clock.install({ time: start - 60_000 });
     await page.clock.pauseAt(start);
-    await page.goto(pageUrl, { waitUntil: 'load' });
+    // Added after the clock's init script so its rAF replaces the clock's.
+    await context.addInitScript(installFrameQueue);
+    let response;
+    try {
+      response = await page.goto(pageUrl, { waitUntil: 'load', timeout: timeoutMs });
+    } catch (err) {
+      if (err?.name === 'TimeoutError') {
+        throw new Error(`${pageUrl} did not fire its load event within ${timeoutMs} ms (raise --timeout or timeoutMs for slow pages)`, { cause: err });
+      }
+      throw new Error(`could not open ${pageUrl}: ${firstLine(err)}`, { cause: err });
+    }
+    // file:// answers 200 and data:/about: URLs have no response; only real HTTP errors stop here.
+    const status = response ? response.status() : 0;
+    if (status >= 400 && !allowHttpError) {
+      const text = response.statusText();
+      throw new Error(
+        `${pageUrl} answered HTTP ${status}${text ? ` ${text}` : ''}; refusing to record an error page (use --allow-http-error to record it anyway)`,
+      );
+    }
     let timer;
     await Promise.race([
       page.evaluate(() => document.fonts.ready.then(() => true)).catch(() => false),
@@ -344,13 +442,32 @@ async function openPage(browser, { pageUrl, width, height }) {
   }
 }
 
+/**
+ * Advance the virtual clock from frame to frame in equal sub-steps of at most
+ * one 60 Hz display frame, stepping the page (animations and rAF) at each,
+ * and screenshot at every frame time. `at(x)` maps a frame position, possibly
+ * fractional, to whole ms since the first frame.
+ */
 async function captureFrames(page, { fps, totalFrames, signal }, frameDir, padWidth) {
-  const at = (i) => Math.round((i * 1000) / fps);
+  const steps = Math.max(1, Math.ceil(1000 / fps / DISPLAY_FRAME_MS - 1e-9));
+  const at = (x) => Math.round((x * 1000) / fps);
+  let now = 0;
   for (let i = 0; i < totalFrames; i++) {
     signal?.throwIfAborted();
     const t = at(i);
-    if (i > 0) await page.clock.runFor(t - at(i - 1));
-    await syncAllFrames(page, t);
+    for (let k = 1; i > 0 && k < steps; k++) {
+      const next = at(i - 1 + k / steps);
+      if (next <= now) continue;
+      signal?.throwIfAborted();
+      await page.clock.runFor(next - now);
+      now = next;
+      await stepAllFrames(page, now);
+    }
+    if (t > now) {
+      await page.clock.runFor(t - now);
+      now = t;
+    }
+    await stepAllFrames(page, t);
     await page.screenshot({ path: join(frameDir, `frame-${String(i).padStart(padWidth, '0')}.png`), type: 'png' });
   }
 }
@@ -364,7 +481,9 @@ async function captureFrames(page, { fps, totalFrames, signal }, frameDir, padWi
  *
  * Frame N shows the page N / fps seconds after the first frame (virtual
  * clock, see the module comment), so the video length equals `duration` and
- * animations play at their real speed regardless of screenshot latency.
+ * animations play at their real speed regardless of screenshot latency. A
+ * CSS or Web Animation that starts between frames begins within 1/60 s of
+ * its start, as on a 60 Hz display.
  *
  * @param {{
  *   url: string,
@@ -378,8 +497,11 @@ async function captureFrames(page, { fps, totalFrames, signal }, frameDir, padWi
  *   audioSource?: (outWavPath: string) => void | Promise<void>,
  *   browser?: import('playwright').Browser,
  *   signal?: AbortSignal,
+ *   timeoutMs?: number,
+ *   allowHttpError?: boolean,
  * }} opts
- * @param opts.url - http(s)/file/data URL, or a path to a local HTML file.
+ * @param opts.url - http(s)/file/data URL, or a path to a local HTML file. A page that
+ *   answers HTTP 4xx/5xx is an error unless `allowHttpError` is set.
  * @param opts.duration - seconds of page time to record (frames = round(duration x fps)).
  * @param opts.width - viewport width; MP4 rounds an odd value up to even.
  * @param opts.height - viewport height; MP4 rounds an odd value up to even.
@@ -393,6 +515,8 @@ async function captureFrames(page, { fps, totalFrames, signal }, frameDir, padWi
  *   closed; each call opens and closes its own context.
  * @param opts.signal - aborting it stops the capture or ffmpeg step, removes the temp
  *   frames and rejects with the abort reason. outPath is left untouched.
+ * @param opts.timeoutMs - how long to wait for navigation and the load event (default 30000).
+ * @param opts.allowHttpError - record the page even when it answers HTTP 4xx/5xx.
  * @returns {Promise<string>} resolves with outPath
  */
 export async function recordHtml(opts) {
@@ -500,10 +624,14 @@ Options:
   -f, --format <fmt>   mp4 or webm (default: from the output extension, else mp4)
       --poster         also write <name>-poster.jpg from the first frame
       --audio <file>   mux this audio file (WAV recommended) into the video
+      --timeout <ms>   navigation and load event timeout (default ${DEFAULT_TIMEOUT_MS})
+      --allow-http-error
+                       record the page even when it answers HTTP 4xx or 5xx
   -h, --help           show this help
 
-Requires ffmpeg on PATH and Playwright Chromium.
-Exit codes: 0 video written, 2 usage or runtime error.`;
+Requires ffmpeg on PATH and Playwright Chromium (atelier doctor checks both).
+Exit codes: 0 video written, 2 usage or runtime error (a page that answers
+HTTP 4xx or 5xx, cannot be opened or misses its load event is a runtime error).`;
 
 class UsageError extends Error {}
 
@@ -538,6 +666,8 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
         format: { type: 'string', short: 'f' },
         poster: { type: 'boolean' },
         audio: { type: 'string' },
+        timeout: { type: 'string' },
+        'allow-http-error': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
     });
@@ -559,6 +689,8 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     if (values.height !== undefined) opts.height = parseNumberArg('height', values.height);
     if (values.format !== undefined) opts.format = values.format;
     if (values.poster) opts.poster = true;
+    if (values.timeout !== undefined) opts.timeoutMs = parseNumberArg('timeout', values.timeout);
+    if (values['allow-http-error']) opts.allowHttpError = true;
     audioPath = values.audio;
   } catch (err) {
     stderr.write(`atelier: ${err.message}\n\n${USAGE}\n`);

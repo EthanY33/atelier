@@ -3,7 +3,7 @@ name: html-to-video
 description: Record an HTML page, local .html file or URL as an MP4 (H.264) or WebM (VP9) video with frame-exact timing (virtual clock), optional muxed audio and a JPG poster. Use for product or game trailers, animated demo clips, screencasts of a local dev server, changelog or social videos, and turning CSS/JS animations into a video or GIF.
 ---
 
-Needs ffmpeg on PATH and Playwright Chromium (`npx playwright install chromium`; installing the plugin does not download a browser). `node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" doctor` checks both and prints the install command for anything missing.
+Needs ffmpeg on PATH and the Playwright Chromium build that matches the plugin's pinned Playwright (`npx playwright@<version> install chromium`; installing the plugin does not download a browser). Run `node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" doctor` first: it checks both and prints the exact install command. A bare `npx playwright install chromium` uses the project's own or the latest Playwright and can install a Chromium the plugin cannot use.
 
 ## Run
 
@@ -11,19 +11,27 @@ Needs ffmpeg on PATH and Playwright Chromium (`npx playwright install chromium`;
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" video http://localhost:5173/trailer.html dist/trailer.mp4 10 --width 1920 --height 1080
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" video demo/page.html dist/demo.webm --fps 60 --poster
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" video demo/page.html dist/trailer.mp4 12 --audio score.wav
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" video --help
 ```
 
-JS API, for a generated `audioSource` or to reuse one browser across many clips (`pathToFileURL` keeps the import working with Windows paths):
+JS API, for an audio track generated in code (`audioSource`). This one writes a short 880 Hz beep at the start of every second; replace the sample loop with your own track:
 
 ```bash
-node --input-type=module -e '
-import { pathToFileURL } from "node:url";
-const { recordHtml } = await import(pathToFileURL(String.raw`${CLAUDE_SKILL_DIR}/index.mjs`).href);
-await recordHtml({
-  url: "demo/page.html", outPath: "dist/trailer.mp4", duration: 12, fps: 60, poster: true,
-  audioSource: async (wavPath) => { /* write a 48 kHz 16-bit PCM WAV to wavPath */ },
-});
-'
+node --input-type=module -e "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href);
+const { writeFileSync } = await import('node:fs');
+const seconds = 12;
+// 48 kHz 16-bit mono PCM on the video timeline: sample i plays at i / 48000 s, frame N at N / fps s.
+const writeWav = (wavPath) => {
+  const n = Math.round(48000 * seconds), b = Buffer.alloc(44 + 2 * n);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + 2 * n, 4); b.write('WAVEfmt ', 8);
+  b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(48000, 24); b.writeUInt32LE(96000, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34);
+  b.write('data', 36); b.writeUInt32LE(2 * n, 40);
+  for (let i = 0; i < n; i++) if (i % 48000 < 4800) b.writeInt16LE(Math.round(8000 * Math.sin((2 * Math.PI * 880 * i) / 48000)), 44 + 2 * i);
+  writeFileSync(wavPath, b);
+};
+const out = await m.recordHtml({ url: 'demo/page.html', outPath: 'dist/trailer.mp4', duration: seconds, fps: 60, poster: true, audioSource: writeWav });
+console.log('Video written to: ' + out);" "${CLAUDE_SKILL_DIR}/index.mjs"
 ```
 
 ## Options
@@ -37,7 +45,9 @@ API name first, then the CLI form.
 - `format` (`-f, --format`): `mp4` or `webm`. Must agree with a `.mp4`/`.webm` extension; a mismatch is an error.
 - `poster` (`--poster`): also write `<name>-poster.jpg` (the first frame) next to the video.
 - `audioSource(wavPath)` (`--audio <file>`): see Audio below.
-- `browser` (API only): a launched Playwright Chromium to reuse. It is not closed; each call opens and closes its own context.
+- `timeoutMs` (`--timeout <ms>`): how long to wait for navigation and the page's `load` event. Default 30000.
+- `allowHttpError` (`--allow-http-error`): record a page that answers HTTP 4xx or 5xx instead of failing. Without it such a page is a runtime error, so a mistyped dev-server URL does not turn into a clip of the error page.
+- `browser` (API only): a launched Playwright Chromium to reuse across calls. It is not closed; each call opens and closes its own context.
 - `signal` (API only): an `AbortSignal`. Aborting stops the capture or ffmpeg step, removes the temp files and rejects with the abort reason. The CLI does this on the first Ctrl+C.
 
 ## Output
@@ -48,7 +58,7 @@ API name first, then the CLI form.
 ## Exit codes
 
 - `0`: video written.
-- `2`: usage error (message and usage on stderr) or runtime failure (one `atelier: ...` line, plus a `Fix:` line when ffmpeg or Chromium is missing).
+- `2`: usage error (message and usage on stderr) or runtime failure (one `atelier: ...` line, plus a `Fix:` line when ffmpeg or Chromium is missing). Runtime failures include a page that answers HTTP 4xx or 5xx (`<url> answered HTTP 404 Not Found; ...`), a URL that cannot be opened (`could not open <url>: ...`) and a page that misses its `load` event within the timeout.
 
 ## Notes
 
@@ -56,8 +66,11 @@ API name first, then the CLI form.
 
 Capture runs on a virtual clock: frame N shows the page exactly N / fps seconds after the first frame, however long each screenshot takes. The video is `duration` long and animations play at their authored speed.
 - The first frame is taken after the `load` event and `document.fonts.ready`. Page timers are frozen during load, so page time 0 is the first frame.
-- JS time (`Date`, `performance.now`, `setTimeout`, `setInterval`, `requestAnimationFrame`) runs on Playwright's fake clock, advanced 1000 / fps ms per frame.
-- CSS animations, CSS transitions and Web Animations are frozen when created and stepped by the same amount each frame, honoring `playbackRate` and page seeks. An animation the page pauses stays paused at the previous frame's value. SVG SMIL is seeked with `setCurrentTime`.
+- Between frames the clock advances 1000 / fps ms in equal sub-steps of at most 1/60 s (2 per frame at 30 fps, 1 at 60 fps and above); the last sub-step lands on the frame time.
+- JS time (`Date`, `performance.now`, `setTimeout`, `setInterval`) runs on Playwright's fake clock, run forward to each sub-step.
+- `requestAnimationFrame` callbacks run once per sub-step, so at least 60 times per page second, with the sub-step time as their timestamp. The last run before each frame gets that frame's exact time, so canvas, GSAP or three.js motion lines up with CSS animations.
+- CSS animations, CSS transitions and Web Animations are frozen when created and stepped at every sub-step, honoring `playbackRate` and page seeks. An animation the page pauses stays paused where it was. SVG SMIL is seeked with `setCurrentTime`.
+- A CSS animation, transition or Web Animation that starts between sub-steps (from a timer or an event) begins at the next sub-step, so it can trail JS-timed content by up to 17 ms, as on a 60 Hz display. One started inside a `requestAnimationFrame` callback begins at that callback's time.
 - Not on the virtual clock: `<video>` and `<audio>` playback, Web Workers, scroll-driven animations, CSS animations inside cross-origin iframes, and `document.timeline.currentTime`. Content fetched after `load` appears at whichever frame is being captured when it arrives.
 - ffmpeg is resolved on PATH (never through a shell) before Chromium launches, so a missing ffmpeg fails immediately.
 

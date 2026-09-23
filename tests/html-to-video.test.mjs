@@ -125,6 +125,79 @@ function decodeFrames(file, width, height) {
 const isRed = ([r, g, b]) => r > 200 && g < 60 && b < 60;
 const isBlue = ([r, g, b]) => b > 200 && r < 60 && g < 60;
 
+/** Right edge (px) of a white bar on black in row y of frame f: 0 when the row is all black. */
+function edgeX(frames, f, y, width) {
+  for (let x = width - 1; x >= 0; x--) {
+    const [r, g, b] = frames.px(f, x, y);
+    if ((r + g + b) / 3 > 128) return x + 1;
+  }
+  return 0;
+}
+
+/** Start a loopback HTTP server; resolves with its base URL and a close function. */
+async function serve(handler) {
+  const server = createServer(handler);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return {
+    base: `http://127.0.0.1:${server.address().port}`,
+    close() {
+      server.closeAllConnections();
+      return new Promise((r) => server.close(r));
+    },
+  };
+}
+
+// Three white bars on black, each growing from scaleX(0) to scaleX(1).
+const BAR_STYLE = `html, body { margin: 0; background: #000; }
+.bar { position: absolute; left: 0; width: 100%; height: 20px; background: #fff; transform-origin: 0 0; transform: scaleX(0); }
+#a { top: 0; } #b { top: 20px; } #c { top: 40px; }
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }`;
+
+// Bar a: CSS animation over 1 s. Bar b: requestAnimationFrame timestamp - t0
+// over 1 s. Bar c: 1 px per requestAnimationFrame callback.
+const RAF_HTML = `<!DOCTYPE html><html><head><style>${BAR_STYLE}
+#a { animation: grow 1000ms linear forwards; }</style></head><body>
+<div class="bar" id="a"></div><div class="bar" id="b"></div><div class="bar" id="c"></div>
+<script>
+const t0 = performance.now();
+const b = document.getElementById('b');
+const c = document.getElementById('c');
+let calls = 0;
+requestAnimationFrame(function loop(ts) {
+  calls++;
+  b.style.transform = 'scaleX(' + Math.min(1, (ts - t0) / 1000) + ')';
+  c.style.transform = 'scaleX(' + Math.min(1, calls / innerWidth) + ')';
+  requestAnimationFrame(loop);
+});
+</script></body></html>`;
+
+// At page time 240 ms (between 10 fps frames) a timer starts a 1 s CSS
+// animation (a), a Web Animation (b) and a CSS transition (c). Bar d starts
+// the same CSS animation from the first requestAnimationFrame callback at or
+// after 240 ms.
+const LATE_START_HTML = `<!DOCTYPE html><html><head><style>${BAR_STYLE}
+#d { top: 60px; }
+.go { animation: grow 1000ms linear forwards; }</style></head><body>
+<div class="bar" id="a"></div><div class="bar" id="b"></div><div class="bar" id="c"></div><div class="bar" id="d"></div>
+<script>
+const t0 = performance.now();
+setTimeout(() => {
+  document.getElementById('a').classList.add('go');
+  document.getElementById('b').animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: 1000, easing: 'linear', fill: 'forwards' });
+  const c = document.getElementById('c');
+  c.style.transition = 'transform 1000ms linear';
+  c.style.transform = 'scaleX(1)';
+}, 240);
+requestAnimationFrame(function wait(ts) {
+  if (ts - t0 >= 240) {
+    document.getElementById('d').classList.add('go');
+    document.getElementById('d').dataset.start = ts - t0;
+  } else {
+    requestAnimationFrame(wait);
+  }
+});
+</script></body></html>`;
+
 const SIMPLE_HTML = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>Test Page</title>
 <style>body { background: #110f1b; color: #f2cc8f; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; } h1 { font-size: 3rem; }</style>
@@ -284,6 +357,129 @@ describe.skipIf(!hasFfmpeg)('recordHtml', () => {
       for (const f of [0, 5, 9]) expect(isRed(frames.px(f, x, 45)), `${name} at ${f / 10}s should be red: ${frames.px(f, x, 45)}`).toBe(true);
       for (const f of [11, 15, 19]) expect(isBlue(frames.px(f, x, 45)), `${name} at ${f / 10}s should be blue: ${frames.px(f, x, 45)}`).toBe(true);
     }
+  });
+
+  it('requestAnimationFrame gets the exact frame time and still runs at 60 Hz or more', async () => {
+    const width = 320;
+    const outPath = join(tmp, 'raf.mp4');
+    await recordHtml({ url: writeHtml('raf.html', RAF_HTML), duration: 1, width, height: 60, fps: 30, outPath, browser });
+    const frames = decodeFrames(outPath, width, 60);
+    expect(frames.count).toBe(30);
+    for (let f = 0; f < 30; f++) {
+      const t = Math.round((f * 1000) / 30);
+      const css = edgeX(frames, f, 10, width);
+      const raf = edgeX(frames, f, 30, width);
+      // Playwright's own rAF runs on a 16 ms grid: up to 5 px behind here.
+      expect(Math.abs(raf - css), `frame ${f}: rAF edge ${raf}, CSS edge ${css}`).toBeLessThanOrEqual(1);
+      expect(Math.abs(raf - (width * t) / 1000), `frame ${f}: rAF edge ${raf} at ${t} ms`).toBeLessThanOrEqual(2);
+      // One callback per captured frame would give 30 Hz; pages that step a
+      // fixed amount per callback need about 60 Hz.
+      const calls = edgeX(frames, f, 50, width);
+      expect(calls, `frame ${f}: ${calls} rAF callbacks by ${t} ms`).toBeGreaterThanOrEqual(Math.floor((60 * t) / 1000));
+      expect(calls, `frame ${f}: ${calls} rAF callbacks by ${t} ms`).toBeLessThanOrEqual(Math.ceil((120 * t) / 1000) + 2);
+    }
+  });
+
+  it('an animation started between frames begins within 1/60 s, not at the next frame', async () => {
+    const width = 600;
+    const outPath = join(tmp, 'late.mp4');
+    await recordHtml({ url: writeHtml('late.html', LATE_START_HTML), duration: 1.4, width, height: 80, fps: 10, outPath, browser });
+    const frames = decodeFrames(outPath, width, 80);
+    expect(frames.count).toBe(14);
+    const slack = (width * 17) / 1000 + 2;
+    const progress = (t, start) => width * Math.min(1, Math.max(0, (t - start) / 1000));
+    for (let f = 0; f < 14; f++) {
+      const expected = progress(f * 100, 240);
+      for (const [name, y] of [['css', 10], ['waapi', 30], ['transition', 50]]) {
+        const edge = edgeX(frames, f, y, width);
+        // Starting at the next captured frame (300 ms) puts every bar 36 px behind.
+        expect(expected - edge, `${name} at ${f * 100} ms: edge ${edge}, expected ${expected}`).toBeLessThanOrEqual(slack);
+        expect(edge - expected, `${name} at ${f * 100} ms: edge ${edge}, expected ${expected}`).toBeLessThanOrEqual(2);
+      }
+      // At 10 fps the sub-steps are 100/6 ms apart (..., 233, 250 ms), so the
+      // first rAF at or after 240 ms runs at 250 ms and bar d starts exactly there.
+      const d = edgeX(frames, f, 70, width);
+      expect(Math.abs(d - progress(f * 100, 250)), `rAF-started at ${f * 100} ms: edge ${d}`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it('refuses a page that answers HTTP 4xx or 5xx unless allowHttpError is set', async () => {
+    const server = await serve((req, res) => {
+      res.statusCode = req.url === '/500' ? 500 : 404;
+      res.setHeader('content-type', 'text/html');
+      res.end('<title>Not found</title><body style="margin:0;background:rgb(255,0,0)"></body>');
+    });
+    try {
+      const outPath = join(tmp, 'err.mp4');
+      const errors = [];
+      const leaked = await withPrivateTemp(async () => {
+        for (const path of ['/trailer.html', '/500']) {
+          errors.push(await recordHtml({ url: server.base + path, outPath, duration: 0.1, width: 64, height: 48, fps: 10, poster: true, browser }).catch((e) => e));
+        }
+      });
+      expect(errors[0].message).toBe(`${server.base}/trailer.html answered HTTP 404 Not Found; refusing to record an error page (use --allow-http-error to record it anyway)`);
+      expect(errors[1].message).toMatch(/answered HTTP 500 Internal Server Error; refusing to record/);
+      expect(leaked).toEqual([]);
+      expect(existsSync(outPath)).toBe(false);
+      expect(existsSync(join(tmp, 'err-poster.jpg'))).toBe(false);
+
+      await recordHtml({ url: `${server.base}/x`, outPath, duration: 0.1, width: 64, height: 48, fps: 10, allowHttpError: true, browser });
+      expect(isRed(decodeFrames(outPath, 64, 48).px(0, 32, 24))).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('a page that cannot be opened fails with one clean line; the load wait honors timeoutMs', async () => {
+    const outPath = join(tmp, 'nav.mp4');
+    const unsafe = await recordHtml({ url: 'http://127.0.0.1:1/x', outPath, duration: 0.1, width: 64, height: 48, fps: 10, browser }).catch((e) => e);
+    expect(unsafe.message).toMatch(/^could not open http:\/\/127\.0\.0\.1:1\/x: page\.goto: net::ERR_UNSAFE_PORT/);
+    expect(unsafe.message).not.toMatch(/[\n\x1b]/);
+    expect(unsafe.cause).toBeInstanceOf(Error);
+
+    // The image response never ends, so the load event never fires.
+    const server = await serve((req, res) => {
+      res.setHeader('content-type', req.url === '/' ? 'text/html' : 'image/png');
+      if (req.url === '/') res.end('<img src="/hang.png">');
+      else res.write('');
+    });
+    try {
+      const started = Date.now();
+      const err = await recordHtml({ url: `${server.base}/`, outPath, duration: 0.1, width: 64, height: 48, fps: 10, timeoutMs: 1000, browser }).catch((e) => e);
+      expect(err.message).toBe(`${server.base}/ did not fire its load event within 1000 ms (raise --timeout or timeoutMs for slow pages)`);
+      expect(Date.now() - started).toBeLessThan(15_000);
+      expect(existsSync(outPath)).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it.skipIf(!hasProbe)('the SKILL.md JS API example runs as written (argv form, working audioSource)', () => {
+    const doc = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
+    const block = doc.match(/```bash\n(node --input-type=module -e "[\s\S]*?)\n```/);
+    expect(block, 'SKILL.md has a node --input-type=module -e block').not.toBeNull();
+    const prefix = 'node --input-type=module -e "const { pathToFileURL } = await import(\'node:url\'); const m = await import(pathToFileURL(process.argv[1]).href);';
+    const suffix = '" "${CLAUDE_SKILL_DIR}/index.mjs"';
+    const cmd = block[1];
+    expect(cmd.startsWith(prefix)).toBe(true);
+    expect(cmd.endsWith(suffix)).toBe(true);
+    let js = cmd.slice('node --input-type=module -e "'.length, -suffix.length);
+    // Inside bash double quotes these would be expanded or end the string.
+    expect(js).not.toMatch(/["$`\\!]/);
+    // Same script, shorter clip.
+    expect(js).toMatch(/const seconds = 12;/);
+    js = js.replace('const seconds = 12;', 'const seconds = 0.3;');
+    mkdirSync(join(tmp, 'demo'));
+    writeFileSync(join(tmp, 'demo', 'page.html'), SIMPLE_HTML);
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', js, join(SKILL_DIR, 'index.mjs')], { cwd: tmp, encoding: 'utf8' });
+    expect(r.status, r.stderr).toBe(0);
+    // Importing index.mjs this way must not also start its CLI.
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toBe('Video written to: dist/trailer.mp4\n');
+    const { video, audio } = probe(join(tmp, 'dist', 'trailer.mp4'));
+    expect(Number(video.nb_read_frames)).toBe(18);
+    expect(audio.codec_name).toBe('aac');
+    expect(existsSync(join(tmp, 'dist', 'trailer-poster.jpg'))).toBe(true);
   });
 
   it.skipIf(!hasProbe)('writes VP9 WebM for a .webm output and keeps odd sizes', async () => {
@@ -478,7 +674,47 @@ describe('html-to-video CLI', () => {
     expect(await runCli(['--help'], io)).toBe(0);
     expect(out.stdout).toMatch(/^Usage: atelier video/);
     expect(out.stdout).toMatch(/--poster/);
+    expect(out.stdout).toMatch(/--allow-http-error/);
+    expect(out.stdout).toMatch(/--timeout <ms>/);
     expect(out.stderr).toBe('');
+  });
+
+  it('every flag in --help is documented in SKILL.md and vice versa', async () => {
+    const { out, io } = capture();
+    await runCli(['--help'], io);
+    const doc = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
+    const flags = (text) => new Set(text.match(/(?<![\w-])--[a-z][a-z-]+/g));
+    const inHelp = flags(out.stdout);
+    // SKILL.md also quotes ffmpeg/ffprobe/node flags in its examples.
+    const inDoc = [...flags(doc)].filter((f) => !['--input-type'].includes(f));
+    for (const f of inHelp) expect(doc, `SKILL.md should mention ${f}`).toContain(f);
+    for (const f of inDoc) expect(inHelp.has(f), `--help should list ${f} (mentioned in SKILL.md)`).toBe(true);
+  });
+
+  it.skipIf(!hasFfmpeg)('an HTTP 4xx page or an unreachable URL exits 2 with one atelier: line; --allow-http-error records it', async () => {
+    const server = await serve((req, res) => {
+      res.statusCode = 404;
+      res.end('<body style="margin:0;background:rgb(255,0,0)"></body>');
+    });
+    try {
+      const outPath = join(tmp, 'cli-404.mp4');
+      const small = ['0.1', '--fps', '10', '--width', '64', '--height', '48'];
+      const refused = capture();
+      expect(await runCli([`${server.base}/typo.html`, outPath, ...small], refused.io)).toBe(2);
+      expect(refused.out.stderr).toBe(`atelier: ${server.base}/typo.html answered HTTP 404 Not Found; refusing to record an error page (use --allow-http-error to record it anyway)\n`);
+      expect(refused.out.stdout).toBe('');
+      expect(existsSync(outPath)).toBe(false);
+
+      const allowed = capture();
+      expect(await runCli([`${server.base}/typo.html`, outPath, ...small, '--allow-http-error'], allowed.io), allowed.out.stderr).toBe(0);
+      expect(allowed.out.stdout).toBe(`Video written to: ${outPath}\n`);
+    } finally {
+      await server.close();
+    }
+
+    const unsafe = capture();
+    expect(await runCli(['http://127.0.0.1:1/x', join(tmp, 'x.mp4'), '0.1'], unsafe.io)).toBe(2);
+    expect(unsafe.out.stderr).toMatch(/^atelier: could not open http:\/\/127\.0\.0\.1:1\/x: page\.goto: net::ERR_UNSAFE_PORT[^\n\x1b]*\n$/);
   });
 
   it.each([
@@ -490,6 +726,8 @@ describe('html-to-video CLI', () => {
     [['a.html', 'b.mp4', '1', '--duration', '2'], /either as \[seconds\] or as --duration/],
     [['a.html', 'b.webm', '--format', 'mp4'], /does not match the output extension/],
     [['a.html', 'b.mp4', '--width', '12.5'], /width must be an integer/],
+    [['a.html', 'b.mp4', '--timeout', 'soon'], /--timeout must be a number, got "soon"/],
+    [['a.html', 'b.mp4', '--timeout', '0'], /timeoutMs must be a positive number, got 0/],
   ])('usage error %j prints usage to stderr and exits 2', async (argv, message) => {
     const { out, io } = capture();
     expect(await runCli(argv, io)).toBe(2);
