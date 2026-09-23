@@ -6,9 +6,8 @@
  *   2. drive the scene frame by frame on its virtual clock at 60 fps and
  *      1920x1080 (1280x720 authored, deviceScaleFactor 1.5), piping JPEG
  *      frames straight into ffmpeg
- *   3. render the soundtrack from the same timeline and mux it in, loudness
- *      normalized toward -16 LUFS (the web target in the goneIdle trailer
- *      directive) with a wide LRA so the keystroke transients keep their dynamics
+ *   3. render the soundtrack from the same timeline and mux it in as rendered
+ *      (render-audio.mjs sets the level; no normalizer, so keystrokes stay soft)
  *   4. write demos/atelier-1.0-trailer.mp4 (with sound) plus the silent
  *      demos/overview.mp4 and animated demos/overview.webp the README embeds
  *
@@ -91,7 +90,7 @@ async function main() {
     const a = await renderAudio(wav);
     console.log(`audio: ${a.cues} cues`);
     await run(ffmpeg, ['-y', '-i', silent, '-i', wav, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
-      '-af', 'loudnorm=I=-16:LRA=22:TP=-1.5', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-shortest',
+      '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-shortest',
       '-movflags', '+faststart', '-f', 'mp4', OUT]);
 
     copyFileSync(silent, OUT_README_MP4);

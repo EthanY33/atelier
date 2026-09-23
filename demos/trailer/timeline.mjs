@@ -1,12 +1,13 @@
 // atelier 1.0 trailer timeline, shared by the scene (index.html) and the
-// audio renderer (scripts/trailer/render-audio.mjs) so every keystroke tick
-// and success tone lands on the frame that shows it.
+// audio renderer (scripts/trailer/render-audio.mjs) so every keystroke and
+// success tone lands on the frame that shows it.
 //
-// The session is reconstructed, but its facts are real: the plugin install
-// lines come from `claude plugin install`, the doctor block from
-// `atelier doctor`, the audit findings and the clean re-run from `atelier ux`
-// on tests/fixtures/runtime-ux/e2e (and its clean/ variant), and the panels
-// show files the skills generated for a demo brand.
+// The Claude Code session is reconstructed, but its facts are real: the
+// plugin install lines come from `claude plugin install`, and every atelier
+// command shows its real output for the Kiln demo brand, with absolute paths
+// shortened. The audit is tests/fixtures/runtime-ux/e2e; the four edits are
+// the smallest fixes for its blocking findings, and the re-run output is the
+// audit of the fixed copy.
 
 export const FPS = 60;
 
@@ -20,15 +21,6 @@ function rng(seed) {
     return s / 0xffffffff;
   };
 }
-
-const DOCTOR = [
-  ['ok', 'node', 'v22.13.0'],
-  ['ok', 'dependencies', '9 of 9 resolve'],
-  ['ok', 'sharp', 'libvips 8.18.6'],
-  ['ok', 'chromium', '153.0.8010.12'],
-  ['ok', 'ffmpeg', '8.1'],
-  ['ok', 'brand.json', 'Kiln (3 colors)'],
-];
 
 export const FINDINGS = [
   ['critical', 'no-unload-handler', 'js/analytics.js:3'],
@@ -46,11 +38,29 @@ export const CI_JOBS = [
   'GitHub Action self-test (caller on Node 20)', 'GitHub Action self-test (caller on Node 24)',
 ];
 
+// Slash commands the menu filters while a command is typed, with the
+// descriptions from each command file (atelier's are shortened to fit a row).
+export const COMMANDS = [
+  ['/add-dir', 'Add a new working directory'],
+  ['/agents', 'Manage agent configurations'],
+  ['/atelier-demo', 'Run every atelier skill on the bundled sample brand (atelier)'],
+  ['/atelier-doctor', 'Check that atelier can run here (atelier)'],
+  ['/brand-audit', 'List the recommended fields missing from brand.json (atelier)'],
+  ['/plugin', 'Manage Claude Code plugins'],
+  ['/ux-audit', 'Audit a URL or local HTML file for runtime UX problems (atelier)'],
+];
+
+const KEYS = ['key-1', 'key-2', 'key-3', 'key-4', 'key-5', 'key-6'];
+
+// Audio cue gains are target peak levels (linear, 1 = 0 dBFS); render-audio
+// divides by each sample's own peak so every variant lands at the same level.
+const LEVEL = { key: 0.1, space: 0.075, enter: 0.12, click: 0.06, chime: 0.09 };
+
 /**
  * Build the absolute timeline.
  * @returns {{
  *   duration: number,
- *   term: Array<object>,     terminal events: prompt, char, enter, line, clear
+ *   term: Array<object>,   events: welcome, row, submit, char, tool, spin, spinEnd
  *   panels: Record<string, { in: number, out: number }>,
  *   marks: Record<string, number>,
  *   cues: Array<{ t: number, sample: string, gain: number, opts?: object }>,
@@ -63,137 +73,203 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   const marks = {};
   const cues = [];
   let t = 0;
+  let lastKey = -1;
+  let spinStart = 0;
   const cue = (sample, gain, opts) => cues.push({ t, sample, gain, opts });
   const wait = (s) => { t += s; };
-  const prompt = () => term.push({ t, kind: 'prompt' });
-  const type = (text) => {
-    let typed = '';
-    for (const ch of text) {
-      typed += ch;
-      term.push({ t, kind: 'char', typed });
-      if (ch !== ' ') cue('typewriter', 0.022 + rand() * 0.014, { lowpass: 4500, dur: 0.07 });
-      t += (1 / CPS) * (0.8 + rand() * 0.4);
-    }
-  };
-  const enter = () => { wait(0.22); term.push({ t, kind: 'enter' }); cue('click-soft', 0.34, { lowpass: 5000 }); wait(0.18); };
-  const line = (html, gap = 0.12) => { term.push({ t, kind: 'line', html }); wait(gap); };
-  const clear = () => term.push({ t, kind: 'clear' });
+  const ev = (kind, extra = {}) => { term.push({ t, kind, ...extra }); return term[term.length - 1]; };
+  const row = (html, gap = 0.06) => { ev('row', { html }); wait(gap); };
+  const block = (html, gap = 0.06) => { ev('row', { html: '' }); row(html, gap); };
   const show = (name) => { panels[name] = { in: t, out: Infinity }; };
   const hide = (name) => { panels[name].out = t; };
 
-  // Intro: cursor glides to the terminal icon and clicks.
+  // Type into the input box: one keycap per character, the spacebar for spaces.
+  const type = (text) => {
+    wait(0.25);
+    let typed = '';
+    for (const ch of text) {
+      typed += ch;
+      ev('char', { typed });
+      if (ch === ' ') cue('key-enter', LEVEL.space * (0.9 + rand() * 0.2));
+      else {
+        let k;
+        do { k = Math.floor(rand() * KEYS.length); } while (k === lastKey);
+        lastKey = k;
+        cue(KEYS[k], LEVEL.key * (0.85 + rand() * 0.3));
+      }
+      t += (1 / CPS) * (0.8 + rand() * 0.4);
+    }
+  };
+  // Enter moves the prompt into the history; a model turn starts the spinner.
+  const submit = (text, verb) => {
+    wait(0.22);
+    ev('submit', { text });
+    cue('key-enter', LEVEL.enter);
+    wait(0.3);
+    if (verb) { spinStart = t; ev('spin', { verb }); wait(0.25); }
+  };
+  const done = (past) => {
+    const secs = Math.max(1, Math.round(t - spinStart));
+    ev('spinEnd');
+    block(`<span class="dim">✻ ${past} for ${secs}s</span>`, 0);
+  };
+  // A tool call shows a blinking dot until its result lands, then green or red.
+  const tool = (name, arg, secs, ok, lines) => {
+    ev('row', { html: '' });
+    const call = ev('tool', { html: `<b>${name}</b>(${arg})`, ok, doneAt: t + secs });
+    wait(secs);
+    lines.forEach((l, i) => row(`${i === 0 ? '  <span class="dim">⎿</span>  ' : '     '}${l}`, 0.05));
+    return call;
+  };
+  const say = (html, gap = 0.06) => block(`<span class="say">●</span> ${html}`, gap);
+  const more = (n) => `<span class="dim">… +${n} line${n === 1 ? '' : 's'} (ctrl+o to expand)</span>`;
+
+  // Intro: the cursor glides to the Claude Code icon and clicks; the session
+  // opens on the welcome box with the marketplace already added.
   marks.introClick = 1.05;
   t = 1.05;
-  cue('click-soft', 0.4, { lowpass: 5000 });
+  cue('click-soft', LEVEL.click * 1.3);
   wait(0.2);
   marks.open = t;
-  wait(0.5);
-  // History already in the scrollback when the window opens.
-  term.push({ t: marks.open, kind: 'line', html: '<span class="pr">›</span> /plugin marketplace add EthanY33/atelier' });
-  term.push({ t: marks.open, kind: 'line', html: '<span class="ok">✔</span> Successfully added marketplace: <b>atelier</b>' });
+  ev('welcome');
+  ev('row', { html: '' });
+  ev('row', { html: '<span class="dim">›</span> /plugin marketplace add EthanY33/atelier', band: true });
+  ev('row', { html: '  <span class="dim">⎿</span>  Successfully added marketplace: <b>atelier</b>' });
+  wait(0.8);
 
   // 1. Install.
-  prompt();
-  wait(0.25);
   type('/plugin install atelier@atelier');
-  enter();
-  line('<span class="dim">installing dependencies (npm ci)…</span>', 0.5);
-  line('<span class="ok">✔</span> Successfully installed plugin: <b>atelier@atelier</b>', 0.1);
-  cue('chime', 0.30);
+  submit('/plugin install atelier@atelier');
+  wait(0.5);
+  row('  <span class="dim">⎿</span>  <span class="ok">✔</span> Successfully installed plugin: <b>atelier@atelier</b>', 0);
+  cue('chime', LEVEL.chime);
   show('pkg');
-  wait(1.05);
+  wait(1.1);
 
   // 2. Doctor.
-  prompt();
   type('/atelier-doctor');
-  enter();
-  line('<span class="dim">atelier 1.0.0 doctor</span>', 0.1);
-  for (const [s, name, detail] of DOCTOR) {
-    line(`  <span class="ok">${s}</span>    <span class="nm">${name.padEnd(12)}</span>  ${detail}`, 0.1);
-  }
-  line('<span class="ok">Ready.</span>', 0.2);
-  wait(0.55);
+  submit('/atelier-doctor', 'Percolating');
+  tool('Bash', 'atelier doctor', 0.55, true, [
+    '<span class="ok">ok</span>    node          v22.13.0',
+    '<span class="ok">ok</span>    dependencies  9 of 9 resolve',
+    '<span class="ok">ok</span>    sharp         libvips 8.18.6',
+    more(5),
+  ]);
+  wait(0.35);
+  say('All six checks pass, so every skill can run here.', 0.2);
+  done('Percolated');
+  wait(0.8);
   hide('pkg');
-  cue('whoosh', 0.3);
-  wait(0.3);
-  clear();
+  wait(0.15);
 
-  // 3. Ask for social cards.
-  prompt();
+  // 3. Social cards.
   type('make social cards for every post in /blog');
-  enter();
-  line('<span class="tool">⏺</span> <b>og-card-generator</b>', 0.16);
-  line('  <span class="dim">⎿</span> og/launch-week.png', 0.08);
-  line('  <span class="dim">⎿</span> og/brand-refresh.png', 0.08);
-  line('  <span class="dim">⎿</span> og/field-notes.png', 0.05);
+  submit('make social cards for every post in /blog', 'Forging');
+  tool('Skill', 'og-card-generator', 0.3, true, ['Successfully loaded skill']);
+  wait(0.25);
+  tool('Bash', 'atelier og blog/pages.json --out og', 0.55, true, [
+    'Generated 3 OG card(s):',
+    '  og/launch-week.png',
+    '  og/brand-refresh.png',
+    more(1),
+  ]);
   show('cards');
   marks.cards = t;
-  for (let i = 0; i < 3; i++) { cue('click-soft', 0.2, { lowpass: 5000 }); wait(0.22); }
-  wait(0.95);
+  for (let i = 0; i < 3; i++) { cue('click-soft', LEVEL.click * 0.7); wait(0.22); }
+  wait(0.2);
+  say('Three 1200x630 cards in og/, one per post, on the Kiln brand.', 0.2);
+  done('Forged');
+  wait(0.9);
 
-  // 4. Rebrand: change one line, regenerate.
+  // 4. Rebrand: one value changes, everything downstream regenerates.
+  type('switch palette.bg to #16305f and regenerate');
+  submit('switch palette.bg to #16305f and regenerate', 'Crafting');
   show('diff');
   marks.diff = t;
-  cue('click-soft', 0.22, { lowpass: 5000 });
-  wait(0.6);
-  marks.diffEdit = t;
-  cue('click-snap', 0.1, { lowpass: 5000 });
+  tool('Bash', "atelier brand set palette.bg '#16305f'", 0.45, true, ['palette.bg = "#16305f"']);
+  marks.diffEdit = t - 0.05;
+  cue('click-soft', LEVEL.click * 0.8);
+  wait(0.4);
+  tool('Bash', 'atelier tokens', 0.35, true, [
+    'dist/tokens/tokens.css',
+    'dist/tokens/tailwind.config.js',
+    'dist/tokens/tokens.d.ts',
+    more(2),
+  ]);
+  wait(0.25);
+  tool('Bash', 'atelier og blog/pages.json --out og', 0.5, true, ['Generated 3 OG card(s):', '  og/launch-week.png', '  og/brand-refresh.png', more(1)]);
+  marks.recolor = t - 0.2;
   wait(0.5);
-  prompt();
-  type('regenerate the brand assets');
-  enter();
-  line('<span class="tool">⏺</span> <b>design-token-sync</b>  <span class="dim">⎿</span> 5 token files', 0.16);
-  line('<span class="tool">⏺</span> <b>og-card-generator</b>  <span class="dim">⎿</span> 3 cards', 0.16);
-  line('<span class="tool">⏺</span> <b>brand-asset-pipeline</b>  <span class="dim">⎿</span> icons', 0.1);
-  marks.recolor = t;
-  cue('click-snap', 0.11, { lowpass: 5000 });
+  tool('Bash', 'atelier assets --root . --out public', 0.45, true, [
+    'Wrote 11 files to public (targets: favicons, app-icons, social;',
+    'background #16305f)',
+  ]);
+  marks.icons = t - 0.1;
   show('icons');
-  wait(1.75);
+  wait(0.4);
+  say('Tokens, all three cards and the icons now use the navy background.', 0.2);
+  done('Crafted');
+  wait(1.5);
   hide('cards');
   hide('diff');
   hide('icons');
-  cue('whoosh', 0.3);
   wait(0.3);
-  clear();
 
-  // 5. runtime-ux-audit.
-  prompt();
+  // 5. runtime-ux-audit fails, then the fixes make it pass.
   type('/ux-audit site/index.html');
-  enter();
+  submit('/ux-audit site/index.html', 'Cogitating');
+  tool('Bash', 'atelier ux site/index.html --out ux-report', 0.7, false, [
+    '<span class="bad">Error: Exit code 1</span>',
+    'Report written to: ux-report/ux-report.md',
+    'Violations: critical 1, serious 3, moderate 3, minor 0',
+  ]);
   show('report');
   marks.report = t;
+  wait(0.35);
+  tool('Read', 'ux-report/ux-report.md', 0.3, true, ['Read <b>98</b> lines']);
+  wait(0.3);
+  say('Four blocking findings:', 0.05);
   for (const [sev, id, where] of FINDINGS) {
-    line(`<span class="sev ${sev}">${sev.padEnd(8)}</span> ${id.padEnd(22)} <span class="dim">${where}</span>`, 0.13);
-    cue('click-soft', 0.16, { lowpass: 5000 });
+    row(`    <span class="sev ${sev}">${sev.padEnd(9)}</span>${id.padEnd(23)}<span class="dim">site/${where}</span>`, 0.07);
   }
-  line('<span class="bad">critical 1, serious 3, moderate 3 · exit 1</span>', 0.1);
-  wait(1.0);
-  prompt();
-  type('fix those and re-run');
-  enter();
-  line('<span class="dim">pagehide, feature check, 100dvh, focus-visible</span>', 0.35);
-  marks.reportPass = t;
-  cue('chime', 0.3);
-  line('<span class="ok">critical 0, serious 0, moderate 0 · exit 0</span>', 0.1);
+  row('  Want me to fix them?', 0.2);
+  done('Cogitated');
+  wait(0.7);
+  type('yes');
+  submit('yes', 'Brewing');
+  tool('Update', 'site/js/analytics.js', 0.3, true, ['Updated <b>site/js/analytics.js</b> with <b>1</b> addition and <b>1</b> removal']);
+  tool('Update', 'site/js/app.js', 0.3, true, ['Updated <b>site/js/app.js</b> with <b>4</b> additions and <b>2</b> removals']);
+  tool('Update', 'site/css/site.css', 0.3, true, ['Updated <b>site/css/site.css</b> with <b>1</b> addition']);
+  tool('Update', 'site/css/site.css', 0.3, true, ['Updated <b>site/css/site.css</b> with <b>2</b> additions and <b>1</b> removal']);
+  wait(0.2);
+  // The report panel flips on the same frame as the passing summary line.
+  ev('row', { html: '' });
+  const rerun = ev('tool', { html: '<b>Bash</b>(atelier ux site/index.html --out ux-report)', ok: true, doneAt: t + 0.6 });
+  wait(0.6);
+  marks.reportPass = rerun.doneAt;
+  cue('chime', LEVEL.chime);
+  row('  <span class="dim">⎿</span>  Report written to: ux-report/ux-report.md', 0.05);
+  row('     Violations: <span class="ok">critical 0, serious 0</span>, moderate 3, minor 0', 0.3);
+  say('All four fixed. The audit passes (exit 0); 3 moderate notes remain.', 0.2);
+  done('Brewed');
   wait(1.3);
   hide('report');
-  cue('whoosh', 0.28);
   wait(0.25);
 
   // 6. CI: twelve jobs go green.
   show('ci');
   marks.ci = t;
-  for (let i = 0; i < CI_JOBS.length; i++) wait(0.085);
-  marks.ciDone = t;
-  cue('click-snap', 0.1, { lowpass: 5000 });
-  wait(1.0);
+  // Job i turns green 0.25 + i * 0.085 s in, over 0.18 s (index.html).
+  marks.ciDone = t + 0.25 + (CI_JOBS.length - 1) * 0.085 + 0.18;
+  t = marks.ciDone;
+  cue('click-soft', LEVEL.click);
+  wait(0.85);
 
   // 7. Endcard.
   marks.end = t;
-  cue('whoosh', 0.26);
   wait(0.7);
   marks.endIn = t;
-  wait(1.4);
+  wait(1.5);
 
   return { duration: Math.ceil(t * 10) / 10, term, panels, marks, cues };
 }

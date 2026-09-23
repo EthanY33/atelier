@@ -43,22 +43,33 @@
   .cursor { position: absolute; width: 22px; height: 28px; }
   .ripple { position: absolute; width: 60px; height: 60px; border-radius: 50%; border: 2px solid rgba(244,241,222,.7); }
 
-  /* terminal */
-  .term { position: absolute; left: 40px; top: 76px; width: 704px; height: 612px; border-radius: 14px; background: rgba(23,20,31,.96); border: 1px solid var(--line); box-shadow: 0 30px 80px rgba(0,0,0,.55); overflow: hidden; transform-origin: 560px 250px; }
-  .bar { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 16px; background: var(--surface2); border-bottom: 1px solid var(--line); }
-  .bar i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
-  .bar .ttl { margin-left: 12px; font: 400 13.5px 'Geist Mono', monospace; color: var(--muted); }
-  .body { padding: 18px 22px; font: 400 16.5px/1.7 'Geist Mono', monospace; white-space: pre; color: var(--text); }
-  .body .pr { color: var(--terra); }
-  .body .ok { color: var(--sage); }
-  .body .dim { color: var(--dim); }
-  .body .nm { color: var(--text); }
-  .body .tool { color: var(--lilac); }
-  .body .bad { color: var(--red); }
-  .body .sev.critical { color: var(--red); }
-  .body .sev.serious { color: var(--sand); }
+  /* terminal: Claude Code in a Windows Terminal tab, in Claude Code's dark theme */
+  .term { --cc-bg: #0c0c0c; --cc-text: #e4e4e4; --cc-dim: #8a8a8a; --cc-orange: #d77757; --cc-green: #4eba65; --cc-red: #ff6b80; --cc-amber: #ffc107; --cc-sel: #b1b9f9; --cc-band: #262626;
+    position: absolute; left: 40px; top: 76px; width: 704px; height: 612px; border-radius: 10px; background: var(--cc-bg); border: 1px solid #2c2c2c; box-shadow: 0 30px 80px rgba(0,0,0,.6); overflow: hidden; transform-origin: 560px 250px; }
+  .tabs { height: 36px; display: flex; align-items: flex-end; gap: 6px; padding: 0 0 0 8px; background: #1c1c1c; font: 400 12.5px 'Geist', sans-serif; color: #c8c8c8; }
+  .tab { height: 30px; width: 220px; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--cc-bg); border-radius: 7px 7px 0 0; }
+  .tab .ic { color: var(--cc-orange); font-size: 13px; }
+  .tab .x { margin-left: auto; color: #8a8a8a; font-size: 12px; }
+  .tabs .plus { height: 30px; display: flex; align-items: center; color: #9a9a9a; font-size: 16px; padding: 0 6px; }
+  .tabs .win { margin-left: auto; height: 36px; display: flex; align-items: center; gap: 26px; padding: 0 18px; color: #bdbdbd; font-size: 13px; }
+  .body { height: 576px; padding: 10px 16px 0; font: 400 14.5px/22px 'Geist Mono', monospace; color: var(--cc-text); overflow: hidden; }
+  .body .r { height: 22px; white-space: pre; }
+  .body .band { background: var(--cc-band); margin: 0 -16px; padding: 0 16px; color: #d6d6d6; }
+  .body .dim { color: var(--cc-dim); }
+  .body .ok { color: var(--cc-green); }
+  .body .bad { color: var(--cc-red); }
+  .body .say { color: var(--cc-text); }
+  .body .sev.critical { color: var(--cc-red); }
+  .body .sev.serious { color: var(--cc-amber); }
   .body b { font-weight: 600; }
-  .caret { display: inline-block; width: 10px; height: 20px; background: var(--terra); vertical-align: -3px; margin-left: 1px; }
+  .body .welcome { height: 88px; border: 1px solid var(--cc-orange); border-radius: 6px; padding: 10px 14px; margin-right: 150px; }
+  .body .welcome .r { height: 22px; }
+  .body .spin, .body .spin .g { color: var(--cc-orange); }
+  .body .rule { height: 22px; position: relative; }
+  .body .rule::after { content: ''; position: absolute; left: 0; right: 0; top: 11px; border-top: 1px solid #6a6a6a; }
+  .body .menu .r { color: var(--cc-dim); }
+  .body .menu .r.on { color: var(--cc-sel); }
+  .caret { display: inline-block; width: 9px; height: 18px; background: var(--cc-text); vertical-align: -4px; }
 
   /* right-hand panels */
   .side { position: absolute; left: 772px; top: 76px; width: 468px; height: 612px; }
@@ -123,11 +134,11 @@
   </div>
 
   <div class="desk" id="desk">
-    <div class="appicon"><div class="tile">&gt;_</div><div class="lbl">Claude Code</div></div>
+    <div class="appicon"><div class="tile">✻</div><div class="lbl">Claude Code</div></div>
   </div>
 
   <div class="term" id="term">
-    <div class="bar"><i style="background:#ef6b73"></i><i style="background:#f2cc8f"></i><i style="background:#81b29a"></i><span class="ttl">claude · ~/sites/kiln</span></div>
+    <div class="tabs"><div class="tab"><span class="ic">✳</span><span>Claude Code</span><span class="x">✕</span></div><div class="plus">+</div><div class="win"><span>─</span><span>▢</span><span>✕</span></div></div>
     <div class="body" id="tbody"></div>
   </div>
 
@@ -177,7 +188,7 @@
 </div>
 
 <script type="module">
-import { buildTimeline, FINDINGS, CI_JOBS } from './timeline.mjs';
+import { buildTimeline, CI_JOBS, COMMANDS } from './timeline.mjs';
 
 const TL = buildTimeline();
 window.__atelierDuration = TL.duration;
@@ -202,21 +213,53 @@ $('rt').innerHTML = `<tr><td class="cap">Area</td><td class="n cap">Critical</td
 
 $('jobs').innerHTML = CI_JOBS.map((j, i) => `<div class="job"><span class="dot" id="jd${i}"></span><span>${j}</span></div>`).join('');
 
-// ---------- terminal ----------
+// ---------- terminal: history, spinner, input box, slash menu or hint ----------
+const ROWS = 25; // 576px body at 22px rows, less the top padding
+const SPIN = ['·', '✢', '✳', '✶', '✻', '✽'];
+const SPIN_CYCLE = [...SPIN, ...SPIN.slice(1, -1).reverse()];
+const WELCOME = '<div class="welcome"><div class="r"><span class="spin">✻</span> Welcome to <b>Claude Code</b>!</div><div class="r dim">/help for help, /status for your current setup</div><div class="r dim">cwd: ~/sites/kiln</div></div>';
+
 function terminalHtml(t) {
-  const lines = [];
-  let cur = null; // current prompt line: typed text
+  const hist = []; // { h: rows, html }
+  let typed = '';
+  let spin = null;
   for (const e of TL.term) {
     if (e.t > t) break;
-    if (e.kind === 'clear') { lines.length = 0; cur = null; }
-    else if (e.kind === 'prompt') cur = '';
-    else if (e.kind === 'char') cur = e.typed;
-    else if (e.kind === 'enter') { lines.push(`<span class="pr">›</span> ${esc(cur ?? '')}`); cur = null; }
-    else if (e.kind === 'line') lines.push(e.html);
+    if (e.kind === 'welcome') hist.push({ h: 4, html: WELCOME });
+    else if (e.kind === 'row') hist.push({ h: 1, html: `<div class="r${e.band ? ' band' : ''}">${e.html}</div>` });
+    else if (e.kind === 'char') typed = e.typed;
+    else if (e.kind === 'submit') {
+      typed = '';
+      hist.push({ h: 1, html: '<div class="r"></div>' });
+      hist.push({ h: 1, html: `<div class="r band"><span class="dim">›</span> ${esc(e.text)}</div>` });
+    } else if (e.kind === 'tool') {
+      const running = t < e.doneAt;
+      const color = running ? (Math.floor(t * 4) % 2 ? 'transparent' : '#8a8a8a') : e.ok ? 'var(--cc-green)' : 'var(--cc-red)';
+      hist.push({ h: 1, html: `<div class="r"><span style="color:${color}">●</span> ${e.html}</div>` });
+    } else if (e.kind === 'spin') spin = e;
+    else if (e.kind === 'spinEnd') spin = null;
   }
-  const blink = Math.floor(t * 1.9) % 2 === 0;
-  if (cur !== null) lines.push(`<span class="pr">›</span> ${esc(cur)}${blink || cur.length ? '<span class="caret"></span>' : '<span class="caret" style="opacity:0"></span>'}`);
-  return lines.slice(-24).join('\n');
+
+  const bottom = [];
+  if (spin) {
+    const glyph = SPIN_CYCLE[Math.floor((t - spin.t) * 9) % SPIN_CYCLE.length];
+    bottom.push('<div class="r"></div>', `<div class="r spin"><span class="g">${glyph}</span> ${spin.verb}… <span class="dim">(${Math.floor(t - spin.t)}s · esc to interrupt)</span></div>`);
+  }
+  const caretOn = typed.length > 0 || Math.floor(t * 1.9) % 2 === 0;
+  bottom.push('<div class="rule"></div>',
+    `<div class="r"><span class="dim">›</span> ${esc(typed)}<span class="caret" style="opacity:${caretOn ? 1 : 0}"></span></div>`,
+    '<div class="rule bottom"></div>');
+  const menu = /^\/[\w-]*$/.test(typed) ? COMMANDS.filter(([c]) => c.startsWith(typed)).slice(0, 5) : [];
+  if (menu.length) {
+    bottom.push(`<div class="menu">${menu.map(([c, d], i) => `<div class="r${i === 0 ? ' on' : ''}">  ${c.padEnd(18)}${d}</div>`).join('')}</div>`);
+  } else bottom.push('<div class="r dim">  ? for shortcuts</div>');
+  const used = (spin ? 2 : 0) + 3 + Math.max(1, menu.length);
+
+  // Scroll: keep the newest history rows that fit above the input area.
+  let room = ROWS - used;
+  const shown = [];
+  for (let i = hist.length - 1; i >= 0 && room >= hist[i].h; i--) { shown.unshift(hist[i].html); room -= hist[i].h; }
+  return shown.join('') + bottom.join('');
 }
 function esc(s) { return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
@@ -291,7 +334,7 @@ function render(t) {
   // icons recolor (appear with the regenerate)
   const ic = panelState('icons', t);
   place($('p-icons'), 262, 400, ic);
-  $('icb0').style.opacity = prog(t, M.recolor + 0.25, 0.45);
+  $('icb0').style.opacity = prog(t, M.icons + 0.15, 0.45);
 
   // audit report
   const rp2 = panelState('report', t);
@@ -321,7 +364,7 @@ function render(t) {
     d.style.border = `2px solid ${g >= 1 ? '#81b29a' : '#f2cc8f'}`;
     d.style.boxShadow = g >= 1 ? '0 0 0 3px rgba(129,178,154,.18)' : 'none';
   });
-  const allGreen = t >= M.ciDone + 0.25;
+  const allGreen = t >= M.ciDone;
   $('cih').textContent = allGreen ? '12 of 12 checks passed' : '12 checks';
 
   // endcard
