@@ -1,6 +1,7 @@
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { isMain } from '../../plugins/atelier/lib/cli.mjs';
 import { isWin, libUrl, makeTmp, runModule, runNode } from './helpers.mjs';
@@ -72,6 +73,16 @@ describe('isMain in a child process', () => {
     expect(r.stderr).toBe('');
     expect(JSON.parse(r.stdout)).toEqual([false, false]);
   });
+
+  // The SKILL.md API form passes the skill's own path as argv[1] under -e.
+  it('does not start a skill CLI when the SKILL.md API form imports it', () => {
+    const skill = fileURLToPath(new URL('../../plugins/atelier/skills/design-token-sync/index.mjs', import.meta.url));
+    const code = "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href); console.log(typeof m.syncTokens);";
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', code, skill], { encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe('function');
+    expect(r.stderr).not.toMatch(/Usage/);
+  });
 });
 
 describe('isMain in process', () => {
@@ -89,6 +100,15 @@ describe('isMain in process', () => {
     const main = writeScripts(join(tmp, 'real'));
     symlinkSync(join(tmp, 'real'), join(tmp, 'link'), 'junction');
     expect(isMain(pathToFileURL(main).href, join(tmp, 'link', 'main.mjs'))).toBe(true);
+  });
+
+  it('is false while Node evaluates a string, even when argv1 names the module', () => {
+    const main = writeScripts(join(tmp, 'real'));
+    const url = pathToFileURL(main).href;
+    for (const flag of ['-e', '-p', '-pe', '--eval', '--print', '--eval=x']) {
+      expect(isMain(url, main, ['--input-type=module', flag])).toBe(false);
+    }
+    expect(isMain(url, main, ['--input-type=module'])).toBe(true);
   });
 
   it('is false for a missing argv1 or a path that does not exist', () => {

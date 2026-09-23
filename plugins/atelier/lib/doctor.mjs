@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { readJsonFile } from './io.mjs';
-import { checkBinary, ensureFfmpeg, launchChromium, PreflightError } from './preflight.mjs';
+import { checkBinary, ensureFfmpeg, launchChromium, PreflightError, playwrightVersion } from './preflight.mjs';
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
@@ -69,7 +69,7 @@ export async function runDoctor({ cwd = process.cwd(), launchBrowser = true } = 
       await browser.close();
       checks.push({ name: 'chromium', status: 'ok', detail: `${version} (og-card, a11y, video, ux --dynamic)` });
     } catch (err) {
-      checks.push({ name: 'chromium', status: 'warn', detail: err instanceof PreflightError ? err.message : firstLine(err), fix: err?.fix ?? 'npx playwright install chromium' });
+      checks.push({ name: 'chromium', status: 'warn', detail: err instanceof PreflightError ? err.message : firstLine(err), fix: err?.fix ?? `npx playwright${playwrightVersion() ? `@${playwrightVersion()}` : ''} install chromium` });
     }
   }
 

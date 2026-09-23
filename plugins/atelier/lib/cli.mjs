@@ -9,15 +9,22 @@ import { fileURLToPath } from 'node:url';
  *
  * Compares real paths, so it holds when the script is reached through a
  * symlink, a Windows junction, a differently cased drive letter, or (via the
- * native resolver) an 8.3 short name or a mapped drive. Returns false under
- * `node -e`, the REPL, or stdin, where there is no argv[1].
+ * native resolver) an 8.3 short name or a mapped drive.
+ *
+ * Returns false whenever Node is evaluating a string (`-e`, `-p`, `--eval`,
+ * `--print`), the REPL or stdin. That includes the form every SKILL.md uses
+ * to call a skill's API, `node -e "<code>" <skill>/index.mjs`, where argv[1]
+ * names the module even though Node is not running it as a script; importing
+ * a skill must never start its CLI.
  *
  * @param {string} metaUrl - `import.meta.url` of the calling module.
  * @param {string|undefined} [argv1=process.argv[1]]
+ * @param {string[]} [execArgv=process.execArgv]
  * @returns {boolean}
  */
-export function isMain(metaUrl, argv1 = process.argv[1]) {
+export function isMain(metaUrl, argv1 = process.argv[1], execArgv = process.execArgv) {
   if (!argv1 || !metaUrl) return false;
+  if (execArgv.some((a) => /^(?:-[ep]+|--eval|--print)(?:=|$)/.test(a))) return false;
   let self;
   try {
     self = fileURLToPath(metaUrl);
