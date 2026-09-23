@@ -28,6 +28,7 @@ const edge = {
     public: '#abc',
     colors: '#def',
     a_1: '#111',
+    Object: '#fed',
   },
   typography: { body: "Silkscreen, 'Courier New', monospace", display: 'Press Start 2P' },
 };
@@ -70,7 +71,9 @@ describe('emitDts', () => {
     const out = emitDts(edge);
     expect(declaredConsts(out)).toEqual([
       'colors', 'fonts', 'bg', 'brand500', 'brandPrimary_', 'brandPrimary', 'default_', 'class_', 'let_', 'public_', 'colors_', 'a_1',
+      'Object_',
     ]);
+    expect(out).toContain("/** colors['Object'] */\nexport declare const Object_: '#fed';");
     expect(out).toContain("/** colors['brand-500'] */\nexport declare const brand500: '#e07a5f';");
     expect(out).toContain("  readonly 'brand-500': '#e07a5f';");
     expect(out).toContain('  readonly default: ');

@@ -77,4 +77,30 @@ describe('generated fonts in Chromium', () => {
     // The unquoted form the old emitter produced is rejected, so this check has teeth.
     expect(await page.evaluate(() => CSS.supports('font-family', 'Press Start 2P, sans-serif'))).toBe(false);
   });
+
+  // macOS resolves -apple-system and BlinkMacSystemFont, so only other platforms
+  // show what happens when the vendor keywords are skipped.
+  it.skipIf(process.platform === 'darwin')('Tailwind stacks led by vendor keywords still end in their generic', async (ctx) => {
+    if (!browser) ctx.skip(skipReason);
+    const src = emitTailwind({
+      palette: { bg: '#000' },
+      typography: { body: '-apple-system, BlinkMacSystemFont, "Missing Font XYZ"', mono: '-apple-system, "Missing Mono XYZ"' },
+    });
+    const { fontFamily } = (await import(`data:text/javascript,${encodeURIComponent(src)}`)).default.theme.extend;
+    const widths = await page.evaluate((stacks) => stacks.map((stack) => {
+      const span = document.createElement('span');
+      span.style.cssText = 'font-size: 20px; white-space: nowrap';
+      span.style.fontFamily = stack;
+      span.textContent = 'mmmmmmmmmmiiiiiiiiii';
+      document.body.append(span);
+      const w = span.getBoundingClientRect().width;
+      span.remove();
+      return w;
+    }), [fontFamily.body.join(', '), fontFamily.mono.join(', '), 'sans-serif', 'monospace', '-apple-system, "Missing Mono XYZ"']);
+    const [body, mono, sans, monospace, oldMono] = widths;
+    expect(body).toBe(sans);
+    expect(mono).toBe(monospace);
+    // Without the appended generic the stack falls through to the browser default, so this check has teeth.
+    expect(oldMono).not.toBe(monospace);
+  });
 });

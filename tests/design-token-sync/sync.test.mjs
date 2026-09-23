@@ -25,7 +25,7 @@ const exampleBrand = JSON.parse(readFileSync(join(pluginRoot, 'examples', 'brand
 /** Schema-valid brand that exercises every emitter edge case. */
 const edgeBrand = {
   brand: { studio: 'Edge' },
-  palette: { bg: '#110f1b', 'brand-500': '#e07a5f', 'brand-primary': '#000', default: '#fff', class: '#123', a_1: '#11223380' },
+  palette: { bg: '#110f1b', 'brand-500': '#e07a5f', 'brand-primary': '#000', default: '#fff', class: '#123', a_1: '#11223380', Object: '#abcdef' },
   typography: { body: "Silkscreen, 'Courier New', monospace", display: 'Press Start 2P', mono: '"Geist Mono", ui-monospace' },
 };
 
@@ -141,6 +141,8 @@ describe('syncTokens', () => {
     expect(js.colors).toEqual(edgeBrand.palette);
     expect(js.brand500).toBe('#e07a5f');
     expect(js.default_).toBe('#fff');
+    // A key named Object must not shadow the global the module calls (Object.freeze).
+    expect(js.Object_).toBe('#abcdef');
 
     const dts = readFileSync(dtsPath, 'utf8');
     const declared = [...dts.matchAll(/^export declare const ([^:]+):/gm)].map((m) => m[1]);
@@ -250,11 +252,79 @@ describe('CLI process', () => {
     expect(existsSync(join(root, 'dist', 'tokens', 'tokens.css'))).toBe(true);
   });
 
+  it('does not run the CLI when node -e imports it with its own path as argv[1]', () => {
+    // argv[1] then names this file, so isMain() alone would start the CLI and
+    // write every token file into the cwd.
+    const root = project();
+    const esm = "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href); console.log(typeof m.syncTokens);";
+    // --print refuses ESM input, so -p runs CommonJS input with a dynamic import.
+    const cjs = "import(require('node:url').pathToFileURL(process.argv[1]).href).then((m) => console.log(typeof m.syncTokens))";
+    const runs = [
+      ['--input-type=module', '-e', esm],
+      ['--input-type=module', '--eval', esm],
+      ['-p', cjs],
+    ];
+    for (const args of runs) {
+      const r = run([...args, skillEntry], { cwd: root });
+      const label = args.slice(0, -1).join(' ');
+      expect(r.stderr, label).toBe('');
+      expect(r.status, label).toBe(0);
+      // -p also prints the returned Promise, in an order that is not fixed.
+      expect(r.stdout.trim().split(/\r?\n/), label).toContain('function');
+      expect(existsSync(join(root, 'dist')), label).toBe(false);
+    }
+  });
+
   it('can be imported from node --input-type=module -e without running the CLI', () => {
     const url = pathToFileURL(skillEntry).href;
     const r = run(['--input-type=module', '-e', `import { syncTokens } from ${JSON.stringify(url)}; console.log(typeof syncTokens);`]);
     expect(r.stderr).toBe('');
     expect(r.status).toBe(0);
     expect(r.stdout.trim()).toBe('function');
+  });
+});
+
+describe('SKILL.md', () => {
+  const skillDir = join(pluginRoot, 'skills', 'design-token-sync');
+  const md = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
+  const API_PREFIX = "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href);";
+
+  it('runs through the plugin CLI, is plain ASCII and has no repo-relative paths', () => {
+    expect(md).toContain('node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" tokens');
+    expect(md).not.toMatch(/plugins\/atelier/);
+    expect([...md].every((c) => c.charCodeAt(0) < 128)).toBe(true);
+  });
+
+  it('the JS API snippet runs as written with the skill directory substituted', () => {
+    const snippet = /^node --input-type=module -e "([^"\n]*)" "\$\{CLAUDE_SKILL_DIR\}\/index\.mjs"$/m.exec(md);
+    expect(snippet, 'API snippet not found in SKILL.md').not.toBeNull();
+    const code = snippet[1];
+    expect(code.startsWith(API_PREFIX)).toBe(true);
+    // Inside bash double quotes these would be expanded; the snippet must not rely on them.
+    expect(code).not.toMatch(/[$`\!]/);
+
+    // What bash passes after Claude Code substitutes ${CLAUDE_SKILL_DIR}: an absolute
+    // native path (backslashes on Windows), which only works through pathToFileURL.
+    const root = project();
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', code, join(skillDir, 'index.mjs')], {
+      cwd: root, encoding: 'utf8', timeout: 30_000,
+    });
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    const out = join(root, 'dist', 'tokens');
+    expect(r.stdout.trim().split(/\r?\n/)).toEqual([join(out, 'tokens.css'), join(out, 'tailwind.config.js')]);
+    expect(readdirSync(out).sort()).toEqual(['tailwind.config.js', 'tokens.css']);
+  });
+
+  it('documents every CLI flag, and every documented flag exists in --help', () => {
+    const flags = (text) => new Set([...text.matchAll(/(?<![\w-])--[a-z][a-z-]*[a-z]\b(?!-)/g)].map((m) => m[0]));
+    // Only the CLI parts of SKILL.md: the Run block and the Options table, not the curl example.
+    const cliDocs = md.split('\n').filter((l) => l.includes('bin/atelier" tokens') || l.startsWith('| `')).join('\n');
+    const documented = flags(cliDocs);
+    const usage = flags(USAGE);
+    expect([...usage].sort()).toEqual(['--help', '--out', '--root', '--targets']);
+    expect([...documented].sort()).toEqual([...usage].sort());
+    expect(USAGE).toMatch(/-h, --help/);
+    expect(md).toContain('`-h`, `--help`');
   });
 });

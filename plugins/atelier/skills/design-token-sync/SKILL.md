@@ -12,15 +12,10 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" tokens              # project root = cw
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" tokens --root ./site --out src/styles/tokens --targets css,dts
 ```
 
-JS API. The skill directory is passed as an argument so the import also works with Windows paths:
+JS API. The module path is passed as an argument and turned into a file URL, so the import works with Windows, macOS and Linux paths:
 
 ```bash
-node --input-type=module -e '
-import { pathToFileURL } from "node:url";
-const { syncTokens } = await import(pathToFileURL(process.argv[1] + "/index.mjs").href);
-const files = await syncTokens({ projectRoot: ".", outDir: "dist/tokens", targets: ["css", "tailwind"] });
-console.log(files.join("\n"));
-' "${CLAUDE_SKILL_DIR}"
+node --input-type=module -e "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href); const files = await m.syncTokens({ projectRoot: '.', outDir: 'dist/tokens', targets: ['css', 'tailwind'] }); for (const f of files) console.log(f);" "${CLAUDE_SKILL_DIR}/index.mjs"
 ```
 
 `syncTokens({ projectRoot, outDir, targets })` resolves to the absolute paths it wrote. The same module exports the pure emitters `emitCss`, `emitTailwind`, `emitDts`, `emitJs` and `emitFigmaVariables`: each takes a brand config object and returns the file content as a string.
@@ -32,6 +27,7 @@ console.log(files.join("\n"));
 | `[projectRoot]` or `--root <dir>` | `projectRoot` | cwd | Directory holding `.atelier/brand.json` |
 | `--out <dir>` | `outDir` | `dist/tokens` | Output directory: absolute, or relative to the project root |
 | `--targets <list>` | `targets` (array or comma string) | all | Any of `css`, `tailwind`, `dts`, `figma` |
+| `-h`, `--help` | | | Print usage to stdout and exit 0 |
 
 An unknown or empty target list is a usage error. All files are rendered before any is written.
 
@@ -58,7 +54,7 @@ Use the Tailwind file as a preset (`import tokens from './dist/tokens/tailwind.c
 
 ## Notes
 
-- Fonts are emitted as CSS font-family lists. `Silkscreen, 'Courier New', monospace` becomes `"Silkscreen", "Courier New", monospace`: family names are quoted and escaped, generic families (serif, sans-serif, monospace, system-ui, ui-monospace and the like) stay bare. Tailwind gets one array entry per family, with `sans-serif` (`monospace` for the mono slot) appended when the stack has no generic.
-- Any palette key brand.json allows works (`brand-500`, `default`); object keys are quoted where needed. Named exports in tokens.js use safe identifiers: other keys are camelCased (`brand-500` -> `brand500`, `brand-primary` -> `brandPrimary`), reserved words and the names `colors` and `fonts` get a trailing `_` (`default` -> `default_`), and a name that is already taken gets another `_`. `colors['brand-500']` always works with the original key, and tokens.d.ts marks each renamed export with its key.
+- Fonts are emitted as CSS font-family lists. `Silkscreen, 'Courier New', monospace` becomes `"Silkscreen", "Courier New", monospace`: family names are quoted and escaped, generic families (serif, sans-serif, monospace, system-ui, ui-monospace and the like) and the vendor keywords `-apple-system` and `BlinkMacSystemFont` stay bare. Tailwind gets one array entry per family, with `sans-serif` (`monospace` for the mono slot) appended when the stack has no generic family. The vendor keywords do not count as one, because a browser without them skips them.
+- Any palette key brand.json allows works (`brand-500`, `default`); object keys are quoted where needed. Named exports in tokens.js use safe identifiers: other keys are camelCased (`brand-500` -> `brand500`, `brand-primary` -> `brandPrimary`), reserved words and the names `colors`, `fonts` and `Object` get a trailing `_` (`default` -> `default_`, `Object` -> `Object_`), and a name that is already taken gets another `_`. `colors['brand-500']` always works with the original key, and tokens.d.ts marks each renamed export with its key.
 - Figma body: a `palette` collection of COLOR variables (`{ r, g, b, a }` from 0 to 1) and a `typography` collection of STRING variables holding the first family of each stack, each collection with one mode named `default`. To apply it: `curl -X POST -H "X-Figma-Token: $FIGMA_TOKEN" -H "Content-Type: application/json" --data @dist/tokens/figma-variables.json https://api.figma.com/v1/files/<file_key>/variables`. Figma allows this endpoint only for full members of Enterprise orgs, with a token that has the `file_variables:write` scope. Every change is a CREATE, so posting twice duplicates the collections.
 - Empty typography values are skipped in every output. Every value is escaped for its format, so a brand.json value cannot break out of a string or a declaration.

@@ -4,8 +4,13 @@
  */
 import { GENERATED_BY, exportNames, fontEntries, jsString, paletteEntries, propKey } from './shared.mjs';
 
-/** Names of the object exports; a palette key with one of these names gets a trailing `_`. */
-export const OBJECT_EXPORTS = ['colors', 'fonts'];
+/**
+ * Names a palette export cannot take, so a key with one of them gets a
+ * trailing `_`: the object exports, and `Object`, the global the module body
+ * calls (`Object.freeze`). An `export const Object` would shadow that global
+ * while still uninitialized, and importing tokens.js would throw.
+ */
+export const OBJECT_EXPORTS = ['colors', 'fonts', 'Object'];
 
 /**
  * The values tokens.js exports and tokens.d.ts declares, computed once so the
@@ -30,7 +35,7 @@ export function tokenModule(cfg) {
  * - `colors`: frozen object of every palette entry, keyed exactly as in brand.json
  * - `fonts`: frozen object of CSS font-family lists, keyed by typography slot
  * - one `export const` per palette entry, named by exportNames()
- *   (`bg`, `brand-500` -> `brand500`, `default` -> `default_`).
+ *   (`bg`, `brand-500` -> `brand500`, `default` -> `default_`, `Object` -> `Object_`).
  *
  * @param {object} cfg - Brand config (palette, typography).
  * @returns {string} JavaScript file content.

@@ -35,6 +35,23 @@ describe('emitJs', () => {
     expect(mod.fonts).toEqual({});
   });
 
+  it('renames a palette key named Object so the module still loads', async () => {
+    // `export const Object` would shadow the global the module calls (Object.freeze)
+    // and throw a ReferenceError (TDZ) on import.
+    const mod = await load(emitJs({ palette: { bg: '#000', Object: '#123456' } }));
+    expect(mod.colors).toEqual({ bg: '#000', Object: '#123456' });
+    expect(mod.Object_).toBe('#123456');
+    expect(Object.hasOwn(mod, 'Object')).toBe(false);
+    expect(Object.isFrozen(mod.colors)).toBe(true);
+  });
+
+  it('gives Object another underscore when Object_ is also a palette key', async () => {
+    const mod = await load(emitJs({ palette: { Object: '#123456', Object_: '#abcdef' } }));
+    expect(mod.Object__).toBe('#123456');
+    expect(mod.Object_).toBe('#abcdef');
+    expect(mod.colors).toEqual({ Object: '#123456', Object_: '#abcdef' });
+  });
+
   it('cannot be broken out of by a key or value', async () => {
     const key = "x'; globalThis.pwned = 1; '";
     const mod = await load(emitJs({ palette: { [key]: '#fff' }, typography: { body: "a'; globalThis.pwned = 2; '</script>" } }));

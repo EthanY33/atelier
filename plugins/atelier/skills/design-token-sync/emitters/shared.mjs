@@ -16,14 +16,21 @@ export const FONT_SLOTS = ['display', 'body', 'mono'];
 export const SLOT_GENERIC = { display: 'sans-serif', body: 'sans-serif', mono: 'monospace' };
 
 /**
- * Keywords left unquoted in a font-family list. Quoting a generic family
- * turns it into a family name that matches no font.
+ * Vendor system-font keywords. They stay unquoted (Safari ignores
+ * -apple-system once quoted), but they are not CSS generic families: a
+ * browser that does not know them skips them, so they are no fallback.
+ */
+const VENDOR_KEYWORDS = new Set(['-apple-system', 'blinkmacsystemfont']);
+
+/**
+ * Keywords left unquoted in a font-family list: the CSS generic families and
+ * the vendor keywords. Quoting a generic family turns it into a family name
+ * that matches no font.
  */
 const GENERIC_FAMILIES = new Set([
   'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui',
   'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'math', 'emoji', 'fangsong',
-  // Vendor system-font keywords; Safari ignores -apple-system once quoted.
-  '-apple-system', 'blinkmacsystemfont',
+  ...VENDOR_KEYWORDS,
 ]);
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
@@ -173,6 +180,18 @@ export function parseFontFamilies(value) {
     families.push({ name, generic: GENERIC_FAMILIES.has(name.toLowerCase()) });
   }
   return families;
+}
+
+/**
+ * True when the family is a CSS generic family that every browser resolves:
+ * an unquoted generic keyword that is not a vendor system-font keyword.
+ * `generic` from parseFontFamilies means "left unquoted", which also covers
+ * -apple-system and BlinkMacSystemFont.
+ * @param {{ name: string, generic: boolean }} family
+ * @returns {boolean}
+ */
+export function isCssGeneric(family) {
+  return family.generic && !VENDOR_KEYWORDS.has(family.name.toLowerCase());
 }
 
 /**

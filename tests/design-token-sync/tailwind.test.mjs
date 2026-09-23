@@ -64,6 +64,27 @@ describe('emitTailwind', () => {
     expect(cfg.theme.extend.fontFamily.body).toEqual(['"Silkscreen"', '"Courier New"', 'monospace']);
   });
 
+  it('appends a generic after vendor system-font keywords, which are not CSS generics', async () => {
+    const cfg = await load(emitTailwind({ palette: { bg: '#000' }, typography: {
+      display: 'BlinkMacSystemFont, Inter',
+      body: '-apple-system, BlinkMacSystemFont, "Segoe UI Variable"',
+      mono: '-apple-system, Menlo',
+    } }));
+    const { fontFamily } = cfg.theme.extend;
+    // Vendor keywords stay bare (Safari ignores a quoted -apple-system).
+    expect(fontFamily.display).toEqual(['BlinkMacSystemFont', '"Inter"', 'sans-serif']);
+    expect(fontFamily.body).toEqual(['-apple-system', 'BlinkMacSystemFont', '"Segoe UI Variable"', 'sans-serif']);
+    expect(fontFamily.mono).toEqual(['-apple-system', '"Menlo"', 'monospace']);
+  });
+
+  it('does not append a generic after system-ui or a ui-* generic', async () => {
+    const cfg = await load(emitTailwind({ palette: { bg: '#000' }, typography: {
+      body: '-apple-system, system-ui', mono: 'Menlo, ui-monospace',
+    } }));
+    expect(cfg.theme.extend.fontFamily.body).toEqual(['-apple-system', 'system-ui']);
+    expect(cfg.theme.extend.fontFamily.mono).toEqual(['"Menlo"', 'ui-monospace']);
+  });
+
   it('escapes quotes and backslashes in typography values without breaking out of the string', async () => {
     // A hand-edited brand.json can put anything in typography.
     const value = "Arial', '\"]}; sideEffect = 1; ['";

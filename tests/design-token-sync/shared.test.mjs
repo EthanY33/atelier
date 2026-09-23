@@ -6,6 +6,7 @@ import {
   exportNames,
   fontEntries,
   hexToRgba,
+  isCssGeneric,
   isSafeIdentifier,
   jsString,
   parseFontFamilies,
@@ -47,6 +48,21 @@ break", "\0"`).map((f) => f.name)).toEqual(['A"B', "C'D", 'Ax', 'linebreak', '\u
   it('closes a quote left open at the end, and treats stray quotes literally', () => {
     expect(parseFontFamilies('"Geist').map((f) => f.name)).toEqual(['Geist']);
     expect(parseFontFamilies('Foo "Bar"').map((f) => f.name)).toEqual(['Foo "Bar"']);
+  });
+
+  it('isCssGeneric is true for bare CSS generics, not vendor keywords or quoted names', () => {
+    const flags = parseFontFamilies('serif, Monospace, system-ui, ui-rounded, -apple-system, BlinkMacSystemFont, "sans-serif", Inter')
+      .map((f) => [f.name, isCssGeneric(f)]);
+    expect(flags).toEqual([
+      ['serif', true],
+      ['Monospace', true],
+      ['system-ui', true],
+      ['ui-rounded', true],
+      ['-apple-system', false],
+      ['BlinkMacSystemFont', false],
+      ['sans-serif', false],
+      ['Inter', false],
+    ]);
   });
 
   it('drops empty entries and empty quoted names', () => {
