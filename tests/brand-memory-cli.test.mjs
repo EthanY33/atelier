@@ -369,15 +369,85 @@ describe('brand CLI: real processes', () => {
     expect(r.stdout).toContain('palette.bg: must be a hex color');
   });
 
-  it('importing the module under node -e does not run the CLI', () => {
-    const script = [
-      "import { pathToFileURL } from 'node:url';",
-      "const m = await import(pathToFileURL(process.argv[1] + '/index.mjs').href);",
-      "console.log(typeof m.loadBrand, typeof m.runCli);",
-    ].join('\n');
-    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script, dirname(ENTRY)], { encoding: 'utf8' });
-    expect(r.status).toBe(0);
-    expect(r.stdout).toBe('function function\n');
-    expect(r.stderr).toBe('');
+  it('importing the module under node -e does not run the CLI, even with index.mjs as argv[1]', () => {
+    const script =
+      "const { pathToFileURL } = await import('node:url'); " +
+      'const m = await import(pathToFileURL(process.argv[1]).href); ' +
+      'console.log(typeof m.loadBrand, typeof m.runCli);';
+    // argv[1] is index.mjs itself in the SKILL.md form; the eval flag spellings all count.
+    for (const evalFlag of [['-e', script], ['--eval', script], [`--eval=${script}`]]) {
+      const r = spawnSync(process.execPath, ['--input-type=module', ...evalFlag, ENTRY], { encoding: 'utf8' });
+      expect(r.stderr, evalFlag[0]).toBe('');
+      expect(r.status, evalFlag[0]).toBe(0);
+      expect(r.stdout).toBe('function function\n');
+    }
+    // CommonJS eval (-p cannot take ESM input) with a dynamic import.
+    const cjs = "import(require('node:url').pathToFileURL(process.argv[1]).href).then((m) => console.log(typeof m.runCli)) && 'printed'";
+    const p = spawnSync(process.execPath, ['-p', cjs, ENTRY], { encoding: 'utf8' });
+    expect(p.stderr).toBe('');
+    expect(p.status).toBe(0);
+    expect(p.stdout.split('\n').filter(Boolean).sort()).toEqual(['function', 'printed']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SKILL.md: the JS API line and the flag list
+// ---------------------------------------------------------------------------
+const SKILL_DIR = dirname(ENTRY);
+const SKILL_MD = () => readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
+const API_LINE_RE = /^node --input-type=module -e "([^"\r\n]*)" "\$\{CLAUDE_SKILL_DIR\}\/index\.mjs"$/m;
+
+/** A POSIX shell to run the SKILL.md line through, or undefined when there is none. */
+function posixShell() {
+  if (process.platform !== 'win32') return existsSync('/bin/sh') ? '/bin/sh' : undefined;
+  const roots = [process.env.ProgramFiles, process.env.ProgramW6432, 'C:\\Program Files'].filter(Boolean);
+  return roots.map((r) => join(r, 'Git', 'bin', 'bash.exe')).find((p) => existsSync(p));
+}
+
+function expectApiLineEffect(r) {
+  expect(r.stderr).toBe('');
+  expect(r.status).toBe(0);
+  expect(r.stdout).toMatch(/^\[[\s\S]*'brand\.product'[\s\S]*'deploy\.target'[\s\S]*\]\n$/);
+  expect(loadBrand(tmp).palette.accent).toBe('#67e8f9');
+}
+
+describe('SKILL.md', () => {
+  it('has the cross-platform JS API line, with nothing a shell expands inside the double quotes', () => {
+    const m = SKILL_MD().match(API_LINE_RE);
+    expect(m, 'JS API line not found in SKILL.md').not.toBeNull();
+    expect(m[1]).toMatch(/^const \{ pathToFileURL \} = await import\('node:url'\); const m = await import\(pathToFileURL\(process\.argv\[1\]\)\.href\); /);
+    expect(m[1]).not.toMatch(/["$`\\!]/);
+  });
+
+  it('the JS API line runs with the real absolute skill path and does not start the CLI', () => {
+    newTmp();
+    saveBrand(tmp, base());
+    const code = SKILL_MD().match(API_LINE_RE)[1];
+    expectApiLineEffect(spawnSync(process.execPath, ['--input-type=module', '-e', code, join(SKILL_DIR, 'index.mjs')], { cwd: tmp, encoding: 'utf8' }));
+  });
+
+  const sh = posixShell();
+  it.skipIf(!sh)('the JS API line runs as written through a POSIX shell (Git Bash on Windows)', () => {
+    newTmp();
+    saveBrand(tmp, base());
+    // Claude Code substitutes the placeholder with the native absolute path
+    // (backslashes on Windows). Pin node to the one running the tests.
+    const line = SKILL_MD()
+      .match(API_LINE_RE)[0]
+      .replace('${CLAUDE_SKILL_DIR}', SKILL_DIR)
+      .replace(/^node /, `"${process.execPath}" `);
+    expectApiLineEffect(spawnSync(sh, ['-c', line], { cwd: tmp, encoding: 'utf8' }));
+  });
+
+  it('every CLI flag SKILL.md mentions is in --help, and every --help flag is in SKILL.md', () => {
+    newTmp();
+    const help = cli(['--help']).stdout;
+    const flags = (text) => new Set([...text.matchAll(/(?<![\w-])(--[a-z][a-z-]*|-h)\b/g)].map((x) => x[1]));
+    const inDoc = flags(SKILL_MD());
+    inDoc.delete('--input-type'); // a node flag in the JS API line
+    const inHelp = flags(help);
+    expect([...inDoc].filter((f) => !inHelp.has(f))).toEqual([]);
+    expect([...inHelp].filter((f) => !inDoc.has(f))).toEqual([]);
+    expect(inHelp.size).toBeGreaterThanOrEqual(15);
   });
 });

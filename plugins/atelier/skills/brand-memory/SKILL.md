@@ -20,21 +20,15 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand validate
 node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" brand path
 ```
 
-JS API (synchronous; pass the skill dir as an argument so the import also works with Windows paths):
+JS API (synchronous). The module path is passed as an argument and turned into a file URL, so the same line works on Windows, macOS and Linux. This one sets the accent in `./.atelier/brand.json` and prints what the audit still misses:
 
 ```bash
-node --input-type=module -e "
-import { pathToFileURL } from 'node:url';
-const { loadBrand, setPath, saveBrand, auditBrand } = await import(pathToFileURL(process.argv[1] + '/index.mjs').href);
-const cfg = setPath(loadBrand(process.cwd()), 'palette.accent', '#67e8f9');
-saveBrand(process.cwd(), cfg);
-console.log(auditBrand(cfg).missing);
-" "${CLAUDE_SKILL_DIR}"
+node --input-type=module -e "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href); const cfg = m.setPath(m.loadBrand(process.cwd()), 'palette.accent', '#67e8f9'); m.saveBrand(process.cwd(), cfg); console.log(m.auditBrand(cfg).missing);" "${CLAUDE_SKILL_DIR}/index.mjs"
 ```
 
 - `loadBrand(root)` returns the validated object. Throws when the file is missing, is not valid JSON, or fails the schema; `err.code` is `BRAND_NOT_FOUND`, `BRAND_INVALID` (with `err.errors`) or `BRAND_UNREADABLE`, and the message names the file. A UTF-8 or UTF-16 BOM is accepted.
-- `saveBrand(root, cfg)` returns nothing. Validates first and throws `invalid brand config: ...` without writing; otherwise writes 2-space JSON plus a trailing newline.
-- `initBrand(root, { studio, bodyFont, primaryColor, product?, voice?, accent?, displayFont?, monoFont?, deployTarget?, withSchema?, overwrite? })` validates everything, writes once, returns the object. `voice` may be a comma string. `accent` goes to `palette.accent`, `deployTarget` to `deploy.target`. `withSchema: true` adds `$schema`. `overwrite: false` throws if the file exists.
+- `saveBrand(root, cfg)` returns nothing. Validates first and throws `invalid brand config: ...` (`BRAND_INVALID`) without writing; otherwise writes 2-space JSON plus a trailing newline, or throws `BRAND_UNWRITABLE`.
+- `initBrand(root, { studio, bodyFont, primaryColor, product?, voice?, accent?, displayFont?, monoFont?, deployTarget?, withSchema?, overwrite? })` validates everything, writes once, returns the object. `voice` may be a comma string. `accent` goes to `palette.accent`, `deployTarget` to `deploy.target`. `withSchema: true` adds `$schema`. `overwrite: false` throws `BRAND_EXISTS` if the file exists.
 - `validateBrand(cfg)` returns `{ valid, errors }` without touching disk.
 - `getPath(obj, 'a.b')` returns the value or `undefined`; follows own properties only.
 - `setPath(obj, 'a.b', value)` returns a deep clone with the value set and creates missing objects. Throws on `__proto__`, `constructor` or `prototype` segments, empty segments, and non-index keys inside arrays.
@@ -43,6 +37,7 @@ console.log(auditBrand(cfg).missing);
 
 ## Options
 
+- Every command: `--root <dir>` (project root that holds `.atelier/`, default the current directory), `-h`/`--help` (prints usage, exits 0).
 - `init`: `--studio`, `--product`, `--voice <a,b,c>`, `--bg <hex>`, `--accent <hex>`, `--body-font`, `--display-font`, `--mono-font`, `--deploy <target>`, `--force`. Omitted `--studio`, `--bg`, `--body-font` default to the root folder name, `#111111` and `system-ui, sans-serif`, and the output says so. Refuses to overwrite without `--force`. Writes a `$schema` key for editor autocomplete.
 - `get <path>`: `--raw` prints a string without JSON quotes.
 - `set <path> <value>`: the value is parsed as JSON when it is valid JSON, else kept as a string. String fields keep numbers as text, array fields (`brand.voice`, `deploy.stores`) split a comma list, palette values may omit `#`. Extra words are joined with spaces.
@@ -65,7 +60,7 @@ Audit checks: `brand.product`, `brand.voice`, `typography.display`, `logos.mark`
 
 ## Exit codes
 
-- `0`: success. `audit` always exits 0.
+- `0`: success, including `--help`. `audit` always exits 0.
 - `1`: `validate` found errors (including malformed JSON).
 - `2`: usage error, missing or unreadable brand.json, `get` on an unset path, or `init`/`set` rejected (file exists, invalid value, forbidden path).
 
