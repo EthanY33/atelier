@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>atelier 1.0 trailer</title>
+<!--
+  Authored at 1280x720, captured at 1920x1080 (deviceScaleFactor 1.5) and 60 fps
+  by scripts/trailer/build.mjs. Every visible state is a pure function of the
+  virtual time t passed to window.__atelierAdvance(t); nothing reads the wall
+  clock. Open the file over HTTP without the recorder to preview in real time.
+-->
+<style>
+  @font-face { font-family: 'Instrument Serif'; src: url(fonts/InstrumentSerif-Regular.ttf); }
+  @font-face { font-family: 'Instrument Serif'; font-style: italic; src: url(fonts/InstrumentSerif-Italic.ttf); }
+  @font-face { font-family: 'Geist'; src: url(fonts/Geist.ttf); font-weight: 100 900; }
+  @font-face { font-family: 'Geist Mono'; src: url(fonts/GeistMono.ttf); font-weight: 100 900; }
+  :root {
+    --bg: #0e0c15; --surface: #17141f; --surface2: #211c2d; --line: #2e2840; --grid: #1a1724;
+    --text: #f4f1de; --muted: #9c97b0; --dim: #6f6a86;
+    --terra: #e07a5f; --sage: #81b29a; --sand: #f2cc8f; --lilac: #b6a4e6; --red: #ef6b73;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1280px; height: 720px; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'Geist', system-ui, sans-serif; }
+  .stage { position: relative; width: 1280px; height: 720px; overflow: hidden;
+    background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 64px 64px; background-position: 32px 32px; }
+  .glow { position: absolute; border-radius: 50%; filter: blur(120px); pointer-events: none; }
+  .mono { font-family: 'Geist Mono', monospace; }
+
+  /* header */
+  .hdr { position: absolute; left: 40px; right: 40px; top: 22px; height: 36px; display: flex; align-items: center; justify-content: space-between; }
+  .word { font: italic 400 34px 'Instrument Serif', serif; letter-spacing: -.01em; }
+  .word i { color: var(--terra); font-style: normal; }
+  .ver { margin-left: 12px; font: 500 12px 'Geist Mono', monospace; color: var(--terra); border: 1px solid rgba(224,122,95,.55); background: rgba(224,122,95,.12); border-radius: 999px; padding: 3px 9px; vertical-align: 8px; }
+  .repo { font: 400 13px 'Geist Mono', monospace; color: var(--muted); }
+  .repo b { color: var(--text); font-weight: 500; }
+
+  /* desktop intro */
+  .desk { position: absolute; inset: 0; }
+  .appicon { position: absolute; left: 560px; top: 280px; width: 96px; text-align: center; }
+  .appicon .tile { width: 76px; height: 76px; margin: 0 auto; border-radius: 18px; background: linear-gradient(160deg, #2a2438, #16131f); border: 1px solid #3a3350; box-shadow: 0 18px 40px rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; font: 600 26px 'Geist Mono', monospace; color: var(--terra); }
+  .appicon .lbl { margin-top: 10px; font: 500 13px 'Geist', sans-serif; color: var(--text); }
+  .cursor { position: absolute; width: 22px; height: 28px; }
+  .ripple { position: absolute; width: 60px; height: 60px; border-radius: 50%; border: 2px solid rgba(244,241,222,.7); }
+
+  /* terminal */
+  .term { position: absolute; left: 40px; top: 76px; width: 704px; height: 612px; border-radius: 14px; background: rgba(23,20,31,.96); border: 1px solid var(--line); box-shadow: 0 30px 80px rgba(0,0,0,.55); overflow: hidden; transform-origin: 560px 250px; }
+  .bar { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 16px; background: var(--surface2); border-bottom: 1px solid var(--line); }
+  .bar i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .bar .ttl { margin-left: 12px; font: 400 13.5px 'Geist Mono', monospace; color: var(--muted); }
+  .body { padding: 18px 22px; font: 400 16.5px/1.7 'Geist Mono', monospace; white-space: pre; color: var(--text); }
+  .body .pr { color: var(--terra); }
+  .body .ok { color: var(--sage); }
+  .body .dim { color: var(--dim); }
+  .body .nm { color: var(--text); }
+  .body .tool { color: var(--lilac); }
+  .body .bad { color: var(--red); }
+  .body .sev.critical { color: var(--red); }
+  .body .sev.serious { color: var(--sand); }
+  .body b { font-weight: 600; }
+  .caret { display: inline-block; width: 10px; height: 20px; background: var(--terra); vertical-align: -3px; margin-left: 1px; }
+
+  /* right-hand panels */
+  .side { position: absolute; left: 772px; top: 76px; width: 468px; height: 612px; }
+  .panel { position: absolute; left: 0; top: 0; width: 468px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 24px 60px rgba(0,0,0,.45); }
+  .cap { font: 500 11px 'Geist Mono', monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+
+  .pkg { padding: 22px 24px; }
+  .pkg h3 { font: 400 46px/1 'Instrument Serif', serif; margin: 10px 0 4px; }
+  .pkg .sub { font: 400 14px 'Geist', sans-serif; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .chip { font: 400 13.5px 'Geist Mono', monospace; padding: 8px 12px; border-radius: 9px; background: var(--surface2); border: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+  .chip i { width: 4px; height: 16px; border-radius: 2px; display: inline-block; }
+
+  .og { position: absolute; width: 468px; height: 246px; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); box-shadow: 0 22px 50px rgba(0,0,0,.5); }
+  .og img { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .og .fname { display: none; position: absolute; left: 10px; bottom: -26px; font: 400 11.5px 'Geist Mono', monospace; color: var(--muted); }
+
+  .diff { padding: 0; overflow: hidden; width: 248px; }
+  #p-icons { width: 206px; }
+  .diff .dh { padding: 10px 16px; background: var(--surface2); border-bottom: 1px solid var(--line); font: 400 12.5px 'Geist Mono', monospace; color: var(--muted); }
+  .diff .dl { font: 400 13px/2 'Geist Mono', monospace; padding: 0 14px; white-space: pre; }
+  .diff .k { color: var(--lilac); } .diff .s { color: var(--sand); } .diff .p { color: var(--dim); }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 8px; }
+
+  .icons { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; }
+  .icap { }
+  .ico { position: relative; }
+  .ico img { position: absolute; left: 0; top: 0; }
+  .ico .lab { position: absolute; left: 0; right: 0; text-align: center; font: 400 11px 'Geist Mono', monospace; color: var(--muted); }
+
+  .report { padding: 20px 22px; }
+  .report h4 { font: 400 34px/1.1 'Instrument Serif', serif; margin: 8px 0 14px; }
+  .rt { width: 100%; border-collapse: collapse; font: 400 14.5px 'Geist Mono', monospace; }
+  .rt td { padding: 9px 0; border-top: 1px solid var(--line); }
+  .rt td.n { text-align: right; width: 70px; }
+  .badge { display: inline-block; margin-top: 16px; font: 500 13px 'Geist Mono', monospace; padding: 6px 12px; border-radius: 999px; }
+
+  .ci { padding: 18px 20px; }
+  .ci h4 { font: 400 28px/1.1 'Instrument Serif', serif; margin: 8px 0 12px; }
+  .job { display: flex; align-items: center; gap: 10px; font: 400 12.5px/1 'Geist Mono', monospace; padding: 7px 0; border-top: 1px solid var(--line); color: var(--text); }
+  .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; position: relative; }
+
+  /* endcard */
+  .end { position: absolute; inset: 0; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .end .big { font: italic 400 150px/1 'Instrument Serif', serif; letter-spacing: -.02em; }
+  .end .big i { color: var(--terra); font-style: normal; }
+  .end .tag { margin-top: 14px; font: 400 22px 'Geist', sans-serif; color: var(--muted); }
+  .end .cmd { margin-top: 30px; font: 400 22px 'Geist Mono', monospace; padding: 14px 22px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+  .end .cmd span { color: var(--terra); margin-right: 14px; }
+  .end .url { margin-top: 18px; font: 400 15px 'Geist Mono', monospace; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="glow" style="width:520px;height:520px;left:660px;top:-40px;background:#e07a5f;opacity:.14"></div>
+  <div class="glow" style="width:520px;height:520px;left:-160px;top:380px;background:#b6a4e6;opacity:.10"></div>
+
+  <div class="hdr" id="hdr">
+    <div><span class="word">atelier<i>.</i></span><span class="ver">1.0</span></div>
+    <div class="repo">github.com/<b>EthanY33/atelier</b></div>
+  </div>
+
+  <div class="desk" id="desk">
+    <div class="appicon"><div class="tile">&gt;_</div><div class="lbl">Claude Code</div></div>
+  </div>
+
+  <div class="term" id="term">
+    <div class="bar"><i style="background:#ef6b73"></i><i style="background:#f2cc8f"></i><i style="background:#81b29a"></i><span class="ttl">claude · ~/sites/kiln</span></div>
+    <div class="body" id="tbody"></div>
+  </div>
+
+  <div class="side" id="side">
+    <div class="panel card pkg" id="p-pkg">
+      <div class="cap">Installed</div>
+      <h3>atelier 1.0.0</h3>
+      <div class="sub">8 skills · atelier CLI · GitHub Action</div>
+      <div class="chips" id="chips"></div>
+    </div>
+
+    <div class="panel" id="p-cards"></div>
+
+    <div class="panel card diff" id="p-diff">
+      <div class="dh">.atelier/brand.json</div>
+      <div class="dl"><span class="p">"palette": {</span></div>
+      <div class="dl" id="bgline"></div>
+      <div class="dl">  <span class="k">"fg"</span><span class="p">: </span><span class="s">"#f4f1de"</span><span class="p">,</span></div>
+      <div class="dl"><span class="p">}</span></div>
+    </div>
+
+    <div class="panel card" id="p-icons"><div class="icons" id="icons"></div></div>
+
+    <div class="panel card report" id="p-report">
+      <div class="cap">runtime-ux-audit · site/index.html</div>
+      <h4 id="rh">4 blocking findings</h4>
+      <table class="rt" id="rt"></table>
+      <div class="badge" id="rbadge"></div>
+    </div>
+
+    <div class="panel card ci" id="p-ci">
+      <div class="cap">CI · main</div>
+      <h4 id="cih">12 checks</h4>
+      <div id="jobs"></div>
+    </div>
+  </div>
+
+  <svg class="cursor" id="cursor" viewBox="0 0 22 28"><path d="M2 2 L2 22 L7.5 17 L11 25.5 L14.5 24 L11 15.5 L18.5 15.5 Z" fill="#f4f1de" stroke="#0e0c15" stroke-width="1.6" stroke-linejoin="round"/></svg>
+  <div class="ripple" id="ripple"></div>
+
+  <div class="end" id="end">
+    <div class="big">atelier<i>.</i></div>
+    <div class="tag">One brand file. Eight skills. Everything in sync.</div>
+    <div class="cmd"><span>&gt;</span>/plugin install atelier@atelier</div>
+    <div class="url">github.com/EthanY33/atelier</div>
+  </div>
+</div>
+
+<script type="module">
+import { buildTimeline, FINDINGS, CI_JOBS } from './timeline.mjs';
+
+const TL = buildTimeline();
+window.__atelierDuration = TL.duration;
+const $ = (id) => document.getElementById(id);
+const clamp = (x) => Math.max(0, Math.min(1, x));
+const ease = (x) => 1 - Math.pow(1 - clamp(x), 3);
+const easeIO = (x) => { x = clamp(x); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const prog = (t, a, d) => clamp((t - a) / d);
+
+const SKILLS = [['brand-memory','terra'],['design-token-sync','terra'],['og-card-generator','sand'],['brand-asset-pipeline','sand'],['responsive-image-pipeline','lilac'],['html-to-video','lilac'],['accessibility-design-audit','sage'],['runtime-ux-audit','sage']];
+const COL = { terra: '#e07a5f', sand: '#f2cc8f', lilac: '#b6a4e6', sage: '#81b29a' };
+$('chips').innerHTML = SKILLS.map(([s, c]) => `<div class="chip"><i style="background:${COL[c]}"></i>${s}</div>`).join('');
+
+const OGS = ['launch-week', 'brand-refresh', 'field-notes'];
+$('p-cards').innerHTML = OGS.map((s, i) => `<div class="og" id="og${i}"><img src="assets/og-a-${s}.png"><img id="ogb${i}" src="assets/og-b-${s}.png"><div class="fname">og/${s}.png</div></div>`).join('');
+
+$('icons').innerHTML = '<div class="ico" style="width:96px;height:96px"><img src="assets/icon-a-180.png" width="96" height="96" style="border-radius:21px"><img id="icb0" src="assets/icon-b-180.png" width="96" height="96" style="border-radius:21px"></div><div class="icap"><div class="cap">brand-asset-pipeline</div><div class="mono" style="font-size:12px;margin-top:8px;color:#f4f1de">apple-touch-icon.png</div><div class="mono" style="font-size:11px;margin-top:4px;color:#6f6a86">180 x 180, on palette.bg</div></div>';
+
+const AREAS = [['Transitions', 1, 1], ['INP', 0, 0], ['Panels', 0, 0], ['Mobile', 0, 2]];
+$('rt').innerHTML = `<tr><td class="cap">Area</td><td class="n cap">Critical</td><td class="n cap">Serious</td></tr>` +
+  AREAS.map(([a, c, s], i) => `<tr><td>${a}</td><td class="n" id="rc${i}">${c}</td><td class="n" id="rs${i}">${s}</td></tr>`).join('');
+
+$('jobs').innerHTML = CI_JOBS.map((j, i) => `<div class="job"><span class="dot" id="jd${i}"></span><span>${j}</span></div>`).join('');
+
+// ---------- terminal ----------
+function terminalHtml(t) {
+  const lines = [];
+  let cur = null; // current prompt line: typed text
+  for (const e of TL.term) {
+    if (e.t > t) break;
+    if (e.kind === 'clear') { lines.length = 0; cur = null; }
+    else if (e.kind === 'prompt') cur = '';
+    else if (e.kind === 'char') cur = e.typed;
+    else if (e.kind === 'enter') { lines.push(`<span class="pr">›</span> ${esc(cur ?? '')}`); cur = null; }
+    else if (e.kind === 'line') lines.push(e.html);
+  }
+  const blink = Math.floor(t * 1.9) % 2 === 0;
+  if (cur !== null) lines.push(`<span class="pr">›</span> ${esc(cur)}${blink || cur.length ? '<span class="caret"></span>' : '<span class="caret" style="opacity:0"></span>'}`);
+  return lines.slice(-24).join('\n');
+}
+function esc(s) { return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+// Fade and lift a panel in at p.in, out at p.out.
+function panelState(name, t, dur = 0.45) {
+  const p = TL.panels[name];
+  if (!p) return 0;
+  const a = ease(prog(t, p.in, dur));
+  const b = 1 - ease(prog(t, p.out, 0.35));
+  return Math.min(a, b);
+}
+function place(el, x, y, o, s = 1) {
+  el.style.opacity = o;
+  el.style.transform = `translate(${x}px, ${y + (1 - o) * 18}px) scale(${s})`;
+  el.style.visibility = o <= 0.001 ? 'hidden' : 'visible';
+}
+
+function render(t) {
+  const M = TL.marks;
+
+  // intro: cursor glides from bottom right to the app icon, clicks, window opens
+  const glide = easeIO(prog(t, 0.15, 0.85));
+  const cx = 1180 + (598 - 1180) * glide, cy = 690 + (318 - 690) * glide;
+  const cursorOut = prog(t, M.open + 0.1, 0.25);
+  $('cursor').style.transform = `translate(${cx}px, ${cy}px) scale(${t > M.introClick && t < M.introClick + 0.12 ? 0.9 : 1})`;
+  $('cursor').style.opacity = 1 - cursorOut;
+  const rp = prog(t, M.introClick, 0.45);
+  $('ripple').style.opacity = rp > 0 && rp < 1 ? 1 - rp : 0;
+  $('ripple').style.transform = `translate(${cx - 30 + 6}px, ${cy - 30 + 6}px) scale(${0.3 + rp})`;
+  const open = easeIO(prog(t, M.open, 0.5));
+  $('desk').style.opacity = 1 - open;
+  const term = $('term');
+  term.style.opacity = open;
+  term.style.transform = `scale(${0.2 + 0.8 * open})`;
+  $('hdr').style.opacity = open;
+
+  $('tbody').innerHTML = terminalHtml(t);
+
+  // install package card
+  const pk = panelState('pkg', t);
+  place($('p-pkg'), 0, 24, pk);
+  [...$('chips').children].forEach((c, i) => { const o = ease(prog(t, TL.panels.pkg.in + 0.15 + i * 0.07, 0.3)); c.style.opacity = o; c.style.transform = `translateY(${(1 - o) * 8}px)`; });
+
+  // cards fan in, then recolor
+  const cardsOn = panelState('cards', t);
+  $('p-cards').style.visibility = cardsOn > 0.001 ? 'visible' : 'hidden';
+  $('p-cards').style.opacity = cardsOn;
+  const rec = easeIO(prog(t, M.recolor ?? 1e9, 0.7));
+  OGS.forEach((_, i) => {
+    const o = ease(prog(t, M.cards + i * 0.22, 0.45));
+    const el = $(`og${i}`);
+    const small = i > 0;
+    el.style.opacity = o;
+    el.style.width = small ? '228px' : '468px';
+    el.style.height = small ? '120px' : '246px';
+    el.style.left = small ? `${(i - 1) * 240}px` : '0px';
+    el.style.top = small ? '262px' : '0px';
+    el.style.transform = `translateY(${(1 - o) * 26}px) scale(${0.96 + 0.04 * o})`;
+    $(`ogb${i}`).style.opacity = prog(t, (M.recolor ?? 1e9) + i * 0.12, 0.5);
+  });
+
+  // brand.json diff, bottom right under the cards
+  const df = panelState('diff', t);
+  place($('p-diff'), 0, 400, df);
+  const ed = easeIO(prog(t, M.diffEdit ?? 1e9, 0.35));
+  const from = '#14110f', to = '#16305f';
+  $('bgline').innerHTML = ed < 0.5
+    ? `  <span class="sw" style="background:${from}"></span><span class="k">"bg"</span><span class="p">: </span><span class="s">"${from}"</span><span class="p">,</span>`
+    : `  <span class="sw" style="background:${to};outline:1px solid #3e5fa8"></span><span class="k">"bg"</span><span class="p">: </span><span class="s">"${to}"</span><span class="p">,</span>`;
+  $('bgline').style.background = ed > 0 && ed < 1 ? `rgba(242,204,143,${0.18 * (1 - Math.abs(ed - 0.5) * 2)})` : ed >= 1 ? 'rgba(129,178,154,.10)' : 'transparent';
+
+  // icons recolor (appear with the regenerate)
+  const ic = panelState('icons', t);
+  place($('p-icons'), 262, 400, ic);
+  $('icb0').style.opacity = prog(t, M.recolor + 0.25, 0.45);
+
+  // audit report
+  const rp2 = panelState('report', t);
+  place($('p-report'), 0, 40, rp2);
+  const pass = t >= (M.reportPass ?? 1e9) ? 1 : 0;
+  $('rh').textContent = pass > 0.5 ? 'Clean: 0 blocking findings' : '4 blocking findings';
+  AREAS.forEach(([, c, s], i) => {
+    const vc = pass > 0.5 ? 0 : c, vs = pass > 0.5 ? 0 : s;
+    const rc = $(`rc${i}`), rs = $(`rs${i}`);
+    rc.textContent = vc; rs.textContent = vs;
+    rc.style.color = vc ? '#ef6b73' : '#6f6a86';
+    rs.style.color = vs ? '#f2cc8f' : '#6f6a86';
+  });
+  const badge = $('rbadge');
+  badge.textContent = pass > 0.5 ? 'exit 0 · pass' : 'exit 1 · fails CI';
+  badge.style.color = pass > 0.5 ? '#81b29a' : '#ef6b73';
+  badge.style.background = pass > 0.5 ? 'rgba(129,178,154,.14)' : 'rgba(239,107,115,.14)';
+  badge.style.border = `1px solid ${pass > 0.5 ? 'rgba(129,178,154,.5)' : 'rgba(239,107,115,.5)'}`;
+
+  // CI checks
+  const ci = panelState('ci', t);
+  place($('p-ci'), 0, 20, ci);
+  CI_JOBS.forEach((_, i) => {
+    const g = prog(t, M.ci + 0.25 + i * 0.085, 0.18);
+    const d = $(`jd${i}`);
+    d.style.background = g >= 1 ? '#81b29a' : 'transparent';
+    d.style.border = `2px solid ${g >= 1 ? '#81b29a' : '#f2cc8f'}`;
+    d.style.boxShadow = g >= 1 ? '0 0 0 3px rgba(129,178,154,.18)' : 'none';
+  });
+  const allGreen = t >= M.ciDone + 0.25;
+  $('cih').textContent = allGreen ? '12 of 12 checks passed' : '12 checks';
+
+  // endcard
+  const en = easeIO(prog(t, M.end, 0.7));
+  const end = $('end');
+  end.style.opacity = en;
+  end.style.visibility = en > 0.001 ? 'visible' : 'hidden';
+  end.firstElementChild.style.transform = `translateY(${(1 - en) * 16}px)`;
+}
+
+window.__atelierAdvance = (t) => render(t);
+window.__atelierReady = (async () => {
+  await document.fonts.ready;
+  await Promise.all([...document.images].map((img) => img.decode().catch(() => {})));
+  render(0);
+})();
+
+if (!window.__atelierDriven) {
+  await window.__atelierReady;
+  const t0 = performance.now();
+  const loop = () => { const t = ((performance.now() - t0) / 1000) % (TL.duration + 1); render(t); requestAnimationFrame(loop); };
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>

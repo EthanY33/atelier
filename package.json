@@ -23,7 +23,7 @@
     "check:versions": "node scripts/check-versions.mjs",
     "smoke:plugin": "node scripts/smoke-installed-plugin.mjs",
     "demo": "node plugins/atelier/bin/atelier demo --out .atelier-demo",
-    "demo:gif": "node scripts/build-demo-gif.mjs"
+    "demo:trailer": "node scripts/trailer/build.mjs"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "5.0.1",
