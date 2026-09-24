@@ -29,7 +29,7 @@ The repository holds two npm projects. The root one has Vitest and the repo scri
 | `npm run check:versions` | Version strings, README badge, CHANGELOG section and mirrored pins agree |
 | `npm run smoke:plugin` | Install the plugin the way Claude Code does, then run every skill from the copy |
 | `npm run demo` | `atelier demo` into `./.atelier-demo` |
-| `npm run demo:trailer` | Re-render the trailer (`demos/atelier-1.0-trailer.mp4`, with sound) and the README clip (`demos/overview.mp4`, `demos/overview.webp`); needs ffmpeg |
+| `npm run demo:trailer` | Re-render the trailer (`demos/atelier-trailer.mp4`, with sound) and the README clip (`demos/overview.mp4`, `demos/overview.webp`); needs ffmpeg |
 
 Run the CLI from the checkout with `node plugins/atelier/bin/atelier <command>`.
 

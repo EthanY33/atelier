@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Render the atelier 1.0 trailer soundtrack from the same timeline the scene
+ * Render the atelier trailer soundtrack from the same timeline the scene
  * uses, so keystrokes, enter presses and success tones land on the frames
  * that show them. Samples are CC0 (demos/trailer/samples/manifest.json).
  *

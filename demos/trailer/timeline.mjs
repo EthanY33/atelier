@@ -1,4 +1,4 @@
-// atelier 1.0 trailer timeline, shared by the scene (index.html) and the
+// atelier trailer timeline, shared by the scene (index.html) and the
 // audio renderer (scripts/trailer/render-audio.mjs) so every keystroke and
 // success tone lands on the frame that shows it.
 //
@@ -83,6 +83,9 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   const block = (html, gap = 0.06) => { ev('row', { html: '' }); row(html, gap); };
   const show = (name) => { panels[name] = { in: t, out: Infinity }; };
   const hide = (name) => { panels[name].out = t; };
+  // Rack focus: the outgoing panels blur out starting 0.25 s before the next rises.
+  const handoff = (names, to) => { for (const n of names) panels[n].out = panels[to].in - 0.25; };
+  const cueAt = (at, sample, gain) => cues.push({ t: at, sample, gain });
 
   // Type into the input box: one keycap per character, the spacebar for spaces.
   const type = (text, kind = 'char') => {
@@ -178,7 +181,6 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   submit('make social cards for every post in /blog', 'Forging');
   tool('Skill', 'og-card-generator', 0.3, true, ['Successfully loaded skill']);
   wait(0.25);
-  hide('pkg'); // the cards panel takes over as the og command finishes
   tool('Bash', 'atelier og blog/pages.json --out og', 0.55, true, [
     'Generated 3 OG card(s):',
     '  og/launch-week.png',
@@ -186,6 +188,7 @@ export function buildTimeline(seed = 0x5a7e11e7) {
     more(1),
   ]);
   show('cards');
+  handoff(['pkg'], 'cards');
   marks.cards = t;
   for (let i = 0; i < 3; i++) { cue('click-soft', LEVEL.click * 0.7); wait(0.22); }
   wait(0.2);
@@ -226,15 +229,13 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   // 5. runtime-ux-audit fails, then the fixes make it pass.
   type('/ux-audit site/index.html');
   submit('/ux-audit site/index.html', 'Cogitating');
-  hide('cards'); // the report takes over as the audit finishes
-  hide('diff');
-  hide('icons');
   tool('Bash', 'atelier ux site/index.html --out ux-report', 0.7, false, [
     '<span class="bad">Error: Exit code 1</span>',
     'Report written to: ux-report/ux-report.md',
     'Violations: critical 1, serious 3, moderate 3, minor 0',
   ]);
   show('report');
+  handoff(['cards', 'diff', 'icons'], 'report');
   marks.report = t;
   wait(0.35);
   tool('Read', 'ux-report/ux-report.md', 0.3, true, ['Read <b>98</b> lines']);
@@ -270,6 +271,7 @@ export function buildTimeline(seed = 0x5a7e11e7) {
     add(74, '.product:hover .quick-view,'),
     add(75, '.product:focus-within .quick-view {'),
   ]).doneAt;
+  for (let i = 0; i < 4; i++) cueAt(marks[`fix${i}`], 'click-soft', LEVEL.click * 0.55);
   wait(0.2);
   // The report panel flips on the same frame as the passing summary line.
   ev('row', { html: '' });
@@ -282,23 +284,22 @@ export function buildTimeline(seed = 0x5a7e11e7) {
   say('All four fixed. The audit passes (exit 0); 3 moderate notes remain.', 0.2);
   done('Brewed');
   wait(1.3);
-  hide('report');
-  wait(0.45); // let the report finish its 0.5 s exit before CI rises
 
-  // 6. CI: twelve jobs go green.
+  // 6. CI: twelve status marks spin, then land one by one (index.html: all
+  // run at ci + 0.3; job i is done at ci + 0.75 + 0.07 i; its check draws by
+  // + 0.36).
   show('ci');
+  handoff(['report'], 'ci');
   marks.ci = t;
-  // Job i turns green 0.25 + i * 0.085 s in, over 0.18 s (index.html).
-  marks.ciDone = t + 0.25 + (CI_JOBS.length - 1) * 0.085 + 0.18;
+  marks.ciDone = t + 0.75 + (CI_JOBS.length - 1) * 0.07 + 0.36;
   t = marks.ciDone;
   cue('click-soft', LEVEL.click);
   wait(0.85);
 
-  // 7. Endcard.
+  // 7. Endcard: the scene clears, the wordmark blurs in letter by letter, then
+  // the tagline, the install pill and the URL; hold on it.
   marks.end = t;
-  wait(0.7);
-  marks.endIn = t;
-  wait(1.5);
+  wait(4.0);
 
   return { duration: Math.ceil(t * 10) / 10, term, panels, marks, cues };
 }

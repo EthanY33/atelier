@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>atelier 1.0 trailer</title>
+<title>atelier trailer</title>
 <!--
   Authored at 1280x720, captured at 1920x1080 (deviceScaleFactor 1.5) and 60 fps
   by scripts/trailer/build.mjs. Every visible state is a pure function of the
@@ -23,7 +23,7 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 1280px; height: 720px; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'Geist', system-ui, sans-serif; }
   .stage { position: relative; width: 1280px; height: 720px; overflow: hidden; background: var(--bg); }
-  .glow { position: absolute; border-radius: 50%; filter: blur(120px); pointer-events: none; }
+  #bgfx { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; display: block; }
   .mono { font-family: 'Geist Mono', monospace; }
 
   /* header */
@@ -89,72 +89,102 @@
   .rb-frame { background: linear-gradient(var(--rb-row), var(--rb-row)), var(--bg); border: 1px solid transparent; border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255,255,255,.07); padding: 4px; }
   .rb-head { display: flex; align-items: center; justify-content: space-between; height: 40px; padding: 0 12px 0 14px; }
   .rb-head h2 { font: 600 14px/1 'Geist', sans-serif; letter-spacing: -.01em; color: var(--rb-head); }
-  .rb-head .aside { font: 500 12px/1 'Geist', sans-serif; color: var(--rb-sub); }
+  .rb-head .aside { font: 500 12px/1 'Geist', sans-serif; color: var(--rb-sub); display: flex; align-items: center; gap: 4px; }
   .rb-inner { background: var(--bg); border-radius: 10px; }
   .rb-row { height: 36px; border-radius: 7px; background: var(--rb-row); border: 1px solid transparent; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; gap: 10px; }
   .rb-label { font: 500 13px/1 'Geist', sans-serif; letter-spacing: .01em; color: var(--rb-label); white-space: nowrap; }
-  .rb-val { font: 500 13px/1 'Geist', sans-serif; color: #fff; display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .rb-val { font: 500 13px/1 'Geist', sans-serif; color: #fff; display: flex; align-items: center; gap: 7px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .rb-val.mono { font: 500 12.5px/1 'Geist Mono', monospace; }
   .rb-card { background: var(--surface); border: 1px solid var(--line); border-radius: 25px; text-align: center; }
-  .rb-chip { display: inline-block; font: 500 11.5px/1 'Geist Mono', monospace; padding: 4px 7px; border-radius: 6px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.09); color: #e4e4e7; white-space: nowrap; }
-  .rb-table { width: 100%; border-collapse: collapse; }
+  .rb-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   .rb-table th { font: 600 11.5px/1 'Geist', sans-serif; color: var(--rb-sub); text-align: left; padding: 11px 14px 10px; }
   .rb-table td { font: 400 13px/1 'Geist', sans-serif; color: #d4d4d8; padding: 0 14px; height: 33px; border-top: 1px solid rgba(255,255,255,.06); white-space: nowrap; }
   .rb-table td.nm { font: 500 12.5px/1 'Geist Mono', monospace; color: var(--rb-lilac); }
+  .rb-table td.where { font: 400 12px 'Geist Mono', monospace; color: #8b8b95; }
   .sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
-  .tog { width: 36px; height: 20px; border-radius: 999px; border: 1px solid rgba(255,255,255,.1); background: #37313f; position: relative; flex: none; }
-  .tog i { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #a1a1aa; box-shadow: 0 1px 2px rgba(0,0,0,.24); }
+
+  /* Counter: one clipped column of digits per place, masked top and bottom. */
+  .digits { display: inline-flex; overflow: hidden; vertical-align: top; -webkit-mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent); mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent); font-variant-numeric: tabular-nums; }
+  .digits .col { position: relative; width: .62em; display: inline-block; overflow: hidden; }
+  .digits .col span { position: absolute; left: 0; right: 0; text-align: center; }
+  /* Rotating Text roll: old characters lift out, new ones rise in, width springs. */
+  .roll { display: inline-block; position: relative; overflow: hidden; height: 1.4em; line-height: 1.4; margin: -.2em 0; vertical-align: top; -webkit-mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent); mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent); }
+  .roll > i { position: absolute; left: 0; top: 0; white-space: pre; font-style: normal; }
+  .roll > i > span { display: inline-block; }
 
   #p-pkg { top: 0; }
-  #p-pkg .rb-box { height: 150px; display: flex; align-items: center; justify-content: center; }
+  #p-pkg .rb-box { height: 150px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
   #p-pkg .rb-card { padding: 20px 30px; }
   #p-pkg .rb-card b { display: block; font: 700 22px/1.1 'Geist', sans-serif; letter-spacing: -.02em; color: #fff; }
-  #p-pkg .rb-card span { display: block; margin-top: 8px; font: 500 12.5px/1 'Geist', sans-serif; color: var(--rb-sub); }
-  #p-pkg .rb-card .state { display: inline-block; margin-top: 12px; font: 500 12px/1 'Geist Mono', monospace; padding: 6px 12px; border-radius: 7px; }
+  #p-pkg .rb-card > span { display: block; margin-top: 8px; font: 500 12.5px/1 'Geist', sans-serif; color: var(--rb-sub); }
+  #p-pkg .rb-card .state { display: inline-block; margin-top: 12px; font: 500 12px/1 'Geist Mono', monospace; padding: 6px 12px; border-radius: 7px; border: 1px solid; }
   #p-pkg .rb-frame { margin-top: 14px; }
 
   #p-cards { top: 0; height: 360px; }
   #p-cards .og { position: absolute; border-radius: 12px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 18px 40px rgba(0,0,0,.45); }
-  #p-cards .og img { position: absolute; inset: 0; width: 100%; height: 100%; }
-  #p-cards .icon { position: absolute; width: 76px; height: 76px; }
-  #p-cards .icon img { position: absolute; inset: 0; width: 76px; height: 76px; border-radius: 17px; }
+  #p-cards .og img, #p-cards .glare { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #p-cards .icon { position: absolute; width: 76px; height: 76px; border-radius: 17px; overflow: hidden; }
+  #p-cards .icon img { position: absolute; inset: 0; width: 76px; height: 76px; }
 
   #p-brand { top: 376px; }
   #p-brand .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px; }
   #p-brand .serif { font: 400 17px/1 'Instrument Serif', serif; }
 
   #p-report { top: 0; }
-  #p-report .rb-box { height: 150px; display: flex; align-items: center; justify-content: center; }
+  #p-report .rb-box { height: 150px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
   #p-report .rb-card { padding: 18px 28px; }
   #p-report .rb-card b { display: block; font: 700 22px/1.1 'Geist', sans-serif; letter-spacing: -.02em; color: #fff; }
-  #p-report .badge { display: inline-block; margin-top: 10px; font: 500 12px/1 'Geist Mono', monospace; padding: 6px 10px; border-radius: 7px; }
+  #p-report .badge { display: inline-block; margin-top: 10px; font: 500 12px/1 'Geist Mono', monospace; padding: 6px 10px; border-radius: 7px; border: 1px solid; }
   #p-report .rb-frame { margin-top: 14px; }
   #p-report .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding: 8px; }
   #p-report .rb-inner + .rb-inner { margin-top: 4px; }
-  #rtable { table-layout: fixed; }
+  /* SpringCheck: a box that springs full and draws a tick, the rule struck through. */
+  .ck { display: inline-flex; align-items: center; gap: 9px; }
+  .box { width: 15px; height: 15px; border-radius: 4.8px; position: relative; overflow: hidden; flex: none; display: grid; place-items: center; }
+  .box .ring { position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1.5px #d4d4d8; opacity: .28; }
+  .box .fill { position: absolute; inset: 0; border-radius: inherit; background: #4eba65; transform: scale(0); }
+  .box svg { position: relative; width: 68%; height: 68%; overflow: visible; }
+  .box path { fill: none; stroke: #0c0c0c; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  .strike { position: relative; display: inline-block; }
+  .strike i { position: absolute; left: 0; right: 0; top: 50%; height: 1.5px; margin-top: -.75px; border-radius: 2px; background: currentColor; transform-origin: left center; transform: scaleX(0); }
+  #p-report .sev { position: relative; display: inline-grid; justify-items: center; width: 72px; overflow: hidden; font: 500 11.5px/1 'Geist Mono', monospace; padding: 4px 0; border-radius: 6px; border: 1px solid; }
+  #p-report .sev span { grid-area: 1 / 1; }
+  #p-report .rb-table td.where { font-size: 11.5px; }
+  #rbadge .digits { margin-top: -1px; }
+  #rbadge .roll { top: 1px; }
 
   #p-ci { top: 0; }
   #p-ci .jobs { display: flex; flex-direction: column; gap: 4px; padding: 8px; }
-  #p-ci .rb-row { height: 30px; }
+  #p-ci .rb-row { height: 30px; justify-content: flex-start; }
   #p-ci .rb-label { font-size: 12.5px; color: #d4d4d8; }
+  /* StatusMark: pending dashes, a running arc, then a green ring with a check. */
+  .sm { width: 16px; height: 16px; flex: none; overflow: visible; color: #a1a1aa; }
+  .sm circle, .sm path { fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
+  .sm .trk { stroke: none; fill: currentColor; fill-opacity: 0; }
 
-  /* endcard */
-  .end { position: absolute; inset: 0; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; }
-  .end .big { font: italic 400 150px/1 'Instrument Serif', serif; letter-spacing: -.02em; }
-  .end .big i { color: var(--terra); font-style: normal; }
-  .end .tag { margin-top: 14px; font: 400 22px 'Geist', sans-serif; color: var(--muted); }
-  .end .cmd { margin-top: 30px; font: 400 22px 'Geist Mono', monospace; padding: 16px 26px; border-radius: 25px; background: var(--surface); border: 1px solid var(--line); }
+  /* endcard: the aurora keeps running underneath, so the card itself is clear */
+  .end { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; visibility: hidden; }
+  .end .big { position: relative; height: 150px; font: italic 400 150px/1 'Instrument Serif', serif; letter-spacing: -.02em; color: var(--text); }
+  .end .big span { position: absolute; top: 0; display: inline-block; white-space: pre; }
+  .end .big .dot { color: var(--terra); font-style: normal; }
+  .end .tag { margin-top: 14px; font: 400 22px 'Geist', sans-serif; color: var(--muted); display: flex; gap: .28em; }
+  .end .tag span { display: inline-block; }
+  /* StarBorder: two soft terra blobs sweep the pill's top and bottom edges. */
+  .sb { position: relative; margin-top: 30px; display: inline-block; border-radius: 26px; overflow: hidden; padding: 1.5px 0; }
+  .sb .blob { position: absolute; width: 300%; height: 50%; border-radius: 50%; background: radial-gradient(circle, var(--terra), transparent 10%); opacity: 0; }
+  .sb .blob.b { bottom: -12px; right: -250%; }
+  .sb .blob.t { top: -12px; left: -250%; }
+  .end .cmd { position: relative; z-index: 1; font: 400 22px 'Geist Mono', monospace; padding: 16px 26px; border-radius: 25px; background: var(--surface); border: 1px solid var(--line); }
   .end .cmd span { color: var(--terra); margin-right: 14px; }
-  .end .url { margin-top: 18px; font: 400 15px 'Geist Mono', monospace; color: var(--muted); }
+  .end .url { margin-top: 18px; font: 400 15px 'Geist Mono', monospace; color: var(--muted); display: inline-block; }
 </style>
 </head>
 <body>
 <div class="stage" id="stage">
-  <div class="glow" style="width:520px;height:520px;left:660px;top:-40px;background:#e07a5f;opacity:.14"></div>
-  <div class="glow" style="width:520px;height:520px;left:-160px;top:380px;background:#b6a4e6;opacity:.10"></div>
+  <canvas id="bgfx"></canvas>
 
   <div class="hdr" id="hdr">
-    <div><span class="word">atelier<i>.</i></span><span class="ver">1.0</span></div>
+    <div><span class="word">atelier<i>.</i></span><span class="ver">1.1</span></div>
     <div class="repo">github.com/<b>EthanY33/atelier</b></div>
   </div>
 
@@ -165,7 +195,7 @@
 
   <div class="side" id="side">
     <div class="panel" id="p-pkg">
-      <div class="rb-box"><div class="rb-card" id="pkgcard"><b>atelier 1.0.0</b><span>8 skills · atelier CLI · GitHub Action</span><em class="state" id="pkgstate"></em></div></div>
+      <div class="rb-box"><div class="rb-card" id="pkgcard"><b>atelier 1.1.0</b><span>8 skills · atelier CLI · GitHub Action</span><em class="state" id="pkgstate"></em></div></div>
       <div class="rb-frame" id="pkgframe">
         <div class="rb-head"><h2>Skills</h2><span class="aside">8 installed</span></div>
         <div class="rb-inner"><table class="rb-table" id="skills"></table></div>
@@ -180,7 +210,7 @@
     </div>
 
     <div class="panel" id="p-report">
-      <div class="rb-box"><div class="rb-card" id="rcard"><b id="rtitle">4 blocking findings</b><span class="badge" id="rbadge"></span></div></div>
+      <div class="rb-box"><div class="rb-card" id="rcard"><b id="rtitle"></b><span class="badge" id="rbadge"></span></div></div>
       <div class="rb-frame">
         <div class="rb-head"><h2>runtime-ux-audit</h2><span class="aside">site/index.html</span></div>
         <div class="rb-inner"><div class="stats" id="rstats"></div></div>
@@ -189,17 +219,16 @@
     </div>
 
     <div class="panel rb-frame" id="p-ci">
-      <div class="rb-head"><h2>atelier CI</h2><span class="aside" id="cih">main · 12 checks</span></div>
+      <div class="rb-head"><h2>atelier CI</h2><span class="aside" id="cih"></span></div>
       <div class="rb-inner"><div class="jobs" id="jobs"></div></div>
     </div>
   </div>
 
-
   <div class="end" id="end">
-    <div class="big">atelier<i>.</i></div>
-    <div class="tag">One brand file. Eight skills. Everything in sync.</div>
-    <div class="cmd"><span>&gt;</span>/plugin install atelier@atelier</div>
-    <div class="url">github.com/EthanY33/atelier</div>
+    <div class="big" id="big"></div>
+    <div class="tag" id="tag"><span>One brand file.</span><span>Eight skills.</span><span>Everything in sync.</span></div>
+    <div class="sb" id="sb"><div class="blob b" id="sbb"></div><div class="blob t" id="sbt"></div><div class="cmd" id="cmd"><span>&gt;</span>/plugin install atelier@atelier</div></div>
+    <div class="url" id="url">github.com/EthanY33/atelier</div>
   </div>
 </div>
 
@@ -223,16 +252,18 @@ const SKILLS = [
 $('skills').innerHTML = '<tr><th>Skill</th><th>Makes</th></tr>' +
   SKILLS.map(([n, d], i) => `<tr id="sk${i}"><td class="nm">${n}</td><td>${d}</td></tr>`).join('');
 
+// Cards are atelier's real output for the demo brand, before (a) and after (b)
+// palette.bg changes; a glare band wipes b over a.
 const OGS = ['launch-week', 'brand-refresh', 'field-notes'];
 const OG_BOX = [[16, 16, 436, 229], [16, 255, 170, 89], [196, 255, 170, 89]];
-$('p-cards').innerHTML = OGS.map((s, i) => { const [x, y, w, h] = OG_BOX[i]; return `<div class="og" id="og${i}" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"><img src="assets/og-a-${s}.png"><img id="ogb${i}" src="assets/og-b-${s}.png"></div>`; }).join('') +
-  '<div class="icon" id="ico" style="left:376px;top:261px"><img src="assets/icon-a-180.png"><img id="icb0" src="assets/icon-b-180.png"></div>';
+$('p-cards').innerHTML = OGS.map((s, i) => { const [x, y, w, h] = OG_BOX[i]; return `<div class="og" id="og${i}" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"><img src="assets/og-a-${s}.png"><img id="ogb${i}" src="assets/og-b-${s}.png"><div class="glare" id="gl${i}"></div></div>`; }).join('') +
+  '<div class="icon" id="ico" style="left:376px;top:261px"><img src="assets/icon-a-180.png"><img id="icb0" src="assets/icon-b-180.png"><div class="glare" id="glI"></div></div>';
 
-// Every value is the demo brand's real brand.json; palette.bg flips during the rebrand.
+// Every value is the demo brand's real brand.json; palette.bg rolls during the rebrand.
 const BG_FROM = '#14110f', BG_TO = '#16305f';
 const sw = (c, id = '') => `<span class="sw"${id ? ` id="${id}"` : ''} style="background:${c}"></span>`;
 $('brandgrid').innerHTML = [
-  `<div class="rb-row" id="bgcell"><span class="rb-label">palette.bg</span><span class="rb-val mono">${sw(BG_FROM, 'bgsw')}<span id="bgval">${BG_FROM}</span></span></div>`,
+  `<div class="rb-row" id="bgcell"><span class="rb-label">palette.bg</span><span class="rb-val mono">${sw(BG_FROM, 'bgsw')}<span>#1<span id="bghex"></span>f</span></span></div>`,
   `<div class="rb-row"><span class="rb-label">palette.accent</span><span class="rb-val mono">${sw('#e07a5f')}#e07a5f</span></div>`,
   `<div class="rb-row"><span class="rb-label">palette.fg</span><span class="rb-val mono">${sw('#f4f1de')}#f4f1de</span></div>`,
   '<div class="rb-row"><span class="rb-label">display</span><span class="rb-val serif">Instrument Serif</span></div>',
@@ -240,12 +271,24 @@ $('brandgrid').innerHTML = [
   '<div class="rb-row"><span class="rb-label">voice</span><span class="rb-val">warm, exact</span></div>',
 ].join('');
 
-const STATS = [['critical', 1, '#ff6b80'], ['serious', 3, '#ffc107'], ['moderate', 3, '#ffffff']];
-$('rstats').innerHTML = STATS.map(([l], i) => `<div class="rb-row"><span class="rb-label">${l}</span><span class="rb-val" id="st${i}"></span></div>`).join('');
-$('rtable').innerHTML = '<colgroup><col style="width:194px"><col style="width:106px"><col></colgroup><tr><th>Rule</th><th>Severity</th><th>Where</th></tr>' +
-  FINDINGS.map(([sev, id, where], i) => `<tr id="fr${i}"><td class="nm">${id}</td><td><span class="rb-chip" id="fs${i}">${sev}</span></td><td class="dimtd" style="font:400 12px 'Geist Mono',monospace;color:#8b8b95">${where}</td></tr>`).join('');
+// Counter columns: one clipped strip of 0-9 per place.
+const digitsHtml = (id, cols) => `<span class="digits" id="${id}">${Array.from({ length: cols }, () => `<span class="col">${[...Array(10).keys()].map((n) => `<span>${n}</span>`).join('')}</span>`).join('')}</span>`;
 
-$('jobs').innerHTML = CI_JOBS.map((j, i) => `<div class="rb-row"><span class="rb-label">${j}</span><span class="tog" id="jt${i}"><i></i></span></div>`).join('');
+const STATS = [['critical', 1], ['serious', 3], ['moderate', 3]];
+$('rstats').innerHTML = STATS.map(([l], i) => `<div class="rb-row"><span class="rb-label">${l}</span><span class="rb-val">${digitsHtml(`st${i}`, 1)}</span></div>`).join('');
+$('rtitle').innerHTML = `${digitsHtml('rnum', 1)} blocking findings`;
+$('rbadge').innerHTML = `exit ${digitsHtml('rexit', 1)} · <span id="rword"></span>`;
+$('rtable').innerHTML = '<colgroup><col style="width:210px"><col style="width:100px"><col></colgroup><tr><th>Rule</th><th>Severity</th><th>Where</th></tr>' +
+  FINDINGS.map(([sev, id, where], i) => `<tr><td class="nm"><span class="ck"><span class="box" id="bx${i}"><span class="ring"></span><span class="fill"></span><svg viewBox="0 0 24 24"><path d="M5 14L8.5 17.5L19 6.5" pathLength="1"/></svg></span><span class="strike" id="wd${i}">${id}<i></i></span></span></td><td><span class="sev" id="cp${i}"><span>${sev}</span><span>fixed</span></span></td><td class="where">${where}</td></tr>`).join('');
+
+// StatusMark geometry (reactbits Micro): r 9 on a 24 viewBox, 8 dashes around the ring.
+const SM_R = 9, SM_C = 2 * Math.PI * SM_R, SM_P = SM_C / 8, SM_IDLE = 0.3;
+$('jobs').innerHTML = CI_JOBS.map((j, i) => `<div class="rb-row" id="jr${i}"><svg class="sm" viewBox="0 0 24 24" id="sm${i}"><circle class="trk" cx="12" cy="12" r="${SM_R}"/><circle class="ring" cx="12" cy="12" r="${SM_R}" transform="rotate(-90 12 12)"/><path d="M7.5 12.25 10.5 15.25 16.75 8.75" pathLength="1" stroke-dasharray="1 2"/></svg><span class="rb-label">${j}</span></div>`).join('');
+$('cih').innerHTML = `${digitsHtml('cin', 2)}<span>of 12 passed</span>`;
+
+// Endcard wordmark: one span per letter, placed at the unsplit word's glyph
+// positions so splitting it does not lose kerning (measured once fonts load).
+$('big').innerHTML = 'atelier<i class="dot">.</i>';
 
 // ---------- terminal: history, spinner, input box, slash menu or hint ----------
 const ROWS = 25; // 576px body at 22px rows, less the top padding
@@ -257,6 +300,7 @@ const WELCOME = '<div class="welcome"><div class="r"><span class="spin">✻</spa
 function terminalHtml(t) {
   const hist = []; // { h: rows, html }
   let typed = '';
+  let prompt = []; // every prefix typed into the current prompt so far
   let spin = null;
   let shell = null; // PowerShell prompt text before Claude Code starts
   let claude = false;
@@ -267,9 +311,10 @@ function terminalHtml(t) {
     else if (e.kind === 'launch') { hist.push({ h: 1, html: `<div class="r">${PS_PROMPT}<span class="pscmd">${esc(shell)}</span></div>` }); shell = null; }
     else if (e.kind === 'welcome') { hist.push({ h: 4, html: WELCOME }); claude = true; }
     else if (e.kind === 'row') hist.push({ h: 1, html: `<div class="r${e.band ? ' band' : ''}">${e.html}</div>` });
-    else if (e.kind === 'char') typed = e.typed;
+    else if (e.kind === 'char') { typed = e.typed; prompt.push(typed); }
     else if (e.kind === 'submit') {
       typed = '';
+      prompt = [];
       hist.push({ h: 1, html: '<div class="r"></div>' });
       hist.push({ h: 1, html: `<div class="r band"><span class="dim">›</span> ${esc(e.text)}</div>` });
     } else if (e.kind === 'tool') {
@@ -294,11 +339,15 @@ function terminalHtml(t) {
   bottom.push('<div class="rule"><span class="sesh">Kiln Launch</span></div>',
     `<div class="r"><span class="pr">❯</span> ${esc(typed)}<span class="caret" style="opacity:${caretOn ? 1 : 0}"></span></div>`,
     '<div class="rule"></div>');
-  const menu = /^\/[\w-]*$/.test(typed) ? COMMANDS.filter(([c]) => c.startsWith(typed)).slice(0, 5) : [];
+  const menuFor = (s) => (/^\/[\w-]*$/.test(s) ? COMMANDS.filter(([c]) => c.startsWith(s)).slice(0, 5) : []);
+  const menu = menuFor(typed);
+  let tall = 3; // the statusline's three rows
+  for (const p of prompt) tall = Math.max(tall, menuFor(p).length);
   if (menu.length) {
-    bottom.push(`<div class="menu">${menu.map(([c, d], i) => `<div class="r${i === 0 ? ' on' : ''}">  ${c.padEnd(18)}${d}</div>`).join('')}</div>`);
-  } else bottom.push(statusLine(hist.length));
-  const used = (spin ? 2 : 0) + 3 + (menu.length || 3);
+    const pad = '<div class="r"></div>'.repeat(tall - menu.length);
+    bottom.push(`<div class="menu">${menu.map(([c, d], i) => `<div class="r${i === 0 ? ' on' : ''}">  ${c.padEnd(18)}${d}</div>`).join('')}${pad}</div>`);
+  } else bottom.push(statusLine(hist.length) + '<div class="r"></div>'.repeat(tall - 3));
+  const used = (spin ? 2 : 0) + 3 + tall;
 
   // Scroll: keep the newest history rows that fit above the input area.
   let room = ROWS - used;
@@ -325,38 +374,258 @@ function statusLine(rows) {
 }
 function esc(s) { return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
-// reactbits AnimatedContent: rise `dist` px and fade in over 0.8 s with
-// power3.out; leave with power3.in over 0.5 s, lifting slightly.
+// ---------- motion: reactbits.dev effects re-implemented as pure functions of t ----------
+// Parameters were measured from the live components and their published
+// source; the code here is our own.
+const lerp = (a, b, k) => a + (b - a) * k;
 const p3out = (x) => 1 - Math.pow(1 - clamp(x), 3);
 const p3in = (x) => Math.pow(clamp(x), 3);
-function rise(el, t, at, { dist = 60, dur = 0.8, out = Infinity, outDur = 0.5 } = {}) {
-  const a = p3out(prog(t, at, dur));
-  const b = p3in(prog(t, out, outDur));
-  const o = a * (1 - b);
+const p2in = (x) => clamp(x) ** 2;
+/** CSS cubic-bezier(x1, y1, x2, y2) as a pure function. */
+function bezier(x1, y1, x2, y2) {
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx, cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const X = (s) => ((ax * s + bx) * s + cx) * s, Y = (s) => ((ay * s + by) * s + cy) * s, dX = (s) => (3 * ax * s + 2 * bx) * s + cx;
+  return (x) => {
+    x = clamp(x);
+    let lo = 0, hi = 1, s = x;
+    for (let i = 0; i < 30; i++) {
+      const e = X(s) - x;
+      if (Math.abs(e) < 1e-7) break;
+      if (e > 0) hi = s; else lo = s;
+      const d = dX(s);
+      s = Math.abs(d) > 1e-6 ? s - e / d : (lo + hi) / 2;
+      if (s < lo || s > hi) s = (lo + hi) / 2;
+    }
+    return Y(s);
+  };
+}
+const EASE_OUT = bezier(0.23, 1, 0.32, 1), EASE_IO = bezier(0.77, 0, 0.175, 1), CSS_EASE = bezier(0.25, 0.1, 0.25, 1);
+/** Unit step response of a damped spring (zeta, omega0), tau in seconds. */
+function spring(z, w) {
+  if (z < 1) { const wd = w * Math.sqrt(1 - z * z); return (tau) => (tau <= 0 ? 0 : 1 - Math.exp(-z * w * tau) * (Math.cos(wd * tau) + (z * w / wd) * Math.sin(wd * tau))); }
+  return (tau) => (tau <= 0 ? 0 : 1 - (1 + w * tau) * Math.exp(-w * tau));
+}
+const SPRING_CHECK = spring(0.4559, 26.18); // SpringCheck: Motion visualDuration 0.2, bounce 0.2
+const ROLL = spring(1, 13);                 // Counter digits, critically damped so a 0 never shows a sliver of 9
+const ARC = spring(1, 20);                  // StatusMark arc closing
+const TEXT = spring(0.75, 20);              // Rotating Text: stiffness 400, damping 30
+const mix = (a, b, k) => a.map((v, i) => Math.round(v + (b[i] - v) * k));
+const rgb = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const GREEN = [78, 186, 101], RED = [255, 107, 128], AMBER = [255, 193, 7], MUTED = [161, 161, 170], LILAC = [207, 157, 255], WHITE = [255, 255, 255];
+function chipColor(el, c) { el.style.color = rgb(c); el.style.background = rgb(c, 0.12); el.style.borderColor = rgb(c, 0.35); }
+
+// ---------- Aurora backdrop (reactbits Backgrounds/Aurora) ----------
+// One curtain of light from the top edge in brand lilac and terra, drifting
+// slowly; brighter under the endcard. Additive over the canvas color, with a
+// fixed +-1 LSB dither so the faint gradient never bands after encoding.
+const BG_RGB = [18, 15, 23];
+const AUR = { stops: [[207, 157, 255], [224, 122, 95], [207, 157, 255]], speed: 0.35, t0: 3.0, amp: 1.0, e0: -0.05, e1: 0.45 };
+const GRAD2 = [[1, 1], [-1, 1], [1, -1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]];
+const PERM = (() => { let s = 0x2f6b1d3 >>> 0; const r = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); const p = [...Array(256).keys()]; for (let i = 255; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [p[i], p[j]] = [p[j], p[i]]; } return [...p, ...p]; })();
+/** Seeded 2D simplex noise in [-1, 1]. */
+function snoise(x, y) {
+  const F2 = 0.5 * (Math.sqrt(3) - 1), G2 = (3 - Math.sqrt(3)) / 6;
+  const s = (x + y) * F2, i = Math.floor(x + s), j = Math.floor(y + s);
+  const t0 = (i + j) * G2, x0 = x - (i - t0), y0 = y - (j - t0);
+  const i1 = x0 > y0 ? 1 : 0, j1 = 1 - i1;
+  const x1 = x0 - i1 + G2, y1 = y0 - j1 + G2, x2 = x0 - 1 + 2 * G2, y2 = y0 - 1 + 2 * G2;
+  const ii = i & 255, jj = j & 255;
+  const c = (gx, gy, dx, dy) => { let q = 0.5 - dx * dx - dy * dy; if (q < 0) return 0; q *= q; const g = GRAD2[PERM[gx + PERM[gy]] & 7]; return q * q * (g[0] * dx + g[1] * dy); };
+  return 70 * (c(ii, jj, x0, y0) + c(ii + i1, jj + j1, x1, y1) + c(ii + 1, jj + 1, x2, y2));
+}
+const bgfx = $('bgfx');
+const DPR = window.devicePixelRatio || 1;
+bgfx.width = Math.round(1280 * DPR);
+bgfx.height = Math.round(720 * DPR);
+const BW = bgfx.width, BH = bgfx.height;
+const bctx = bgfx.getContext('2d');
+const bimg = bctx.createImageData(BW, BH);
+const DITH = new Float32Array(BW * BH);
+{ let s = 0x9e3779b9 >>> 0; for (let k = 0; k < BW * BH; k++) { s = (s * 1664525 + 1013904223) >>> 0; DITH[k] = s / 4294967296 - 0.5; } }
+// The curtain never reaches the bottom 16% of the frame: those rows are the
+// plain canvas color plus dither, filled once.
+const LIT_ROWS = Math.ceil(BH * 0.84);
+for (let y = LIT_ROWS; y < BH; y++) for (let x = 0; x < BW; x++) { const k = (y * BW + x) * 4, n = DITH[y * BW + x]; bimg.data[k] = BG_RGB[0] + n; bimg.data[k + 1] = BG_RGB[1] + n; bimg.data[k + 2] = BG_RGB[2] + n; bimg.data[k + 3] = 255; }
+const RAMP = new Float32Array(BW * 3);
+for (let x = 0; x < BW; x++) { const u = (x + 0.5) / BW, k = u < 0.5 ? 0 : 1, f = u < 0.5 ? u / 0.5 : (u - 0.5) / 0.5; for (let c = 0; c < 3; c++) RAMP[x * 3 + c] = lerp(AUR.stops[k][c], AUR.stops[k + 1][c], f); }
+const HCOL = new Float32Array(BW);
+const sstep = (a, b, x) => { const u = clamp((x - a) / (b - a)); return u * u * (3 - 2 * u); };
+function drawBackdrop(t, gain) {
+  const T = AUR.t0 + t * AUR.speed;
+  for (let x = 0; x < BW; x++) HCOL[x] = Math.exp(snoise(((x + 0.5) / BW) * 2 + T * 0.1, T * 0.25) * 0.5 * AUR.amp);
+  const d = bimg.data;
+  for (let y = 0; y < LIT_ROWS; y++) {
+    const v2 = 2 * (1 - (y + 0.5) / BH) + 0.2;
+    for (let x = 0; x < BW; x++) {
+      const I = clamp(0.6 * (v2 - HCOL[x]));
+      const a = sstep(AUR.e0, AUR.e1, I) * I * gain;
+      const k = (y * BW + x) * 4, n = DITH[y * BW + x];
+      d[k] = BG_RGB[0] + RAMP[x * 3] * a + n; d[k + 1] = BG_RGB[1] + RAMP[x * 3 + 1] * a + n; d[k + 2] = BG_RGB[2] + RAMP[x * 3 + 2] * a + n; d[k + 3] = 255;
+    }
+  }
+  bctx.putImageData(bimg, 0, 0);
+}
+
+// ---------- AnimatedContent + FadeContent: panels rack-focus in and out ----------
+function focus(el, t, inAt, outAt, { dist = 24, dur = 0.8, outDur = 0.45 } = {}) {
+  const a = p3out(prog(t, inAt, dur)), b = p2in(prog(t, outAt, outDur));
+  const o = a * (1 - b), blur = 10 * (1 - a) + 10 * b;
   el.style.opacity = o;
-  el.style.transform = `translateY(${(1 - a) * dist - b * 20}px)`;
-  el.style.visibility = o <= 0.001 ? 'hidden' : 'visible';
+  const settled = a >= 1 && b <= 0;
+  el.style.transform = settled ? 'none' : `translateY(${((1 - a) * dist - b * 12).toFixed(2)}px) scale(${((0.97 + 0.03 * a) * (1 - 0.03 * b)).toFixed(4)})`;
+  el.style.filter = blur > 0.05 ? `blur(${blur.toFixed(2)}px)` : 'none';
+  el.style.visibility = o < 0.002 ? 'hidden' : 'visible';
   return o;
 }
 function panel(id, name, t, opts = {}) {
   const p = TL.panels[name];
-  return rise($(id), t, p ? p.in : Infinity, { out: p ? p.out : Infinity, ...opts });
+  return focus($(id), t, p ? p.in : Infinity, p ? p.out : Infinity, opts);
 }
-function toggle(el, on) {
-  const k = p3out(on);
-  el.style.background = `color-mix(in srgb, #d4d4d8 ${Math.round(k * 100)}%, #37313f)`;
-  el.firstElementChild.style.left = `${2 + 16 * k}px`;
-  el.firstElementChild.style.background = k > 0.5 ? '#27222e' : '#a1a1aa';
+/** AnimatedContent entrance for items inside a panel (no exit; the panel carries it). */
+function rise(el, t, at, { dist = 60, dur = 0.8 } = {}) {
+  const a = p3out(prog(t, at, dur));
+  el.style.opacity = a;
+  el.style.transform = a >= 1 ? 'none' : `translateY(${((1 - a) * dist).toFixed(2)}px)`;
+}
+/** AnimatedList: a row pops in, scaling up from its left edge. */
+function pop(el, t, at) {
+  const k = EASE_OUT(prog(t, at, 0.28));
+  el.style.opacity = k;
+  el.style.transformOrigin = 'left center';
+  el.style.transform = k >= 1 ? 'none' : `scale(${(0.94 + 0.06 * k).toFixed(4)})`;
 }
 
+// ---------- Counter: digit columns that take the short way round ----------
+function digits(el, v, h) {
+  const cols = [...el.children], n = cols.length;
+  el.style.height = `${h}px`;
+  cols.forEach((col, i) => {
+    const place = 10 ** (n - 1 - i);
+    let cv = v;
+    if (place > 1) { const lower = v % place, whole = Math.floor(v / place); cv = whole + clamp(lower - (place - 1)); }
+    [...col.children].forEach((s, dgt) => {
+      let off = (((10 + dgt - (cv % 10)) % 10) + 10) % 10;
+      if (off > 5) off -= 10;
+      s.style.transform = `translateY(${(off * h).toFixed(2)}px)`;
+      s.style.height = s.style.lineHeight = `${h}px`;
+    });
+    col.style.height = `${h}px`;
+    if (place > 1) { const on = clamp(v - (place - 1)); col.style.opacity = on; col.style.width = `${0.62 * on}em`; }
+  });
+}
+
+// ---------- Rotating Text: a clipped roll from one label to the next ----------
+function mkRoll(host, a, b, { byWord = false } = {}) {
+  const split = (s) => (byWord ? [s] : [...s]);
+  host.innerHTML = `<span class="roll"><i>${split(a).map((c) => `<span>${esc(c)}</span>`).join('')}</i><i>${split(b).map((c) => `<span>${esc(c)}</span>`).join('')}</i></span>`;
+  const r = host.firstElementChild, [o, n] = r.children;
+  return { r, o: [...o.children], n: [...n.children], wa: o.getBoundingClientRect().width, wb: n.getBoundingClientRect().width };
+}
+function textRoll(R, t, at, { stagger = 0.025, lag = 0.12 } = {}) {
+  const s = t - at;
+  R.o.forEach((c, i) => { const p = TEXT(s - (R.o.length - 1 - i) * stagger); c.style.transform = `translateY(${(-120 * p).toFixed(2)}%)`; c.style.opacity = clamp(1 - 1.25 * p); });
+  R.n.forEach((c, i) => { const p = TEXT(s - lag - (R.n.length - 1 - i) * stagger); c.style.transform = `translateY(${(100 * (1 - p)).toFixed(2)}%)`; c.style.opacity = clamp(1.25 * p); });
+  R.r.style.width = `${Math.max(Math.min(R.wa, R.wb), lerp(R.wa, R.wb, TEXT(s - lag / 2))).toFixed(2)}px`;
+}
+
+// ---------- StatusMark: pending, running, done with a drawn check ----------
+function statusMark(i, t, ci) {
+  const svg = $(`sm${i}`), [trk, ring, ck] = svg.children;
+  const run = ci + 0.3, doneAt = ci + 0.75 + i * 0.07;
+  const m = EASE_IO(prog(t, run, 0.3));
+  const a = 0.68 + 0.32 * ARC(t - doneAt);
+  const dash = SM_IDLE * SM_P + (a * SM_C - SM_IDLE * SM_P) * m;
+  const gap = (1 - SM_IDLE) * SM_P + ((1 - a) * SM_C - (1 - SM_IDLE) * SM_P) * m;
+  ring.setAttribute('stroke-dasharray', `${Math.max(0, dash).toFixed(3)} ${Math.max(0, gap).toFixed(3)}`);
+  const spin = (Math.min(t, doneAt) - run) / 1.1 + i * 0.09; // a turn per 1.1 s, each row slightly ahead
+  ring.setAttribute('stroke-dashoffset', t < run ? 0 : (-SM_C * (spin - Math.floor(spin))).toFixed(3));
+  const g = CSS_EASE(prog(t, doneAt, 0.2));
+  svg.style.color = rgb(mix(MUTED, GREEN, g));
+  ring.style.opacity = 0.55 + 0.45 * Math.max(m, g);
+  trk.style.fillOpacity = 0.1 * prog(t, doneAt, 0.18);
+  ck.setAttribute('stroke-dashoffset', (1.05 * (1 - EASE_OUT(prog(t, doneAt + 0.12, 0.24)))).toFixed(4));
+  ck.style.opacity = t >= doneAt + 0.12 ? 1 : 0;
+  svg.nextElementSibling.style.opacity = 0.65 + 0.35 * m;
+}
+
+// ---------- SpringCheck: the finding's box fills, ticks, and its chip rolls to fixed ----------
+function springCheck(i, t, at, sev) {
+  const s = SPRING_CHECK(t - at), h = clamp(s);
+  const bx = $(`bx${i}`);
+  bx.style.transform = `scale(${(1 + 0.35 * Math.max(0, s - 1)).toFixed(4)})`;
+  bx.children[1].style.transform = `scale(${Math.max(0, s).toFixed(4)})`;
+  bx.querySelector('path').style.strokeDashoffset = 1 - h;
+  const wd = $(`wd${i}`);
+  wd.style.opacity = 1 - 0.58 * h;
+  wd.lastElementChild.style.transform = `scaleX(${clamp((h - 0.12) / 0.72).toFixed(4)})`;
+  const cp = $(`cp${i}`);
+  chipColor(cp, mix(sev === 'critical' ? RED : AMBER, GREEN, h));
+  const o1 = clamp(2 * h), o2 = clamp(2 * h - 1);
+  cp.children[0].style.opacity = 1 - o1; cp.children[0].style.transform = `translateY(${(-7 * o1).toFixed(2)}px)`;
+  cp.children[1].style.opacity = o2; cp.children[1].style.transform = `translateY(${(7 * (1 - o2)).toFixed(2)}px)`;
+}
+
+// ---------- GlareHover: one sheen crosses a card and leaves the new version behind ----------
+function glare(img, band, t, at, dur = 0.8) {
+  const k = CSS_EASE(prog(t, at, dur));
+  const c = -0.45 + 1.75 * k; // band centre on the 135deg diagonal, 0 = top-left corner
+  const pc = (x) => `${(x * 100).toFixed(2)}%`;
+  const mask = `linear-gradient(135deg, #000 ${pc(c - 0.01)}, transparent ${pc(c + 0.01)})`;
+  img.style.webkitMaskImage = mask; img.style.maskImage = mask;
+  band.style.background = t > at && k < 1 ? `linear-gradient(135deg, transparent ${pc(c - 0.14)}, rgba(255,255,255,.26) ${pc(c)}, transparent ${pc(c + 0.22)})` : 'none';
+}
+
+// ---------- Blur Text, Shiny Text and StarBorder for the endcard ----------
+function blurIn(el, t, at, { dist = 40, blur = 10, seg = 0.35 } = {}) {
+  const s = t - at;
+  let o = 0, b = blur, y = dist;
+  if (s >= 2 * seg) { o = 1; b = 0; y = 0; }
+  else if (s >= seg) { const k = (s - seg) / seg; o = 0.5 + 0.5 * k; b = (blur / 2) * (1 - k); y = lerp(-dist / 10, 0, k); }
+  else if (s > 0) { const k = s / seg; o = 0.5 * k; b = lerp(blur, blur / 2, k); y = lerp(dist, -dist / 10, k); }
+  el.style.opacity = o;
+  el.style.filter = b > 0.02 ? `blur(${b.toFixed(2)}px)` : 'none';
+  el.style.transform = y === 0 ? 'none' : `translateY(${y.toFixed(2)}px)`;
+}
+function shine(el, t, at, dur, base, hi) {
+  const p = clamp((t - at) / dur);
+  el.style.backgroundImage = `linear-gradient(120deg, ${base} 0%, ${base} 35%, ${hi} 50%, ${base} 65%, ${base} 100%)`;
+  el.style.backgroundSize = '200% auto';
+  el.style.backgroundPosition = `${(150 - 200 * p).toFixed(2)}% 50%`;
+  el.style.webkitBackgroundClip = 'text'; el.style.backgroundClip = 'text'; el.style.color = 'transparent';
+}
+function star(t, at, speed = 6) {
+  const u = Math.max(0, (t - at) / speed + 1 / 3); // start with the glint entering the pill
+  const p = 1 - Math.abs((u % 2) - 1);            // CSS 'alternate' ping-pong, linear
+  $('sbb').style.transform = `translateX(${(-p * 100).toFixed(2)}%)`;
+  $('sbt').style.transform = `translateX(${(p * 100).toFixed(2)}%)`;
+  $('sbb').style.opacity = $('sbt').style.opacity = t >= at ? 1 - p : 0;
+}
+/** Split the wordmark into absolutely placed letters at the unsplit glyph positions. */
+function splitWordmark() {
+  const big = $('big'), text = big.firstChild, dot = big.lastElementChild;
+  const x0 = big.getBoundingClientRect().left;
+  const range = document.createRange();
+  const letters = [...text.textContent].map((ch, i) => { range.setStart(text, i); range.setEnd(text, i + 1); return { ch, x: range.getBoundingClientRect().left - x0 }; });
+  const dotX = dot.getBoundingClientRect().left - x0;
+  const width = dot.getBoundingClientRect().right - x0;
+  big.innerHTML = letters.map(({ ch, x }) => `<span style="left:${x.toFixed(2)}px">${ch}</span>`).join('') + `<span class="dot" style="left:${dotX.toFixed(2)}px">.</span>`;
+  big.style.width = `${width.toFixed(2)}px`;
+}
+
+let ROLLS = null;
 function render(t) {
-  const M = TL.marks;
+  const M = TL.marks, P = TL.panels;
 
-  // Fade up from black on a terminal that is already open.
-  const open = p3out(prog(t, 0, 0.5));
-  $('stage').style.opacity = open;
+  // Aurora behind everything; it lifts under the endcard.
+  drawBackdrop(t, 0.16 + 0.18 * easeIO(prog(t, M.end, 1.0)));
+
+  // Fade up on a terminal that is already open; it glides left as the first panel arrives.
+  $('stage').style.opacity = p3out(prog(t, 0, 0.5));
   const g = easeIO(prog(t, (M.market ?? 1e9) - 0.6, 0.9)); // clear of the column before the listing rises
-  $('term').style.transform = `translateX(${(1 - g) * 248}px)`;
+  $('term').style.transform = `translateX(${((1 - g) * 248).toFixed(2)}px)`;
+  // The scene clears for the endcard.
+  const clear = 1 - p3in(prog(t, M.end, 0.45));
+  for (const id of ['hdr', 'term', 'side']) $(id).style.opacity = clear;
 
   $('tbody').innerHTML = terminalHtml(t);
   // Windows Terminal tab: the session glyph turns while Claude is working.
@@ -366,86 +635,80 @@ function render(t) {
   $('tabglyph').textContent = !started ? '' : busy ? '◐◓◑◒'[Math.floor((t - busy.t) * 6) % 4] : '◑';
   $('tabtitle').textContent = started ? 'Kiln Launch' : 'PowerShell';
 
-  const P = TL.panels;
-
-  // Install: the preview card springs up like reactbits' "Animate Me", then the skills table.
+  // Install: the listing card springs up like reactbits' "Animate Me"; the
+  // state chip rolls to installed; then the skills rows pop in.
   panel('p-pkg', 'pkg', t);
   rise($('pkgcard'), t, P.pkg.in + 0.12, { dist: 100 });
-  const inst = t >= (M.installed ?? 1e9);
-  const st = $('pkgstate');
-  st.textContent = inst ? 'installed' : 'marketplace · EthanY33/atelier';
-  const sc = inst ? '78,186,101' : '207,157,255';
-  st.style.color = `rgb(${sc})`;
-  st.style.background = `rgba(${sc},.12)`;
-  st.style.border = `1px solid rgba(${sc},.35)`;
-  st.style.fontStyle = 'normal';
-  // The skills table rises once the plugin is installed.
-  rise($('pkgframe'), t, M.installed ?? Infinity, { dist: 40, out: P.pkg.out });
-  SKILLS.forEach((_, i) => rise($(`sk${i}`), t, (M.installed ?? 1e9) + 0.25 + i * 0.06, { dist: 14, dur: 0.6 }));
+  const inst = M.installed ?? 1e9;
+  textRoll(ROLLS.pkg, t, inst);
+  chipColor($('pkgstate'), mix(LILAC, GREEN, TEXT(t - inst)));
+  rise($('pkgframe'), t, inst, { dist: 40 });
+  SKILLS.forEach((_, i) => pop($(`sk${i}`), t, inst + 0.25 + i * 0.05));
 
-  // Social cards: preview box, cards rise one by one, then recolor on the rebrand.
+  // Social cards: they rise one by one, then a glare sweep regenerates each in navy.
   panel('p-cards', 'cards', t, { dist: 40 });
   OGS.forEach((_, i) => {
     rise($(`og${i}`), t, M.cards + i * 0.22, { dist: i === 0 ? 40 : 12 });
-    $(`ogb${i}`).style.opacity = p3out(prog(t, (M.recolor ?? 1e9) + i * 0.12, 0.5));
+    glare($(`ogb${i}`), $(`gl${i}`), t, (M.recolor ?? 1e9) + i * 0.12);
   });
   rise($('ico'), t, P.icons ? P.icons.in : Infinity, { dist: 24, dur: 0.6 });
-  $('icb0').style.opacity = p3out(prog(t, (M.icons ?? 1e9) + 0.15, 0.45));
+  glare($('icb0'), $('glI'), t, (M.icons ?? 1e9) + 0.15, 0.6);
 
-  // brand.json as a Customize grid; palette.bg flips when the CLI writes it.
+  // brand.json as a Customize grid; palette.bg rolls to the new hex as the CLI writes it.
   panel('p-brand', 'diff', t);
-  const ed = t - (M.diffEdit ?? 1e9);
-  $('bgval').textContent = ed >= 0 ? BG_TO : BG_FROM;
-  $('bgsw').style.background = ed >= 0 ? BG_TO : BG_FROM;
-  const flash = ed >= 0 ? 1 - p3in(prog(t, M.diffEdit + 0.4, 1.2)) : 0;
-  $('bgcell').style.borderColor = `rgba(207,157,255,${0.75 * flash})`;
-  $('bgcell').style.background = `rgba(207,157,255,${0.04 + 0.1 * flash})`;
+  const ed = M.diffEdit ?? 1e9;
+  textRoll(ROLLS.bg, t, ed, { stagger: 0.04 });
+  $('bgsw').style.background = rgb(mix([0x14, 0x11, 0x0f], [0x16, 0x30, 0x5f], TEXT(t - ed)));
+  const flash = p3out(prog(t, ed, 0.12)) * (1 - p3in(prog(t, ed + 0.4, 1.2)));
+  const fc = `rgba(207,157,255,${(0.1 * flash).toFixed(3)})`;
+  $('bgcell').style.borderColor = `rgba(207,157,255,${(0.75 * flash).toFixed(3)})`;
+  $('bgcell').style.background = `linear-gradient(${fc}, ${fc}), var(--rb-row)`;
 
-  // Audit: each finding flips to fixed as its Update lands; the summary on the re-run.
+  // Audit: each finding's check springs in as its Update lands; on the re-run
+  // the counts roll to zero and the verdict rolls to pass.
   panel('p-report', 'report', t);
-  rise($('rcard'), t, TL.panels.report.in + 0.12, { dist: 100 });
-  const pass = t >= (M.reportPass ?? 1e9);
-  $('rtitle').textContent = pass ? '0 blocking findings' : '4 blocking findings';
-  STATS.forEach(([, n, c], i) => {
-    const v = pass && i < 2 ? 0 : n;
-    $(`st${i}`).textContent = v;
-    $(`st${i}`).style.color = v && i < 2 ? c : i < 2 ? '#4eba65' : '#fff';
+  rise($('rcard'), t, P.report.in + 0.12, { dist: 100 });
+  const pass = M.reportPass ?? 1e9;
+  digits($('rnum'), 4 - 4 * ROLL(t - pass), 25);
+  STATS.forEach(([, n], i) => {
+    const at = pass + 0.06 * i;
+    digits($(`st${i}`), i < 2 ? n - n * ROLL(t - at) : n, 16);
+    $(`st${i}`).style.color = rgb(i < 2 ? mix(i ? AMBER : RED, GREEN, p3out(prog(t, at, 0.35))) : WHITE);
   });
-  FINDINGS.forEach(([sev], i) => {
-    const fixed = t >= (M[`fix${i}`] ?? 1e9);
-    const chip = $(`fs${i}`);
-    chip.textContent = fixed ? 'fixed' : sev;
-    const c = fixed ? '78,186,101' : sev === 'critical' ? '255,107,128' : '255,193,7';
-    chip.style.color = `rgb(${c})`;
-    chip.style.background = `rgba(${c},.12)`;
-    chip.style.borderColor = `rgba(${c},.35)`;
-    $(`fr${i}`).firstElementChild.style.opacity = fixed ? 0.55 : 1;
-  });
-  const badge = $('rbadge');
-  badge.textContent = pass ? 'exit 0 · pass' : 'exit 1 · fails CI';
-  const bc = pass ? '78,186,101' : '255,107,128';
-  badge.style.color = `rgb(${bc})`;
-  badge.style.background = `rgba(${bc},.12)`;
-  badge.style.border = `1px solid rgba(${bc},.35)`;
+  digits($('rexit'), 1 - ROLL(t - pass), 14);
+  textRoll(ROLLS.verdict, t, pass);
+  chipColor($('rbadge'), mix(RED, GREEN, p3out(prog(t, pass, 0.35))));
+  FINDINGS.forEach(([sev], i) => springCheck(i, t, M[`fix${i}`] ?? 1e9, sev));
 
-  // CI: twelve toggles switch on in sequence.
+  // CI: twelve StatusMarks spin, then land one by one; the header counts them.
   panel('p-ci', 'ci', t);
-  CI_JOBS.forEach((_, i) => toggle($(`jt${i}`), prog(t, M.ci + 0.25 + i * 0.085, 0.18)));
-  $('cih').textContent = t >= M.ciDone ? '12 of 12 passed' : 'main · 12 checks';
-  $('cih').style.color = t >= M.ciDone ? '#4eba65' : '';
+  let passed = 0;
+  CI_JOBS.forEach((_, i) => { statusMark(i, t, M.ci); passed += ROLL(t - (M.ci + 0.75 + i * 0.07 + 0.12)); });
+  digits($('cin'), passed, 14);
+  $('cih').style.color = rgb(mix(MUTED, GREEN, p3out(prog(t, M.ciDone, 0.35))));
 
-  // endcard
-  const en = easeIO(prog(t, M.end, 0.7));
-  const end = $('end');
-  end.style.opacity = en;
-  end.style.visibility = en > 0.001 ? 'visible' : 'hidden';
-  end.firstElementChild.style.transform = `translateY(${(1 - en) * 16}px)`;
+  // Endcard: letters blur into focus, then the tagline by phrase, the install
+  // pill with its travelling glint, and the URL with one pass of shine.
+  const E = M.end;
+  $('end').style.visibility = t >= E ? 'visible' : 'hidden';
+  [...$('big').children].forEach((el, i) => blurIn(el, t, E + 0.3 + i * 0.05, { dist: 40, blur: 10 }));
+  [...$('tag').children].forEach((el, i) => blurIn(el, t, E + 0.85 + i * 0.16, { dist: 14, blur: 6 }));
+  rise($('sb'), t, E + 1.35, { dist: 16 });
+  star(t, E + 1.35);
+  rise($('url'), t, E + 1.55, { dist: 10 });
+  shine($('url'), t, E + 2.0, 1.5, '#9c97b0', '#f4f1de');
 }
 
 window.__atelierAdvance = (t) => render(t);
 window.__atelierReady = (async () => {
   await document.fonts.ready;
   await Promise.all([...document.images].map((img) => img.decode().catch(() => {})));
+  splitWordmark();
+  ROLLS = {
+    pkg: mkRoll($('pkgstate'), 'marketplace · EthanY33/atelier', 'installed', { byWord: true }),
+    bg: mkRoll($('bghex'), '4110', '6305'),
+    verdict: mkRoll($('rword'), 'fails CI', 'pass'),
+  };
   render(0);
 })();
 

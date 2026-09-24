@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * build.mjs: render the atelier 1.0 trailer.
+ * build.mjs: render the atelier trailer.
  *
  *   1. serve demos/trailer over loopback HTTP (ES modules need an origin)
  *   2. drive the scene frame by frame on its virtual clock at 60 fps and
@@ -8,7 +8,7 @@
  *      frames straight into ffmpeg
  *   3. render the soundtrack from the same timeline and mux it in as rendered
  *      (render-audio.mjs sets the level; no normalizer, so keystrokes stay soft)
- *   4. write demos/atelier-1.0-trailer.mp4 (with sound) plus the silent
+ *   4. write demos/atelier-trailer.mp4 (with sound) plus the silent
  *      demos/overview.mp4 and animated demos/overview.webp the README embeds
  *
  * Usage: npm run demo:trailer
@@ -25,7 +25,7 @@ import { renderAudio } from './render-audio.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCENE = join(REPO, 'demos', 'trailer');
-const OUT = join(REPO, 'demos', 'atelier-1.0-trailer.mp4');
+const OUT = join(REPO, 'demos', 'atelier-trailer.mp4');
 const OUT_README_MP4 = join(REPO, 'demos', 'overview.mp4');
 const OUT_README_WEBP = join(REPO, 'demos', 'overview.webp');
 const FPS = 60;
