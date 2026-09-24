@@ -6,7 +6,7 @@
   <img alt="atelier: define your brand once, and eight skills turn it into tokens, social cards, icons, images, video and audits" src="docs/assets/hero-dark.webp" width="100%">
 </picture>
 
-[![Version](https://img.shields.io/badge/version-1.0.0-e07a5f.svg)](https://github.com/EthanY33/atelier/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-e07a5f.svg)](https://github.com/EthanY33/atelier/releases)
 [![CI](https://github.com/EthanY33/atelier/actions/workflows/ci.yml/badge.svg)](https://github.com/EthanY33/atelier/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-f2cc8f.svg)](./LICENSE)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-81b29a.svg)](https://code.claude.com/docs/en/plugins)

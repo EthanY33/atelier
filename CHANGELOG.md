@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-23
+
+atelier 1.1 redesigns the social cards: they now carry your logo and your accent color, and read well on light and dark brands alike. Nothing breaks; regenerate your cards to pick up the new design.
+
 ### Added
 
 - og-card-generator: cards show the brand logo. The CLI uses `logos.mark` from brand.json (refused if it points outside the project root), `--mark <file>` picks another file and `--no-mark` leaves it off; the API takes a `mark` file path. SVG, PNG, JPEG and WebP up to 2 MB, inlined as a data: image.
@@ -15,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - og-card-generator: a new card design. The brand row (logo, studio, page path) sits at the top, the title and subtitle are anchored to the bottom margin, and a disc of light in `palette.accent` rises from the top-right corner. The display font renders at weight 400 instead of a synthesized bold, and text is antialiased in grayscale so no color fringes land in the PNG. The footer no longer appends " /" to the studio name.
+- README: a new demo, recorded frame by frame in a Claude Code session, with the new cards.
 
 ## [1.0.0] - 2026-09-23
 
@@ -127,7 +132,8 @@ atelier 1.0 is the first release you can install straight from the marketplace a
 - Dependency pins deviate from the original spec: `vitest` `2.2.0` → `3.1.2` (major), `sharp` `0.34.1` → `0.34.5`, `playwright` `1.52.0` → `1.51.1`, `@axe-core/playwright` `4.10.2` → `4.10.1`. All substitutions are exact pins. Vitest 3 is API-compatible with the plan's usage (`defineConfig`, `test.include`, `coverage.provider: 'v8'`, `coverage.thresholds`).
 - `svgo` dependency from the original spec was dropped — sharp's SVG rasterization is sufficient for Phase 1.
 
-[Unreleased]: https://github.com/EthanY33/atelier/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/EthanY33/atelier/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/EthanY33/atelier/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/EthanY33/atelier/compare/v0.2.1...v1.0.0
 [0.2.1]: https://github.com/EthanY33/atelier/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/EthanY33/atelier/compare/v0.1.0...v0.2.0

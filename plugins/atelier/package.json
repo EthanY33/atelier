@@ -1,6 +1,6 @@
 {
   "name": "atelier-plugin",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Runtime dependencies of the atelier Claude Code plugin. Claude Code runs `npm ci --ignore-scripts` in this directory on install.",
   "type": "module",

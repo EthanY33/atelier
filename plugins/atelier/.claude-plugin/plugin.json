@@ -1,6 +1,6 @@
 {
   "name": "atelier",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Design automation around one brand file: tokens, social cards, icons, responsive images, video, and accessibility plus runtime-UX audits.",
   "author": {
     "name": "Ethan Yucetepe",
