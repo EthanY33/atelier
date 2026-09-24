@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- og-card-generator: cards show the brand logo. The CLI uses `logos.mark` from brand.json (refused if it points outside the project root), `--mark <file>` picks another file and `--no-mark` leaves it off; the API takes a `mark` file path. SVG, PNG, JPEG and WebP up to 2 MB, inlined as a data: image.
+- Shared library: `isNetworkPath` and `resolveBrandPath` in `lib/io.mjs`, now used by both og-card-generator and brand-asset-pipeline.
+
+### Changed
+
+- og-card-generator: a new card design. The brand row (logo, studio, page path) sits at the top, the title and subtitle are anchored to the bottom margin, and a disc of light in `palette.accent` rises from the top-right corner. The display font renders at weight 400 instead of a synthesized bold, and text is antialiased in grayscale so no color fringes land in the PNG. The footer no longer appends " /" to the studio name.
+
 ## [1.0.0] - 2026-09-23
 
 atelier 1.0 is the first release you can install straight from the marketplace and use anywhere. It adds an eighth skill, `runtime-ux-audit`, a single `atelier` CLI, a GitHub Action, and fixes to every existing skill. Upgrading from 0.x: reinstall the plugin, use Node 22 or newer, and see **Changed** for the few breaking changes.

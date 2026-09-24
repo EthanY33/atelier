@@ -7,12 +7,12 @@
  * broken mark never leaves a half-written output directory.
  */
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { isMain } from '../../lib/cli.mjs';
-import { decodeText } from '../../lib/io.mjs';
+import { decodeText, isNetworkPath, resolveBrandPath } from '../../lib/io.mjs';
 import { PreflightError, formatError } from '../../lib/preflight.mjs';
 
 // ---------------------------------------------------------------------------
@@ -161,31 +161,14 @@ function brandBackground(brand) {
 }
 
 /**
- * \\host\share, //host/share and the \\?\ and \\.\ device namespaces. On
- * Windows, opening one of these (even a stat) connects over SMB and sends the
- * user's credentials to that host.
- */
-const isNetworkPath = (p) => /^[\\/]{2}/.test(p);
-
-/**
- * logos.mark from brand.json, resolved inside the project root. brand.json is
- * repository content, so an absolute, drive, network or ../ path is refused
- * before anything is opened. A mark elsewhere can still be passed explicitly.
+ * logos.mark from brand.json, resolved inside the project root (see
+ * resolveBrandPath in lib/io.mjs). A mark elsewhere can still be passed
+ * explicitly.
  */
 function brandMark(brand, base) {
   const mark = own(own(brand, 'logos'), 'mark');
   if (typeof mark !== 'string' || mark.trim() === '') return undefined;
-  const root = resolve(base);
-  const refuse = () =>
-    new Error(
-      `brand.json logos.mark ${JSON.stringify(mark)} must be a relative path to a file inside the project root ${root}. Pass the mark file explicitly to use one elsewhere.`,
-    );
-  // /^[a-z]:/ also catches the drive-relative "C:mark.svg", which isAbsolute misses.
-  if (isAbsolute(mark) || /^[\\/]/.test(mark) || /^[a-z]:/i.test(mark)) throw refuse();
-  const target = resolve(root, mark);
-  const rel = relative(root, target);
-  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw refuse();
-  return target;
+  return resolveBrandPath(mark, base, 'logos.mark');
 }
 
 // ---------------------------------------------------------------------------

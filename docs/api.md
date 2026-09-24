@@ -162,13 +162,13 @@ Exit codes: 0 written; 2 usage error or failure.
 
 ## og-card-generator
 
-`skills/og-card-generator/index.mjs`, CLI `atelier og`. Renders 1200x630 PNG cards in headless Chromium. Reads `palette.bg` (default `#111111`), `palette.fg` (default black or white, whichever contrasts more with `bg`), `typography.display` (falls back to `body`), `typography.body`, `brand.studio` (footer) and `brand.product` (title fallback).
+`skills/og-card-generator/index.mjs`, CLI `atelier og`. Renders 1200x630 PNG cards in headless Chromium. Reads `palette.bg` (default `#111111`), `palette.fg` (default black or white, whichever contrasts more with `bg`), `palette.accent` (shapes and glow only; default `palette.fg`), `typography.display` (falls back to `body`), `typography.body`, `brand.studio` (falls back to `brand.product`), `brand.product` (title fallback) and, in the CLI, `logos.mark`.
 
 ### Exports
 
 - `generateCards(opts): Promise<string[]>`. One `<outDir>/<slug>.png` per page with one browser for the whole batch. Every page and slug is checked before anything is written. Resolves to the paths in page order; an empty `pages` array resolves to `[]` without starting a browser.
 - `generateCard(opts): Promise<string>`. One card at `outPath`; resolves to `outPath`.
-- `buildCardHtml(brand, page, { fonts? }?): string`. The card HTML without rendering it.
+- `buildCardHtml(brand, page, { fonts?, mark? }?): string`. The card HTML without rendering it.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -178,12 +178,13 @@ Exit codes: 0 written; 2 usage error or failure.
 | `page` (`generateCard`) | required | One page |
 | `outPath` (`generateCard`) | required | PNG path to write |
 | `fonts` | none | `{ display?, body? }`: font files (`.woff2`, `.woff`, `.ttf`, `.otf`) inlined for the brand fonts |
+| `mark` | none | Logo file (`.svg`, `.png`, `.jpg`, `.webp`, at most 2 MB) inlined on the card. The API does not read `logos.mark`; pass it |
 | `browser` | launch one | A Playwright `Browser` to reuse; it is left open |
 | `onWarning` | print to stderr | `(message: string) => void` for low contrast, missing fonts and shortened text |
 
 A page is `{ slug?, title?, subtitle?, description? }`. `slug` is the file name and footer path: lowercase letters, digits, `-` and `_`, with `/` between segments for nested folders; default `index`. `title` falls back to `brand.product`; `description` is an alias for `subtitle`.
 
-Throws an `Error` for an invalid brand value, page, slug, duplicate output path or unreadable font file, and `CHROMIUM_MISSING`, `CHROMIUM_DEPS_MISSING` or `PLAYWRIGHT_MISSING` when the browser cannot start.
+Throws an `Error` for an invalid brand value, page, slug, duplicate output path, unreadable font file or unusable mark (missing, too large, unsupported type, network path), and `CHROMIUM_MISSING`, `CHROMIUM_DEPS_MISSING` or `PLAYWRIGHT_MISSING` when the browser cannot start.
 
 - `runCli(argv: string[], { cwd?, stdout?, stderr? }?): Promise<number>`. Here `stdout` and `stderr` are functions `(s: string) => void`.
 
@@ -201,6 +202,8 @@ atelier og --title <text> [--subtitle <text>] [--slug <slug>] [--out <dir>] [opt
 | `--title`, `--subtitle`, `--slug` | | One card without a manifest; `--subtitle` and `--slug` need `--title` |
 | `--project <dir>` | current directory | Project root holding `.atelier/brand.json` |
 | `--font-display <file>`, `--font-body <file>` | | Font files for the brand fonts |
+| `--mark <file>` | `logos.mark` when set | Logo on the card. A `logos.mark` outside the project root is refused |
+| `--no-mark` | | Leave the logo off (not with `--mark`) |
 
 Prints the written paths. Warnings go to stderr as `atelier: warning: ...`; cards are still written.
 
@@ -454,6 +457,8 @@ Exit codes: 0 no critical or serious findings; 1 critical or serious findings; 2
 - `decodeText(buf: Buffer | Uint8Array | ArrayBuffer | string): string`. Decodes UTF-8, UTF-16LE or UTF-16BE by byte order mark (UTF-8 without one) and drops the mark.
 - `readTextFile(path: string): string`. Reads a file with `decodeText`; errors name the file.
 - `readJsonFile(path: string): any`. Reads and parses JSON; errors name the file.
+- `isNetworkPath(p: string): boolean`. True for `\\host\share`, `//host/share` and the `\\?\` and `\\.\` device namespaces, which Windows opens over SMB.
+- `resolveBrandPath(value: string, root: string, field: string): string`. Resolves a path written in brand.json inside `root`; throws for an absolute, drive, network or `../` path.
 
 ### cli.mjs
 

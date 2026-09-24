@@ -5,7 +5,9 @@
   <!-- The card never needs the network or page scripts. Brand fonts arrive as data: URIs. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:" />
   <meta name="viewport" content="width=1200" />
+  <title>{{title}} | {{product}}</title>
   <style>
+    /* Needs Chromium 119+ for relative color syntax (the glow has a fallback). */
     *, *::before, *::after { box-sizing: border-box; }
     html, body {
       margin: 0;
@@ -15,64 +17,193 @@
       overflow: hidden;
     }
     body {
+      position: relative;
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
-      gap: 32px;
+      gap: 40px;
       padding: 72px;
       background: var(--bg, #111111);
       color: var(--fg, #ffffff);
       font-family: var(--font-body, system-ui), system-ui, sans-serif;
+      font-synthesis: none;
     }
-    /* The content block absorbs overflow so the footer always stays on the canvas. */
-    .content {
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow: hidden;
+    /* Own compositing layers force grayscale antialiasing, so no LCD color
+       fringes get baked into the PNG. */
+    .content, .footer { will-change: transform; }
+
+    /* One idea: a lit disc rising out of the top-right corner, its rim catching
+       the brand accent. Every color derives from the brand variables, so it
+       holds on light and dark backgrounds and when --accent falls back to --fg.
+
+       Geometry: disc center (1180, -330), radius 480.
+       - Brand row (y 72-120) ends by x = 72 + 400 lockup + 26 gap + 360 pill = 858;
+         the disc edge at y = 72 is at x = 918.
+       - Title (x <= 72 + 1000 = 1072) starts at y >= 160; the rim at x = 1072 is
+         at y = 138.
+       Nothing paints below y = 440, so the bottom band stays exactly var(--bg). */
+    .art { position: absolute; inset: 0; pointer-events: none; }
+    .art > * { position: absolute; }
+    .glow {
+      inset: 0 0 auto;
+      height: 440px;
+      background:
+        radial-gradient(520px 330px at 1130px -50px, color-mix(in oklab, var(--accent) 48%, transparent), transparent 75%),
+        radial-gradient(940px 560px at 1070px -100px, color-mix(in oklab, var(--accent) 15%, transparent), transparent 75%);
+      background:
+        radial-gradient(240px 170px at 1170px -40px, color-mix(in oklab, oklch(from var(--accent) calc(l + 0.12) c h) 70%, transparent), transparent 75%),
+        radial-gradient(520px 330px at 1130px -50px, color-mix(in oklab, var(--accent) 42%, transparent), transparent 75%),
+        radial-gradient(940px 560px at 1070px -100px, color-mix(in oklab, var(--accent) 15%, transparent), transparent 75%);
     }
-    .title {
-      font-family: var(--font-display, var(--font-body, system-ui)), system-ui, sans-serif;
-      font-size: 88px;
-      font-weight: 700;
-      line-height: 1.05;
-      max-width: 900px;
-      overflow-wrap: anywhere;
+    /* A tint reads far stronger on a light background than light does on a
+       dark one: veil the glow by the background's own lightness. */
+    .damp {
+      inset: 0 0 auto;
+      height: 440px;
+      background: oklch(from var(--bg) l c h / calc(l * 1.2 - 0.62));
     }
-    .subtitle {
-      font-size: 36px;
-      line-height: 1.2;
-      opacity: 0.7;
-      margin-top: 24px;
-      max-width: 900px;
-      overflow-wrap: anywhere;
+    .disc {
+      left: 700px;
+      top: -810px;
+      width: 960px;
+      height: 960px;
+      border-radius: 50%;
+      background: radial-gradient(closest-side, transparent 78%, color-mix(in oklab, var(--accent) 12%, transparent) 96%, color-mix(in oklab, var(--accent) 24%, transparent));
     }
-    .subtitle:empty { display: none; }
+    /* The rim leans a fifth toward --fg, so it always gains contrast against
+       --bg, even for a pale accent on a white background. */
+    .rim, .bloom > div {
+      left: 700px;
+      top: -810px;
+      width: 960px;
+      height: 960px;
+      border-radius: 50%;
+      --ink: color-mix(in oklab, var(--accent) 80%, var(--fg));
+      background: conic-gradient(from 160deg, transparent 0deg, color-mix(in oklab, var(--ink) 70%, transparent) 16deg, var(--ink) 32deg, var(--ink) 42deg, color-mix(in oklab, var(--ink) 35%, transparent) 62deg, transparent 78deg);
+    }
+    .rim {
+      -webkit-mask-image: radial-gradient(closest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px), #000 calc(100% - 0.5px), transparent 100%);
+      mask-image: radial-gradient(closest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px), #000 calc(100% - 0.5px), transparent 100%);
+    }
+    .bloom { inset: 0; filter: blur(14px); opacity: 0.8; }
+    .bloom > div {
+      position: absolute;
+      --ink: var(--accent);
+      -webkit-mask-image: radial-gradient(closest-side, transparent calc(100% - 10px), #000 calc(100% - 4px), transparent 100%);
+      mask-image: radial-gradient(closest-side, transparent calc(100% - 10px), #000 calc(100% - 4px), transparent 100%);
+    }
+
+    /* Brand row (#footer is the contract id; the row sits at the top): mark and
+       name as one tight unit, then the page path. Marks often carry their own
+       padding, so the lockup gap is small. With no mark and no studio the
+       lockup is dropped and the path starts at the margin. */
     .footer {
+      position: relative;
       display: flex;
-      justify-content: space-between;
-      gap: 32px;
+      align-items: center;
+      gap: 26px;
       flex-shrink: 0;
-      font-size: 24px;
-      line-height: 1.3;
-      opacity: 0.8;
+      height: 48px;
       white-space: nowrap;
     }
-    .footer span {
+    .lockup {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      max-width: 400px;
+    }
+    .lockup:not(:has(.mark, #studio:not(:empty))) { display: none; }
+    .mark {
+      display: block;
+      height: 48px;
+      width: auto;
+      max-width: 200px;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+    #studio:empty { display: none; }
+    #studio {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 30px;
+      font-weight: 600;
+      letter-spacing: -0.015em;
+      line-height: 1.2;
+    }
+    .pill {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      max-width: 360px;
+      padding: 9px 20px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in oklab, var(--fg) 16%, transparent);
+      background: color-mix(in oklab, var(--bg) 93%, var(--fg));
+      font-size: 23px;
+      line-height: 1.2;
+      color: color-mix(in oklab, var(--fg) 78%, var(--bg));
+    }
+    #slug {
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
     }
+
+    /* The content block absorbs overflow so the brand row always stays on the
+       canvas. The clip margin keeps ascenders and accents on a fitted top line. */
+    .content {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+      overflow: clip;
+      overflow-clip-margin: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+    .title {
+      flex-shrink: 0;
+      font-family: var(--font-display, var(--font-body, system-ui)), system-ui, sans-serif;
+      font-size: 88px;
+      font-weight: 400;
+      line-height: 1.04;
+      letter-spacing: -0.02em;
+      max-width: 1000px;
+      overflow-wrap: anywhere;
+      text-wrap: balance;
+    }
+    .subtitle {
+      flex-shrink: 0;
+      margin-top: 22px;
+      font-size: 32px;
+      font-weight: 400;
+      line-height: 1.25;
+      max-width: 880px;
+      color: color-mix(in oklab, var(--fg) 72%, var(--bg));
+      overflow-wrap: anywhere;
+      text-wrap: pretty;
+    }
+    .subtitle:empty { display: none; }
   </style>
   {{style}}
 </head>
 <body>
+  <div class="art" aria-hidden="true">
+    <div class="glow"></div>
+    <div class="damp"></div>
+    <div class="disc"></div>
+    <div class="bloom"><div></div></div>
+    <div class="rim"></div>
+  </div>
+  <div class="footer" id="footer">
+    <div class="lockup">{{mark}}<span id="studio">{{studio}}</span></div>
+    <div class="pill"><span id="slug">{{slug}}</span></div>
+  </div>
   <div class="content" id="content">
     <div class="title" id="title">{{title}}</div>
     <div class="subtitle" id="subtitle">{{subtitle}}</div>
-  </div>
-  <div class="footer" id="footer">
-    <span id="studio">{{studio}}</span>
-    <span id="slug">{{slug}}</span>
   </div>
 </body>
 </html>

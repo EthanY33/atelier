@@ -18,6 +18,10 @@ const brand = {
 };
 const BG = [0x11, 0x0f, 0x1b];
 const FG = [0xf2, 0xcc, 0x8f];
+// The card puts the brand row (mark, studio, path) at the top and anchors the
+// title and subtitle to the bottom margin.
+const BRAND_ROWS = [60, 150];
+const TITLE_ROWS = [360, 566];
 
 let browser;
 let tmp;
@@ -112,14 +116,14 @@ describe('og-card-generator: rendering', () => {
     expect(px(img, 5, 5)).toEqual(BG);
     expect(px(img, 1195, 625)).toEqual(BG);
     // The title is drawn in palette.fg.
-    expect(count(img, (p) => near(p, FG, 10), 60, 200)).toBeGreaterThan(1000);
+    expect(count(img, (p) => near(p, FG, 10), ...TITLE_ROWS)).toBeGreaterThan(1000);
     expect(img.warnings).toEqual([]);
   });
 
   it('draws different images for different titles', async () => {
     const a = await render(brand, { slug: 'home', title: 'TideWane' });
     const b = await render(brand, { slug: 'home', title: 'Another title' });
-    expect(rowsDiffer(a, b, 60, 250)).toBe(true);
+    expect(rowsDiffer(a, b, ...TITLE_ROWS)).toBe(true);
   });
 
   it('reuses a caller-supplied browser and leaves it open', async () => {
@@ -129,7 +133,7 @@ describe('og-card-generator: rendering', () => {
 
   it('puts page and brand text in the right elements', async () => {
     const dom = await inspect(buildCardHtml(brand, { slug: 'blog/launch', title: 'T', subtitle: 'S' }));
-    expect(dom).toMatchObject({ title: 'T', subtitle: 'S', studio: 'goneIdle /', slug: '/blog/launch' });
+    expect(dom).toMatchObject({ title: 'T', subtitle: 'S', studio: 'goneIdle', slug: '/blog/launch' });
   });
 
   it('accepts description as an alias for subtitle', async () => {
@@ -192,7 +196,7 @@ describe('og-card-generator: injection', () => {
     expect(px(img, 5, 5)).toEqual(BG);
 
     const innocent = await inspect(buildCardHtml(brand, { title: 'Why </script> breaks inline JSON', subtitle: 'Sub here' }));
-    expect(innocent).toMatchObject({ title: 'Why </script> breaks inline JSON', subtitle: 'Sub here', studio: 'goneIdle /' });
+    expect(innocent).toMatchObject({ title: 'Why </script> breaks inline JSON', subtitle: 'Sub here', studio: 'goneIdle' });
   });
 
   it('keeps $ replacement patterns literal', async () => {
@@ -202,7 +206,7 @@ describe('og-card-generator: injection', () => {
       expect(dom.subtitle).toBe(title);
     }
     const dom = await inspect(buildCardHtml({ ...brand, brand: { studio: 'A$&B' } }, { title: 't' }));
-    expect(dom.studio).toBe('A$&B /');
+    expect(dom.studio).toBe('A$&B');
   });
 
   it('does not substitute template placeholders found inside values', async () => {
@@ -344,7 +348,7 @@ describe('og-card-generator: fonts', () => {
     const without = await render(iconBrand, page);
     expect(withFont.warnings).toEqual([]);
     expect(without.warnings.join('\n')).toMatch(/"Codicon" is not installed/);
-    expect(rowsDiffer(withFont, without, 60, 250)).toBe(true);
+    expect(rowsDiffer(withFont, without, ...TITLE_ROWS)).toBe(true);
     expect(buildCardHtml(iconBrand, page, { fonts: { display: iconFont } })).toMatch(/@font-face\{font-family:"Codicon";src:url\(data:font\/ttf;base64,/);
   });
 
@@ -360,7 +364,7 @@ describe('og-card-generator: colors', () => {
     expect(buildCardHtml(light, {})).toContain('--fg:#111111');
     const img = await render(light, { slug: 'launch', title: 'Acme Launch', subtitle: 'sub' });
     expect(px(img, 5, 5)).toEqual([255, 255, 255]);
-    expect(count(img, (p) => p.every((v) => v < 80), 60, 200)).toBeGreaterThan(1000);
+    expect(count(img, (p) => p.every((v) => v < 80), ...TITLE_ROWS)).toBeGreaterThan(1000);
     expect(img.warnings).toEqual([]);
   });
 
@@ -384,11 +388,13 @@ describe('og-card-generator: colors', () => {
 describe('og-card-generator: layout', () => {
   const long = 'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud exercitation';
 
-  it('keeps the subtitle and footer on the canvas for very long titles', async () => {
-    const a = await render(brand, { slug: 'home', title: long, subtitle: long });
-    const b = await render({ ...brand, brand: { studio: 'ZZZZZZZZZZZZ' } }, { slug: 'zzzzzzzzzz', title: long, subtitle: long });
-    // The footer row is drawn (it differs with the studio and slug text)...
-    expect(rowsDiffer(a, b, 520, 562)).toBe(true);
+  it('keeps the subtitle and brand row on the canvas for very long titles', async () => {
+    // Twice the paragraph: more than four lines even at the 48px minimum.
+    const title = `${long} ${long}`;
+    const a = await render(brand, { slug: 'home', title, subtitle: long });
+    const b = await render({ ...brand, brand: { studio: 'ZZZZZZZZZZZZ' } }, { slug: 'zzzzzzzzzz', title, subtitle: long });
+    // The brand row is drawn (it differs with the studio and slug text)...
+    expect(rowsDiffer(a, b, ...BRAND_ROWS)).toBe(true);
     // ...and nothing spills into the bottom padding.
     expect(count(a, (p) => !near(p, BG, 0), 566, 630)).toBe(0);
     expect(a.warnings.join('\n')).toMatch(/title is too long for the card and was shortened/);
@@ -405,8 +411,9 @@ describe('og-card-generator: layout', () => {
 
   it('does not shrink a title that already fits', async () => {
     const short = await render(brand, { slug: 'a', title: 'Why' });
-    // A glyph of an 88px bold title reaches well below y=140.
-    expect(count(short, (p) => near(p, FG, 10), 140, 175)).toBeGreaterThan(50);
+    // The title sits on the bottom margin, so only an 88px title reaches up
+    // into rows 480-505; a shrunk one starts lower.
+    expect(count(short, (p) => near(p, FG, 10), 480, 505)).toBeGreaterThan(50);
   });
 });
 
@@ -481,5 +488,54 @@ describe('og-card-generator: generateCards', () => {
     await expect(generateCards({ brand, pages: [], outDir: '' })).rejects.toThrow(/outDir must be a directory/);
     await expect(generateCards({ brand, pages: [{ title: 7 }], outDir: 'x' })).rejects.toThrow(/pages\[0\]: page\.title must be a string/);
     await expect(generateCards({ brand, pages: [], outDir: 'x' })).resolves.toEqual([]);
+  });
+});
+
+describe('og-card-generator: accent and mark', () => {
+  // A solid pure-red square: easy to find in the rendered pixels.
+  const RED_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#ff0000"/></svg>';
+  const isRed = (p) => p[0] > 230 && p[1] < 40 && p[2] < 40;
+
+  function markFile(name, content) {
+    const path = join(tmp ?? scratch(), name);
+    writeFileSync(path, content);
+    return path;
+  }
+
+  it('passes palette.accent to the template and falls back to the text color', () => {
+    expect(buildCardHtml({ ...brand, palette: { ...brand.palette, accent: '#E07A5F' } }, {})).toContain('--accent:#e07a5f');
+    expect(buildCardHtml(brand, {})).toContain('--accent:#f2cc8f');
+    expect(buildCardHtml({ palette: { bg: '#ffffff' }, typography: { body: 'x' } }, {})).toContain('--accent:#111111');
+  });
+
+  it('rejects an accent that is not a hex color', () => {
+    expect(() => buildCardHtml({ ...brand, palette: { ...brand.palette, accent: 'red' } }, {})).toThrow(/palette\.accent must be a hex color/);
+  });
+
+  it('embeds the mark as a data: image and leaves it out by default', () => {
+    expect(buildCardHtml(brand, {})).not.toContain('<img');
+    const svg = buildCardHtml(brand, {}, { mark: markFile('mark.svg', RED_SVG) });
+    expect(svg).toContain('<img class="mark" src="data:image/svg+xml;base64,');
+    const png = buildCardHtml(brand, {}, { mark: markFile('mark.PNG', Buffer.from('89504e470d0a1a0a', 'hex')) });
+    expect(png).toContain('src="data:image/png;base64,');
+  });
+
+  it('draws the mark on the card', async () => {
+    const mark = markFile('mark.svg', RED_SVG);
+    const withMark = await render(brand, { slug: 'a', title: 'Mark' }, { mark });
+    const without = await render(brand, { slug: 'a', title: 'Mark' });
+    expect(count(withMark, isRed)).toBeGreaterThan(400);
+    expect(count(without, isRed)).toBe(0);
+    expect(withMark.warnings).toEqual([]);
+  });
+
+  it('rejects marks it cannot embed', () => {
+    const dir = tmp ?? scratch();
+    expect(() => buildCardHtml(brand, {}, { mark: join(dir, 'missing.svg') })).toThrow(/Cannot read mark .*missing\.svg: file not found/);
+    expect(() => buildCardHtml(brand, {}, { mark: markFile('mark.gif', 'GIF89a') })).toThrow(/use an \.svg, \.png, \.jpg or \.webp file/);
+    expect(() => buildCardHtml(brand, {}, { mark: markFile('big.svg', Buffer.alloc(2 * 1024 * 1024 + 1)) })).toThrow(/keep it under 2 MB/);
+    expect(() => buildCardHtml(brand, {}, { mark: String.raw`\\host\share\mark.svg` })).toThrow(/network path/);
+    expect(() => buildCardHtml(brand, {}, { mark: '//host/share/mark.svg' })).toThrow(/network path/);
+    expect(() => buildCardHtml(brand, {}, { mark: 7 })).toThrow(/mark must be a file path/);
   });
 });

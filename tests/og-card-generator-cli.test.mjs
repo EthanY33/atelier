@@ -218,3 +218,54 @@ describe('og-card-generator CLI: process', () => {
     }
   });
 });
+
+describe('og-card-generator CLI: mark', () => {
+  const RED_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#ff0000"/></svg>';
+
+  /** A project whose brand.json sets logos.mark to a red square. */
+  function projectWithMark(mark = 'brand/mark.svg') {
+    const dir = project();
+    mkdirSync(join(dir, 'brand'));
+    writeFileSync(join(dir, 'brand', 'mark.svg'), RED_SVG);
+    writeFileSync(join(dir, '.atelier', 'brand.json'), JSON.stringify({ ...brandJson, logos: { mark } }));
+    return dir;
+  }
+
+  async function redPixels(file) {
+    const { data, info } = await sharp(file).raw().toBuffer({ resolveWithObject: true });
+    let n = 0;
+    for (let i = 0; i < data.length; i += info.channels) if (data[i] > 230 && data[i + 1] < 40 && data[i + 2] < 40) n += 1;
+    return n;
+  }
+
+  it('uses logos.mark from brand.json, and --no-mark leaves it off', async () => {
+    const dir = projectWithMark();
+    expect((await run(['--title', 'T', '--slug', 'with'])).code).toBe(0);
+    expect((await run(['--title', 'T', '--slug', 'without', '--no-mark'])).code).toBe(0);
+    expect(await redPixels(join(dir, 'og-cards', 'with.png'))).toBeGreaterThan(400);
+    expect(await redPixels(join(dir, 'og-cards', 'without.png'))).toBe(0);
+  });
+
+  it('--mark overrides logos.mark', async () => {
+    const dir = project();
+    writeFileSync(join(dir, 'logo.svg'), RED_SVG);
+    const r = await run(['--title', 'T', '--mark', 'logo.svg']);
+    expect(r.code).toBe(0);
+    expect(await redPixels(join(dir, 'og-cards', 'index.png'))).toBeGreaterThan(400);
+  });
+
+  it('refuses a logos.mark outside the project root and writes nothing', async () => {
+    const dir = projectWithMark('../outside.svg');
+    const r = await run(['--title', 'T']);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/^atelier: brand.json logos.mark "\.\.\/outside\.svg" must be a relative path to a file inside the project root/);
+    expect(existsSync(join(dir, 'og-cards'))).toBe(false);
+  });
+
+  it('rejects --mark with --no-mark as a usage error', async () => {
+    project();
+    const r = await run(['--title', 'T', '--mark', 'a.svg', '--no-mark']);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/give --mark or --no-mark, not both/);
+  });
+});

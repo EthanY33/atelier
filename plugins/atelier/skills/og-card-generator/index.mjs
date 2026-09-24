@@ -14,7 +14,7 @@ import { parseArgs } from 'node:util';
 import sharp from 'sharp';
 import { formatError, launchChromium } from '../../lib/preflight.mjs';
 import { isMain } from '../../lib/cli.mjs';
-import { readJsonFile, readTextFile } from '../../lib/io.mjs';
+import { isNetworkPath, readJsonFile, readTextFile, resolveBrandPath } from '../../lib/io.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_PATH = join(__dirname, 'template.html');
@@ -30,6 +30,9 @@ const MIN_CONTRAST = 4.5;
 const DEFAULT_BG = '#111111';
 const DARK_TEXT = '#111111';
 const LIGHT_TEXT = '#ffffff';
+/** Logo formats a card can embed, by extension. */
+const MARK_TYPES = { '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
+const MARK_MAX_BYTES = 2 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Escaping
@@ -190,10 +193,31 @@ function optionalString(value, field) {
 }
 
 /**
- * Resolve everything that depends only on the brand (colors, fonts, footer),
- * so a batch does this work once.
+ * Read a logo file into the <img> the template shows next to the studio name.
+ * @returns {string} '' when there is no mark
  */
-function prepareBrand(brand, { fonts = {} } = {}) {
+function markImage(file) {
+  if (file === undefined || file === null || file === '') return '';
+  if (typeof file !== 'string') throw new Error('mark must be a file path');
+  const path = resolve(file);
+  if (isNetworkPath(file) || isNetworkPath(path)) throw new Error(`mark ${path} is a network path; copy the file into the project first`);
+  const type = MARK_TYPES[extname(path).toLowerCase()];
+  if (!type) throw new Error(`mark ${path}: use an .svg, .png, .jpg or .webp file`);
+  let buf;
+  try {
+    buf = readFileSync(path);
+  } catch (err) {
+    throw new Error(`Cannot read mark ${path}: ${err.code === 'ENOENT' ? 'file not found' : err.message}`, { cause: err });
+  }
+  if (buf.length > MARK_MAX_BYTES) throw new Error(`mark ${path} is ${buf.length} bytes; keep it under 2 MB`);
+  return `<img class="mark" src="data:${type};base64,${buf.toString('base64')}" alt="">`;
+}
+
+/**
+ * Resolve everything that depends only on the brand (colors, fonts, footer,
+ * mark), so a batch does this work once.
+ */
+function prepareBrand(brand, { fonts = {}, mark } = {}) {
   if (!brand || typeof brand !== 'object') throw new Error('brand must be an object (see loadBrand)');
   const palette = brand.palette ?? {};
   const typography = brand.typography ?? {};
@@ -223,6 +247,10 @@ function prepareBrand(brand, { fonts = {} } = {}) {
       `text color ${fgHex} on background ${bgHex} has contrast ${contrast.toFixed(2)}:1, below ${MIN_CONTRAST}:1 (WCAG AA). Set palette.fg to a color that reads on palette.bg.`,
     );
   }
+
+  // The accent only colors shapes and glows, so it has no contrast requirement.
+  const accentHex = palette.accent === undefined ? fgHex : palette.accent;
+  parseHex(accentHex, 'palette.accent');
 
   const bodyStack = optionalString(typography.body, 'typography.body');
   const displayStack = optionalString(typography.display, 'typography.display') || bodyStack;
@@ -257,6 +285,7 @@ function prepareBrand(brand, { fonts = {} } = {}) {
   const vars = [
     `--bg:${bgHex.toLowerCase()}`,
     `--fg:${fgHex.toLowerCase()}`,
+    `--accent:${accentHex.toLowerCase()}`,
     `--font-display:${fontStackCss(display)}`,
     `--font-body:${fontStackCss(body)}`,
   ];
@@ -268,11 +297,13 @@ function prepareBrand(brand, { fonts = {} } = {}) {
     style,
     bg: bgHex,
     fg: fgHex,
+    accent: accentHex,
     contrast,
     warnings,
     probe,
-    studioText: studio ? `${studio} /` : '',
+    studio,
     product,
+    mark: markImage(mark),
   };
 }
 
@@ -293,12 +324,14 @@ function renderHtml(prepared, page) {
     style: prepared.style,
     title: escapeHtml(title),
     subtitle: escapeHtml(subtitle),
-    studio: escapeHtml(prepared.studioText),
+    studio: escapeHtml(prepared.studio || prepared.product),
+    product: escapeHtml(prepared.product || prepared.studio),
     slug: escapeHtml(slug ? `/${slug}` : '/'),
+    mark: prepared.mark,
   };
   // One pass with a function replacer: `$` patterns in values stay literal and
   // a value that contains `{{title}}` is not substituted again.
-  return template().replace(/\{\{(style|title|subtitle|studio|slug)\}\}/g, (_, key) => values[key]);
+  return template().replace(/\{\{(style|title|subtitle|studio|product|slug|mark)\}\}/g, (_, key) => values[key]);
 }
 
 /**
@@ -306,7 +339,7 @@ function renderHtml(prepared, page) {
  * a card in a browser or for tests.
  * @param {object} brand - Brand config (see brand-memory loadBrand).
  * @param {{ slug?: string, title?: string, subtitle?: string, description?: string }} page
- * @param {{ fonts?: { display?: string, body?: string } }} [options]
+ * @param {{ fonts?: { display?: string, body?: string }, mark?: string }} [options]
  * @returns {string}
  */
 export function buildCardHtml(brand, page, options = {}) {
@@ -471,6 +504,7 @@ async function withBrowser(browser, fn) {
  *   page: { slug?: string, title?: string, subtitle?: string, description?: string },
  *   outPath: string,
  *   fonts?: { display?: string, body?: string },
+ *   mark?: string,
  *   browser?: import('playwright').Browser,
  *   onWarning?: (message: string) => void,
  * }} opts
@@ -479,9 +513,9 @@ async function withBrowser(browser, fn) {
  *   onWarning: receives contrast and missing-font warnings (default: printed to stderr).
  * @returns {Promise<string>} resolves with outPath
  */
-export async function generateCard({ brand, page, outPath, fonts, browser, onWarning } = {}) {
+export async function generateCard({ brand, page, outPath, fonts, mark, browser, onWarning } = {}) {
   if (typeof outPath !== 'string' || outPath === '') throw new Error('outPath must be a file path');
-  const prepared = prepareBrand(brand, { fonts });
+  const prepared = prepareBrand(brand, { fonts, mark });
   renderHtml(prepared, page); // validate the page before launching a browser
   const warn = makeWarn(onWarning);
   prepared.warnings.forEach(warn);
@@ -532,10 +566,10 @@ function slugOutPath(outDir, slug, index) {
  * }} opts
  * @returns {Promise<string[]>} resolves with the output paths, in page order
  */
-export async function generateCards({ brand, pages, outDir, fonts, browser, onWarning } = {}) {
+export async function generateCards({ brand, pages, outDir, fonts, mark, browser, onWarning } = {}) {
   if (!Array.isArray(pages)) throw new Error('pages must be an array of { slug, title, subtitle } objects');
   if (typeof outDir !== 'string' || outDir === '') throw new Error('outDir must be a directory path');
-  const prepared = prepareBrand(brand, { fonts });
+  const prepared = prepareBrand(brand, { fonts, mark });
 
   const outPaths = [];
   const seen = new Map();
@@ -593,6 +627,9 @@ Options:
   --project <dir>        project root holding .atelier/brand.json (default: current directory)
   --font-display <file>  font file (.woff2, .woff, .ttf, .otf) for typography.display
   --font-body <file>     font file for typography.body
+  --mark <file>          logo shown on the card (.svg, .png, .jpg, .webp)
+                         (default: logos.mark from brand.json, if set)
+  --no-mark              leave the logo off
   -h, --help             show this help
 
 Exit codes: 0 cards written, 2 usage or runtime error.`;
@@ -605,6 +642,8 @@ const CLI_OPTIONS = {
   project: { type: 'string' },
   'font-display': { type: 'string' },
   'font-body': { type: 'string' },
+  mark: { type: 'string' },
+  'no-mark': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
 };
 
@@ -619,6 +658,7 @@ function parseCli(argv) {
   }
   const { values, positionals } = parsed;
   if (values.help) return { help: true };
+  if (values.mark !== undefined && values['no-mark']) throw new UsageError('give --mark or --no-mark, not both');
   if (values.title !== undefined) {
     if (positionals.length > 0) {
       throw new UsageError(`--title renders one card without a manifest; give the output directory with --out (unexpected argument: ${positionals[0]})`);
@@ -671,7 +711,14 @@ export async function runCli(argv, {
       ? pagesFromManifest(resolve(cwd, cli.manifest))
       : [{ slug: values.slug, title: values.title, subtitle: values.subtitle }];
     const { loadBrand } = await import('../brand-memory/index.mjs');
-    const brand = loadBrand(resolve(cwd, values.project ?? '.'));
+    const projectRoot = resolve(cwd, values.project ?? '.');
+    const brand = loadBrand(projectRoot);
+    const brandMark = brand?.logos?.mark;
+    let mark;
+    if (values.mark !== undefined) mark = resolve(cwd, values.mark);
+    else if (!values['no-mark'] && typeof brandMark === 'string' && brandMark.trim() !== '') {
+      mark = resolveBrandPath(brandMark, projectRoot, 'logos.mark');
+    }
     const fonts = {
       display: values['font-display'] === undefined ? undefined : resolve(cwd, values['font-display']),
       body: values['font-body'] === undefined ? undefined : resolve(cwd, values['font-body']),
@@ -682,6 +729,7 @@ export async function runCli(argv, {
       pages,
       outDir,
       fonts,
+      mark,
       onWarning: (message) => stderr(`atelier: warning: ${message}\n`),
     });
     stdout(`Generated ${paths.length} OG card(s):\n`);

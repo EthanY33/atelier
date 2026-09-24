@@ -1,6 +1,6 @@
 ---
 name: og-card-generator
-description: Render 1200x630 Open Graph and Twitter card PNGs, one per page, from .atelier/brand.json colors, fonts and studio name; single card from flags or a batch from a pages.json manifest. Use when adding og:image or twitter:image meta tags, setting up social link previews for a site or blog, or regenerating cards after a brand color or font change.
+description: Render 1200x630 Open Graph and Twitter card PNGs, one per page, from .atelier/brand.json colors, fonts, logo and studio name; single card from flags or a batch from a pages.json manifest. Use when adding og:image or twitter:image meta tags, setting up social link previews for a site or blog, or regenerating cards after a brand color or font change.
 ---
 
 ## Run
@@ -27,7 +27,7 @@ const paths = await m.generateCards({
 for (const p of paths) console.log(p);" "${CLAUDE_SKILL_DIR}/index.mjs"
 ```
 
-Also exported: `generateCard({ brand, page, outPath })` for one card, and `buildCardHtml(brand, page)` for the HTML without rendering.
+Also exported: `generateCard({ brand, page, outPath })` for one card, and `buildCardHtml(brand, page, { fonts?, mark? })` for the HTML without rendering.
 
 ## Options
 
@@ -36,24 +36,30 @@ CLI:
 - `--title <text>`, `--subtitle <text>`, `--slug <slug>`, `--out <dir>`: one card without a manifest.
 - `--project <dir>`: where `.atelier/brand.json` lives (default: current directory).
 - `--font-display <file>`, `--font-body <file>`: font files (.woff2, .woff, .ttf, .otf) for the brand fonts.
+- `--mark <file>`: logo on the card (.svg, .png, .jpg, .webp, at most 2 MB). Default: `logos.mark` from brand.json when set, resolved inside the project root.
+- `--no-mark`: leave the logo off.
 - `-h`, `--help`: print usage and exit 0.
 
-API (both functions): `fonts: { display?, body? }` (font file paths), `browser` (reuse an open Playwright browser; it is left open), `onWarning(message)` (default: printed to stderr).
+API (both functions): `fonts: { display?, body? }` (font file paths), `mark` (logo file path; the API does not read `logos.mark` itself, so pass it), `browser` (reuse an open Playwright browser; it is left open), `onWarning(message)` (default: printed to stderr).
 
 Page fields:
 - `slug`: file name and footer path. Lowercase letters, digits, `-` and `_`, with `/` for nested folders (`blog/launch`). Default `index`.
 - `title`: falls back to `brand.product`.
 - `subtitle`: `description` is accepted as an alias.
 
-Brand fields read (nothing else, no logos):
+Brand fields read (nothing else):
 - `palette.bg`: default `#111111`.
 - `palette.fg`: default `#111111` or `#ffffff`, whichever contrasts more with `bg`.
+- `palette.accent`: shapes and glow only, never text; default `palette.fg`.
 - `typography.display` (title; falls back to `body`) and `typography.body`.
-- `brand.studio`: footer text.
+- `brand.studio` (falls back to `brand.product`) and `brand.product`.
+- `logos.mark`: the logo, CLI only (see `--mark`).
 
 ## Output
 
-`<outDir>/<slug>.png` per page, 1200x630 PNG. The CLI prints the written paths. Title is 88px bold, shrinks to 48px to fit 4 lines, then is shortened with an ellipsis; the subtitle keeps 2 lines; the footer shows `<studio> /` and `/<slug>` and always stays on the card.
+`<outDir>/<slug>.png` per page, 1200x630 PNG. The CLI prints the written paths.
+
+Layout: a brand row at the top (logo, studio name, and the page path in a pill), the title and subtitle anchored to the bottom margin, and one piece of art: a disc of light rising from the top-right corner in `palette.accent`, toned for light and dark backgrounds. The title is set in the display font at weight 400 (never a faked bold), 88px, shrinking to 48px to fit 4 lines, then shortened with an ellipsis; the subtitle keeps 2 lines; the brand row always stays on the card.
 
 Warnings (stderr, cards are still written): text contrast below 4.5:1, a brand font that is not installed and has no font file, a font file that fails to load, text shortened to fit.
 
