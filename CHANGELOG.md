@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Upgrade sharp from 0.35.4 to 0.35.5 to include the patched librsvg dependency (GHSA-wq5f-xc86-pv6w).
+- Update source-map-js from 1.2.1 to 1.2.2 in the runtime and development lockfiles to fix indexed source-map denial of service (GHSA-68fv-2mgg-jv7q).
+
 ## [1.1.0] - 2026-09-23
 
 atelier 1.1 redesigns the social cards: they now carry your logo and your accent color, and read well on light and dark brands alike. Nothing breaks; regenerate your cards to pick up the new design.
