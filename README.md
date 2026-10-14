@@ -11,7 +11,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-f2cc8f.svg)](./LICENSE)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-81b29a.svg)](https://code.claude.com/docs/en/plugins)
 [![Node 22+](https://img.shields.io/badge/node-22%2B-b6a4e6.svg)](https://nodejs.org)
-[![Featured in Awesome Claude Code](https://img.shields.io/badge/featured%20in-Awesome%20Claude%20Code-e07a5f.svg)](https://github.com/hesreallyhim/awesome-claude-code)
+[![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge.svg)](https://github.com/hesreallyhim/awesome-claude-code)
 
 **Design automation for Claude Code.** One `.atelier/brand.json` drives your design tokens, social cards,<br>
 icons, responsive images and video, and two audits keep the shipped page honest.
