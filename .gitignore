@@ -19,8 +19,6 @@ atelier-demo/
 # Local Claude Code settings
 .claude/settings.local.json
 
-# thryv-onboard skill scratch (recon notes, draft CLAUDE.md, onboarding questions)
-.thryv-onboard/
 # Serena MCP per-project metadata
 .serena/
 

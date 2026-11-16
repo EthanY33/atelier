@@ -22,6 +22,8 @@ icons, responsive images and video, and two audits keep the shipped page honest.
 
 ---
 
+**Who it is for:** front-end developers and small studios who want brand assets and UX checks generated from one config file. It runs inside Claude Code, and the same skills also run without it through the `atelier` CLI and the GitHub Action. atelier calls no model API.
+
 ## Install
 
 In Claude Code:
