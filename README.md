@@ -184,6 +184,8 @@ npm run demo                # every skill against bundled fixtures into ./.ateli
 
 CI runs the suite on Ubuntu, macOS and Windows with Node 22 and 24, enforces a 70% coverage gate, validates the plugin with `claude plugin validate`, and repeats a marketplace-style install on every OS. See [CONTRIBUTING](docs/contributing.md) and the [architecture notes](docs/architecture.md).
 
+Planned work for 1.2 to 1.4 is in [ROADMAP.md](ROADMAP.md), with an issue and a plan doc for each item.
+
 ## License
 
 [MIT](./LICENSE). No telemetry: atelier never phones home.
