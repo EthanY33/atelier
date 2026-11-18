@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- responsive-image-pipeline: the default `<picture>` snippet now puts `width` and `height` on the `<img>`, equal to the real dimensions of the fallback file, so the browser can reserve space and avoid layout shift. Pass `--no-dimensions` (API `noDimensions: true`) for the old markup. `--json` entries gain `dimensions`.
+
 ### Security
 
 - Upgrade sharp from 0.35.4 to 0.35.5 to include the patched librsvg dependency (GHSA-wq5f-xc86-pv6w).

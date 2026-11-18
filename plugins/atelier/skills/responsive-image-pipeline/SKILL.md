@@ -33,8 +33,9 @@ CLI flag / API option, default:
 - `--lqip-width` / `lqipWidth`: `24`.
 - `--name` / `name`: output file stem, default the input name without extension. CLI: one input only.
 - API only: `quality` `{ avif: 60, webp: 78, jpg: 80 }`; `background` `#ffffff` (transparent pixels are flattened onto it for JPEG output).
-- Snippet (`buildPictureSnippet`): `--alt` / `alt` (default empty, meaning decorative), `--sizes` / `sizes` (`100vw`), `--base-url` / `baseUrl` (URL prefix, default bare file names), `--loading` / `loading` (`lazy`; use `eager` for the hero/LCP image), `fallbackFormat` and `formats` (taken from the result).
-- `--json`: print one JSON object per input (the result plus `snippet`) instead of text.
+- Snippet (`buildPictureSnippet`): `--alt` / `alt` (default empty, meaning decorative), `--sizes` / `sizes` (`100vw`), `--base-url` / `baseUrl` (URL prefix, default bare file names), `--loading` / `loading` (`lazy`; use `eager` for the hero/LCP image), `fallbackFormat`, `formats` and `images` (taken from the result).
+- `--no-dimensions` / `noDimensions`: leave `width` and `height` off the snippet's `<img>`. By default they equal the real dimensions of the fallback file (the `<img src>` file), which lets the browser reserve space and avoids layout shift. Use the option when you size images with CSS.
+- `--json`: print one JSON object per input (the result plus `dimensions`, the fallback file's `{ width, height }`, and `snippet`) instead of text.
 
 ## Output
 

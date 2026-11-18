@@ -515,12 +515,27 @@ export async function processImage({
 }
 
 /**
+ * Width and height of the file the `<img src>` points to, from a processImage
+ * `images` list, or null when it holds no matching entry.
+ */
+function fallbackDimensions(images, format, width) {
+  if (!Array.isArray(images)) return null;
+  const wanted = normFormat(format);
+  const hit = images.find((i) => i && normFormat(i.format) === wanted && i.width === width);
+  return hit && Number.isInteger(hit.width) && Number.isInteger(hit.height) ? { width: hit.width, height: hit.height } : null;
+}
+
+/**
  * Build a copy-pasteable `<picture>` HTML snippet.
  *
  * Pass the processImage result straight in (`{ ...result, alt }`) so the
  * srcset widths, formats and fallback file match what was written. `basename`
  * is the literal stem on disk and is URL-encoded in full (a '%' becomes %25).
  * Every attribute is HTML-escaped.
+ *
+ * The `<img>` carries `width` and `height` equal to the dimensions of the
+ * fallback file, found in `images` (part of the processImage result). Without
+ * `images`, or with `noDimensions`, the attributes are left off.
  *
  * @param {{
  *   basename: string,
@@ -531,8 +546,13 @@ export async function processImage({
  *   formats?: string[],
  *   baseUrl?: string,
  *   loading?: 'lazy'|'eager',
+ *   images?: Array<{ format: string, width: number, height: number }>,
+ *   noDimensions?: boolean,
  * }} opts
  *   fallbackFormat: extension of the <img src> file (default: the last of `formats`).
+ *   images: the processImage result's `images`; the entry for the <img src> file
+ *     supplies width and height.
+ *   noDimensions: leave width and height off the <img> (for images sized with CSS).
  *   baseUrl: prefix for every URL, e.g. '/img/' (default: bare file names).
  *     Unsafe characters are encoded; existing %XX escapes are kept.
  * @returns {string}
@@ -546,6 +566,8 @@ export function buildPictureSnippet({
   formats = DEFAULT_FORMATS,
   baseUrl = '',
   loading = 'lazy',
+  images,
+  noDimensions = false,
 } = {}) {
   if (typeof name !== 'string' || name === '') throw new TypeError('buildPictureSnippet: basename is required');
   const sorted = toWidths(widths);
@@ -561,6 +583,8 @@ export function buildPictureSnippet({
   const url = (w, ext) => escapeHtmlAttr(`${prefix}${stemUrl}-${w}.${ext}`);
   const safeSizes = escapeHtmlAttr(sizes ?? '100vw');
   const largest = sorted[sorted.length - 1];
+  const size = noDimensions ? null : fallbackDimensions(images, fallbackExt, largest);
+  const sizeAttrs = size ? ` width="${size.width}" height="${size.height}"` : '';
 
   return [
     '<picture>',
@@ -568,7 +592,7 @@ export function buildPictureSnippet({
       const srcset = sorted.map((w) => `${url(w, f)} ${w}w`).join(', ');
       return `  <source type="${FORMATS[f].mime}" srcset="${srcset}" sizes="${safeSizes}">`;
     }),
-    `  <img src="${url(largest, fallbackExt)}" alt="${escapeHtmlAttr(alt ?? '')}" loading="${loading}" decoding="async">`,
+    `  <img src="${url(largest, fallbackExt)}" alt="${escapeHtmlAttr(alt ?? '')}" loading="${loading}" decoding="async"${sizeAttrs}>`,
     '</picture>',
   ].join('\n');
 }
@@ -598,6 +622,8 @@ Options:
       --base-url <url>   prefix for snippet URLs, e.g. /img/ (default: file names)
       --loading <mode>   lazy or eager; use eager for above-the-fold images
                          (default lazy)
+      --no-dimensions    leave width and height off the snippet's <img> (for images
+                         sized with CSS)
       --json             print a JSON report instead of text
   -h, --help             show this help
 
@@ -614,6 +640,7 @@ const CLI_OPTIONS = {
   sizes: { type: 'string' },
   'base-url': { type: 'string' },
   loading: { type: 'string' },
+  'no-dimensions': { type: 'boolean' },
   json: { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
 };
@@ -752,6 +779,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     if (!v.out) throw new UsageError('--out <dir> is required');
     opts = {
       json: Boolean(v.json),
+      noDimensions: Boolean(v['no-dimensions']),
       outDir: v.out,
       widths: v.widths === undefined ? DEFAULT_WIDTHS : asUsage(() => toWidths(splitList(v.widths), '--widths')),
       formats: v.formats === undefined ? DEFAULT_FORMATS : asUsage(() => toFormats(splitList(v.formats), '--formats')),
@@ -799,8 +827,10 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
         sizes: opts.sizes,
         baseUrl: opts.baseUrl,
         loading: opts.loading,
+        noDimensions: opts.noDimensions,
       });
-      report.push({ input: file, ok: true, ...result, snippet });
+      const dimensions = fallbackDimensions(result.images, result.fallbackFormat ?? result.formats.at(-1), result.widths.at(-1));
+      report.push({ input: file, ok: true, ...result, dimensions, snippet });
       if (!opts.json) {
         const skipped = result.skippedWidths.length
           ? ` (${result.skippedWidths.join(', ')} skipped: larger than the ${result.source.width} px source)`

@@ -138,6 +138,27 @@ describe('responsive-image-pipeline CLI', { timeout: 60_000 }, () => {
     expect(entry.snippet).toContain('<img src="cover-120.jpg" alt=""');
   });
 
+  it('puts width and height on the <img>, reports them in --json, and --no-dimensions removes them', async () => {
+    const tmp = scratch();
+    const img = join(tmp, 'pic.jpg');
+    await image(img, { format: 'jpeg' });
+    const out = join(tmp, 'out');
+
+    const text = await cli(img, '--out', out, '--widths', '120', '--alt', 'Pic');
+    expect(text.code, text.stderr).toBe(0);
+    expect(text.stdout).toContain('decoding="async" width="120" height="80">');
+
+    const json = await cli(img, '--out', out, '--widths', '120', '--json');
+    const [entry] = JSON.parse(json.stdout);
+    expect(entry.dimensions).toEqual({ width: 120, height: 80 });
+    expect(entry.snippet).toContain('width="120" height="80"');
+
+    const off = await cli(img, '--out', out, '--widths', '120', '--alt', 'Pic', '--no-dimensions');
+    expect(off.code, off.stderr).toBe(0);
+    expect(off.stdout).toContain('loading="lazy" decoding="async">');
+    expect(off.stdout).not.toMatch(/<img [^>]*\bwidth=/);
+  });
+
   it('keeps going after a failed input and exits 2', async () => {
     const tmp = scratch();
     const good = join(tmp, 'good.png');
@@ -297,7 +318,7 @@ describe('responsive-image-pipeline SKILL.md', { timeout: 60_000 }, () => {
     const inHelp = flags(help);
     expect([...inDoc].filter((f) => !inHelp.has(f))).toEqual([]);
     expect([...inHelp].filter((f) => !inDoc.has(f))).toEqual([]);
-    expect(inHelp.size).toBe(13);
+    expect(inHelp.size).toBe(14);
   });
 
   it('is plain ASCII prose with no em or en dashes', () => {
