@@ -1,7 +1,9 @@
 name: Dependency audit
 
-# Weekly check of the plugin's shipped dependencies. Reports only; upgrades
-# are made by hand so every commit in this repo has a human author.
+# Weekly check of both dependency trees: the plugin's shipped dependencies and
+# the root dev dependencies (Vitest and its coverage plugin, which CI runs on
+# three operating systems). The run fails on a finding; upgrades are made by
+# hand so every commit in this repo has a human author.
 on:
   schedule:
     - cron: '17 6 * * 1'
@@ -12,17 +14,20 @@ permissions:
 
 jobs:
   audit:
-    name: npm audit (plugin runtime deps)
+    name: npm audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
 
-      - name: Audit plugins/atelier
+      - name: Audit plugins/atelier (runtime deps)
         run: npm audit --prefix plugins/atelier --omit=dev --audit-level=moderate
+
+      - name: Audit root dev dependencies
+        run: npm audit --audit-level=high
 
       - name: Report outdated pins
         if: always()

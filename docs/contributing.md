@@ -143,7 +143,8 @@ A new rule can fail pages that passed before, so note it in the CHANGELOG under 
   ```
 
   After a Playwright upgrade, run `npm run setup:browsers` for the matching Chromium. Then run `npm test`, `npm run check:versions` and `npm run smoke:plugin`, and commit both files.
-- `.github/workflows/audit.yml` runs `npm audit` on the plugin's dependencies every Monday (and on demand) and reports outdated pins. It only reports.
+- `.github/workflows/audit.yml` runs `npm audit` every Monday (and on demand) on the plugin's runtime dependencies (moderate and up) and on the root lockfile including dev dependencies (high and up), and fails on a finding. It also lists outdated plugin pins.
+- Third-party GitHub Actions are pinned to a full 40-character commit SHA, with the release tag in a trailing comment (`uses: actions/checkout@<sha> # v7.0.1`). The local `./` action is exempt. `npm run check:versions` fails on any other `uses:` line in `.github/workflows`. To bump an action, look up the commit of the new release tag (`gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq .object`; an annotated tag needs one more step through `git/tags/<sha>`), then replace the SHA and the comment together in every workflow that uses it.
 - There is no Dependabot, so every commit has a human author.
 
 ## Commits and pull requests

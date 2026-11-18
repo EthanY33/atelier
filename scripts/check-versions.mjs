@@ -11,6 +11,8 @@
  *   - CHANGELOG.md has a section for the version
  *   - root devDependencies that mirror plugin dependencies (for tests) use
  *     the exact same pins
+ *   - every third-party `uses:` line in .github/workflows is pinned to a full
+ *     commit SHA with a version comment (the local `./` action is exempt)
  *   - with --tag vX.Y.Z, the tag matches too
  *
  * Usage: node scripts/check-versions.mjs [--tag v1.0.0]
@@ -18,6 +20,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { checkWorkflowPins } from './workflow-pins.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -48,6 +52,8 @@ for (const [name, pin] of Object.entries(rootPkg.devDependencies ?? {})) {
   const pluginPin = pluginPkg.dependencies?.[name];
   if (pluginPin && pluginPin !== pin) problems.push(`${name}: root pins ${pin}, plugin pins ${pluginPin}`);
 }
+
+problems.push(...checkWorkflowPins(root));
 
 const tagIdx = process.argv.indexOf('--tag');
 if (tagIdx !== -1) {
