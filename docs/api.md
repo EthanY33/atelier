@@ -136,6 +136,7 @@ Exit codes: 0 success; 1 `validate` found errors (including malformed JSON); 2 u
   | `projectRoot` | `process.cwd()` | Directory holding `.atelier/brand.json` |
   | `outDir` | `'dist/tokens'` | Output directory; absolute, or relative to `projectRoot` |
   | `targets` | all | Array or comma-separated string of `css`, `tailwind`, `dts`, `figma` |
+  | `check` | `false` | Write nothing, not even `outDir`. Compare the rendered files with the files on disk (CRLF and LF count as equal) and resolve to `{ stale: string[], missing: string[] }` of absolute paths instead of the written paths |
 
   Throws the brand-memory codes, a `TypeError` for an empty or unknown target, or `DEPS_MISSING`.
 - `emitCss(cfg)`, `emitTailwind(cfg)`, `emitDts(cfg)`, `emitJs(cfg)`, `emitFigmaVariables(cfg)`: each takes a brand config object and returns the file content as a string, with no I/O. They throw a `TypeError` for a palette value that is not a CSS color (brand.json only allows hex, so this only happens with a hand-built config).
@@ -146,7 +147,7 @@ Exit codes: 0 success; 1 `validate` found errors (including malformed JSON); 2 u
 ### CLI
 
 ```
-atelier tokens [projectRoot] [--root <dir>] [--out <dir>] [--targets css,tailwind,dts,figma]
+atelier tokens [projectRoot] [--root <dir>] [--out <dir>] [--targets css,tailwind,dts,figma] [--check]
 ```
 
 Give the project root as the argument or with `--root`, not both. Prints each written file's absolute path on its own line.
@@ -158,7 +159,9 @@ Give the project root as the argument or with `--root`, not both. Prints each wr
 | `dts` | `tokens.js`, `tokens.d.ts` | Frozen `colors` and `fonts` objects, one `export const` per color, and their types |
 | `figma` | `figma-variables.json` | Request body for Figma `POST /v1/files/:file_key/variables` |
 
-Exit codes: 0 written; 2 usage error or failure.
+With `--check`, nothing is written: the CLI prints `stale: <path>` or `missing: <path>` per difference.
+
+Exit codes: 0 written, or `--check` found everything up to date; 1 `--check` found a stale or missing file; 2 usage error or failure.
 
 ## og-card-generator
 
