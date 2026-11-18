@@ -323,9 +323,88 @@ describe('SKILL.md', () => {
     const cliDocs = md.split('\n').filter((l) => l.includes('bin/atelier" tokens') || l.startsWith('| `')).join('\n');
     const documented = flags(cliDocs);
     const usage = flags(USAGE);
-    expect([...usage].sort()).toEqual(['--help', '--out', '--root', '--targets']);
+    expect([...usage].sort()).toEqual(['--check', '--help', '--out', '--root', '--targets']);
     expect([...documented].sort()).toEqual([...usage].sort());
     expect(USAGE).toMatch(/-h, --help/);
     expect(md).toContain('`-h`, `--help`');
+  });
+});
+
+describe('check mode', () => {
+  const read = (root, f) => readFileSync(join(root, 'dist', 'tokens', f), 'utf8');
+
+  it('reports nothing for freshly written files and changes no file', async () => {
+    const root = project();
+    await syncTokens({ projectRoot: root });
+    const before = ALL_FILES.map((f) => read(root, f));
+    expect(await syncTokens({ projectRoot: root, check: true })).toEqual({ stale: [], missing: [] });
+    expect(ALL_FILES.map((f) => read(root, f))).toEqual(before);
+  });
+
+  it('lists a changed file as stale and a deleted file as missing', async () => {
+    const root = project();
+    await syncTokens({ projectRoot: root });
+    const out = join(root, 'dist', 'tokens');
+    writeFileSync(join(out, 'tokens.css'), `${read(root, 'tokens.css')}/* edited */\n`);
+    rmSync(join(out, 'figma-variables.json'));
+    expect(await syncTokens({ projectRoot: root, check: true })).toEqual({
+      stale: [join(out, 'tokens.css')],
+      missing: [join(out, 'figma-variables.json')],
+    });
+    expect(existsSync(join(out, 'figma-variables.json'))).toBe(false);
+  });
+
+  it('never creates the output directory', async () => {
+    const root = project();
+    const r = await syncTokens({ projectRoot: root, check: true });
+    expect(r.stale).toEqual([]);
+    expect(r.missing).toEqual(ALL_FILES.map((f) => join(root, 'dist', 'tokens', f)));
+    expect(readdirSync(root)).toEqual(['.atelier']);
+  });
+
+  it('treats CRLF-converted but otherwise identical files as clean', async () => {
+    const root = project();
+    await syncTokens({ projectRoot: root });
+    for (const f of ALL_FILES) {
+      const path = join(root, 'dist', 'tokens', f);
+      writeFileSync(path, readFileSync(path, 'utf8').replace(/\n/g, '\r\n'));
+    }
+    expect(await syncTokens({ projectRoot: root, check: true })).toEqual({ stale: [], missing: [] });
+  });
+
+  it('only compares the requested targets', async () => {
+    const root = project();
+    await syncTokens({ projectRoot: root, targets: ['css'] });
+    expect(await syncTokens({ projectRoot: root, targets: ['css'], check: true })).toEqual({ stale: [], missing: [] });
+    const r = await syncTokens({ projectRoot: root, targets: 'css,figma', check: true });
+    expect(r).toEqual({ stale: [], missing: [join(root, 'dist', 'tokens', 'figma-variables.json')] });
+  });
+
+  it('CLI --check exits 0 when clean and prints nothing', async () => {
+    const root = project();
+    await syncTokens({ projectRoot: root });
+    const r = await cli(['--root', root, '--check']);
+    expect(r).toEqual({ code: 0, stdout: '', stderr: '' });
+  });
+
+  it('CLI --check exits 1 and lists stale and missing paths', async () => {
+    const root = project();
+    await syncTokens({ projectRoot: root });
+    const out = join(root, 'dist', 'tokens');
+    writeFileSync(join(out, 'tokens.js'), 'export const colors = {};\n');
+    rmSync(join(out, 'tokens.css'));
+    const r = await cli(['--root', root, '--check']);
+    expect(r.code).toBe(1);
+    expect(r.stdout.trim().split(/\r?\n/).sort()).toEqual([`missing: ${join(out, 'tokens.css')}`, `stale: ${join(out, 'tokens.js')}`]);
+    expect(r.stderr).toBe('');
+    expect(existsSync(join(out, 'tokens.css'))).toBe(false);
+  });
+
+  it('CLI --check honors --targets and --out', async () => {
+    const root = project();
+    const out = join(scratch, `check-out-${n}`);
+    await syncTokens({ projectRoot: root, outDir: out, targets: ['css'] });
+    expect((await cli(['--root', root, '--out', out, '--targets', 'css', '--check'])).code).toBe(0);
+    expect((await cli(['--root', root, '--out', out, '--targets', 'css,dts', '--check'])).code).toBe(1);
   });
 });

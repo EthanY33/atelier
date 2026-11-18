@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- design-token-sync: `--check` (API `check: true`) compares the rendered token files with the files on disk, writes nothing and exits 1 when any file is stale or missing, so CI can catch a brand.json change that was not followed by a regeneration.
+
 ### Security
 
 - Upgrade sharp from 0.35.4 to 0.35.5 to include the patched librsvg dependency (GHSA-wq5f-xc86-pv6w).

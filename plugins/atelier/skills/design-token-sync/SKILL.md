@@ -27,9 +27,18 @@ node --input-type=module -e "const { pathToFileURL } = await import('node:url');
 | `[projectRoot]` or `--root <dir>` | `projectRoot` | cwd | Directory holding `.atelier/brand.json` |
 | `--out <dir>` | `outDir` | `dist/tokens` | Output directory: absolute, or relative to the project root |
 | `--targets <list>` | `targets` (array or comma string) | all | Any of `css`, `tailwind`, `dts`, `figma` |
+| `--check` | `check: true` | off | Write nothing; report files that differ from brand.json or are missing |
 | `-h`, `--help` | | | Print usage to stdout and exit 0 |
 
 An unknown or empty target list is a usage error. All files are rendered before any is written.
+
+## Check mode
+
+`--check` renders the requested files and compares them with the files in the output directory, treating CRLF and LF as equal. It never creates or modifies a file, not even the output directory. The CLI prints `stale: <path>` for a file that differs and `missing: <path>` for an absent one, and exits 1 if there is any; with `check: true` the API resolves to `{ stale, missing }` (arrays of absolute paths) instead of the written paths. Use it in CI to catch brand.json changes that were not followed by a regeneration:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/atelier" tokens --out src/styles/tokens --check
+```
 
 ## Output
 
@@ -49,7 +58,8 @@ Use the Tailwind file as a preset (`import tokens from './dist/tokens/tailwind.c
 
 ## Exit codes
 
-- `0`: files written, or `--help`.
+- `0`: files written, `--help`, or `--check` found every file up to date.
+- `1`: `--check` found a stale or missing file.
 - `2`: usage error (usage printed to stderr), or a failure such as a missing or invalid brand.json (`atelier: <message>` on stderr).
 
 ## Notes
