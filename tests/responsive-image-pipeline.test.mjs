@@ -472,6 +472,75 @@ describe('responsive-image-pipeline', { timeout: 30_000 }, () => {
     expect(readdirSync(outDir)).toEqual([]);
   });
 
+  describe('snippet width and height', () => {
+    const imgTag = (html) => html.match(/<img [^>]*>/)[0];
+
+    it('puts the real fallback dimensions on the <img> when the processImage result is passed straight in', async () => {
+      const tmp = scratch();
+      const input = join(tmp, 'photo.jpg');
+      await solid(input, { width: 800, height: 500, format: 'jpeg' });
+      const outDir = join(tmp, 'out');
+      const result = await processImage({ input, outDir, widths: [200, 400] });
+
+      const m = await meta(result.fallback);
+      expect([m.width, m.height]).toEqual([400, 250]);
+      const tag = imgTag(buildPictureSnippet({ ...result, alt: 'A photo' }));
+      expect(tag).toBe('<img src="photo-400.jpg" alt="A photo" loading="lazy" decoding="async" width="400" height="250">');
+
+      // A cached rerun carries the same dimensions.
+      const again = await processImage({ input, outDir, widths: [200, 400] });
+      expect(again.cached).toBe(true);
+      expect(imgTag(buildPictureSnippet({ ...again }))).toContain('width="400" height="250"');
+    });
+
+    it('uses the source width as the top size for a downscaled source', async () => {
+      const tmp = scratch();
+      const input = join(tmp, 'small.png');
+      await solid(input, { width: 300, height: 200 });
+      const result = await processImage({ input, outDir: join(tmp, 'out'), widths: [200, 1280] });
+
+      expect(result.widths).toEqual([200, 300]);
+      const tag = imgTag(buildPictureSnippet({ ...result }));
+      expect(tag).toContain('src="small-300.png"');
+      expect(tag).toContain('width="300" height="200"');
+    });
+
+    it('reports the oriented size of an EXIF-rotated portrait source', async () => {
+      const tmp = scratch();
+      const input = join(tmp, 'rot.jpg');
+      writeFileSync(input, await sharp({ create: { width: 200, height: 100, channels: 3, background: '#0000ff' } })
+        .jpeg()
+        .withMetadata({ orientation: 6 })
+        .toBuffer());
+      const result = await processImage({ input, outDir: join(tmp, 'out'), widths: [50] });
+
+      const m = await meta(result.fallback);
+      expect([m.width, m.height]).toEqual([50, 100]);
+      expect(imgTag(buildPictureSnippet({ ...result }))).toContain('width="50" height="100"');
+    });
+
+    it('takes the dimensions from the last <source> format when there is no fallback file', async () => {
+      const tmp = scratch();
+      const input = join(tmp, 'shot.png');
+      await solid(input, { width: 800, height: 500 });
+      const result = await processImage({ input, outDir: join(tmp, 'out'), widths: [400], fallback: false });
+
+      expect(imgTag(buildPictureSnippet({ ...result }))).toContain('src="shot-400.webp"');
+      expect(imgTag(buildPictureSnippet({ ...result }))).toContain('width="400" height="250"');
+    });
+
+    it('noDimensions restores the old markup, and a call without images has no attributes', async () => {
+      const tmp = scratch();
+      const input = join(tmp, 'photo.jpg');
+      await solid(input, { width: 800, height: 500, format: 'jpeg' });
+      const result = await processImage({ input, outDir: join(tmp, 'out'), widths: [200, 400] });
+
+      const plain = buildPictureSnippet({ ...result, noDimensions: true });
+      expect(imgTag(plain)).toBe('<img src="photo-400.jpg" alt="" loading="lazy" decoding="async">');
+      expect(plain).toBe(buildPictureSnippet({ basename: 'photo', widths: [200, 400], fallbackFormat: 'jpg' }));
+    });
+  });
+
   it('never overwrites the source image with an output', async () => {
     const tmp = scratch();
     const input = join(tmp, 'x-40.webp');

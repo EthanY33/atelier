@@ -244,6 +244,8 @@ Exit codes: 0 cards written; 2 usage or runtime error.
   | `sizes` | `'100vw'` | `sizes` attribute |
   | `baseUrl` | `''` | Prefix for every URL, such as `/img/`; existing `%XX` escapes are kept |
   | `loading` | `'lazy'` | `lazy` or `eager` |
+  | `images` | none | The `images` list of the `processImage` result. The entry for the `<img src>` file gives the `width` and `height` attributes; without it they are left off |
+  | `noDimensions` | `false` | Leave `width` and `height` off the `<img>`, for images sized with CSS |
 
   Every attribute is HTML-escaped. Throws a `TypeError` for a missing `basename`, an unsupported `fallbackFormat` or an invalid `loading`.
 - `runCli(argv?: string[], { stdout?, stderr? }?): Promise<number>`. `stdout` and `stderr` are objects with `write(s)`.
@@ -254,9 +256,9 @@ Exit codes: 0 cards written; 2 usage or runtime error.
 atelier images <input...> --out <dir> [options]
 ```
 
-An input is an image file, a `file://` URL or a folder (its images, not recursive). Flags: `-o, --out <dir>` (required), `-w, --widths <list>`, `-f, --formats <list>`, `--fallback <fmt>` (`none` for no fallback), `--lqip-width <px>`, `--name <stem>` (one input only), `--alt <text>`, `--sizes <value>`, `--base-url <url>`, `--loading <lazy|eager>`, `--json`. Defaults match the API. In one run, inputs that share a stem get distinct names. Remote URLs are not fetched.
+An input is an image file, a `file://` URL or a folder (its images, not recursive). Flags: `-o, --out <dir>` (required), `-w, --widths <list>`, `-f, --formats <list>`, `--fallback <fmt>` (`none` for no fallback), `--lqip-width <px>`, `--name <stem>` (one input only), `--alt <text>`, `--sizes <value>`, `--base-url <url>`, `--loading <lazy|eager>`, `--no-dimensions`, `--json`. Defaults match the API. In one run, inputs that share a stem get distinct names. Remote URLs are not fetched.
 
-Output per source `<name>`: `<name>-<w>.avif` and `<name>-<w>.webp` per width, `<name>-<top>.jpg` or `.png` (the fallback, unless it is already a variant), `<name>-lqip.txt` (the placeholder data URL) and `<name>.cache` (the cache manifest; delete it to force regeneration). Text mode prints a summary and the snippet per input. `--json` prints one JSON array with an entry per input: `{ input, ok: true, ...Result, snippet }` or `{ input, ok: false, error }`.
+Output per source `<name>`: `<name>-<w>.avif` and `<name>-<w>.webp` per width, `<name>-<top>.jpg` or `.png` (the fallback, unless it is already a variant), `<name>-lqip.txt` (the placeholder data URL) and `<name>.cache` (the cache manifest; delete it to force regeneration). Text mode prints a summary and the snippet per input. `--json` prints one JSON array with an entry per input: `{ input, ok: true, ...Result, dimensions, snippet }` (`dimensions` is the fallback file's `{ width, height }`, or `null`) or `{ input, ok: false, error }`.
 
 Exit codes: 0 every input processed or cached; 2 usage error, or at least one input failed (the others still run).
 
