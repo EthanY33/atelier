@@ -383,6 +383,15 @@ describe('user-scalable-no', () => {
     }
   });
 
+  it('reads whitespace-separated viewport properties like a browser does', async () => {
+    const content = 'width=device-width initial-scale=1 user-scalable=no';
+    const r = await run('user-scalable-no', vp(content));
+    expect(r.nodes).toHaveLength(1);
+    expect(r.nodes[0].message).toBe('user-scalable=no blocks zooming to 200%; remove it.');
+    expect((await run('viewport-meta-missing', vp(content))).status).toBe('passed');
+    expect((await run('viewport-meta-missing', vp('width = device-width , initial-scale = 1'))).status).toBe('passed');
+  });
+
   it('passes zoomable viewports and is not applicable without a viewport meta', async () => {
     for (const content of ['width=device-width, initial-scale=1', 'width=device-width, maximum-scale=5', 'user-scalable=yes, maximum-scale=2', 'maximum-scale=device-width']) {
       expect((await run('user-scalable-no', vp(content))).status, content).toBe('passed');

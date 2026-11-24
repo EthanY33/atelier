@@ -206,7 +206,9 @@ export function buildHtmlModel(text, meta = {}) {
   const viewportContent = viewportEl ? metas.get(viewportEl).attrs.get('content') ?? null : null;
   const viewportProps = {};
   if (viewportContent !== null) {
-    for (const part of viewportContent.split(/[,;]/)) {
+    // Browsers separate properties by whitespace, commas or semicolons and
+    // allow spaces around '='.
+    for (const part of viewportContent.replace(/\s*=\s*/g, '=').split(/[\s,;]+/)) {
       const [k, ...rest] = part.split('=');
       const key = k.trim().toLowerCase();
       if (!key) continue;
