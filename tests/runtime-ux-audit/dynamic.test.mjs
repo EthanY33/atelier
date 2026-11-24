@@ -646,6 +646,40 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
     }
   }, 120_000);
 
+  it('waits out a slow exit animation before falling back to the close button', async () => {
+    const PAGE = (ms, ignoreEscape) => '<!doctype html><meta name="viewport" content="width=device-width">'
+      + '<button id="op" aria-haspopup="dialog" aria-controls="dlg">Open</button>'
+      + `<div id="dlg" role="dialog" aria-modal="true" hidden style="transition:opacity ${ms}ms"><button id="x" type="button" aria-label="Close">x</button></div>`
+      + '<script>(function(){var op=document.getElementById("op"),d=document.getElementById("dlg"),closing=false;'
+      + 'function close(){if(closing)return;closing=true;op.focus();d.style.opacity="0";setTimeout(function(){d.hidden=true;closing=false;},' + ms + ');}'
+      + 'op.addEventListener("click",function(){d.hidden=false;d.style.opacity="1";d.querySelector("#x").focus();});'
+      + 'document.getElementById("x").addEventListener("click",close);'
+      + (ignoreEscape ? '' : 'document.addEventListener("keydown",function(e){if(e.key==="Escape")close();});')
+      + '})();</script>';
+    const run = async (html) => {
+      const { dir, cleanup } = tempDir('ux-dyn-exit-');
+      try {
+        writeFiles(dir, { 'index.html': html });
+        const root = safeRealpath(dir);
+        const filePath = join(root, 'index.html');
+        const urls = createPageUrls({ kind: 'file', docUrl: pathToFileURL(filePath).href, root });
+        const out = await runDynamicPass({
+          page: { kind: 'file', url: pathToFileURL(filePath).href, filePath, root },
+          toDisplay: (u) => urls.toDisplay(u),
+          limits: { settleMs: 100, maxTabs: 1, maxDialogTriggers: 1 },
+        });
+        return out.dialogs;
+      } finally {
+        cleanup();
+      }
+    };
+    expect(await run(PAGE(450, false))).toEqual([
+      { trigger: '#op', opened: true, closed: true, closeMethod: 'escape', activeAfterClose: '#op', restoredToTrigger: true },
+    ]);
+    const ignoring = await run(PAGE(50, true));
+    expect(ignoring[0]).toMatchObject({ closed: true, closeMethod: 'close-button' });
+  }, 120_000);
+
   it('never taps or opens a button that would submit a form', async () => {
     const PAGE = '<!doctype html><meta name="viewport" content="width=device-width">'
       + '<form method="post"><input type="hidden" name="action" value="delete-account"><button id="del">Delete my account</button></form>'

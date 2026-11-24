@@ -26,6 +26,7 @@ const TAP_TIMEOUT_MS = 1500;
 const CLICK_TIMEOUT_MS = 750;
 const DIALOG_OPEN_MS = 1000;
 const DIALOG_CLOSE_WAIT_MS = 300;
+const DIALOG_EXIT_MS = 700;
 const PAGESHOW_WAIT_MS = 5000;
 const NAVIGATION_SWAP_MS = 5000;
 
@@ -328,6 +329,10 @@ async function probeDialog(page, trigger) {
   await doubleRaf(page);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(DIALOG_CLOSE_WAIT_MS);
+  // An exit animation can outlast the wait; clicking close then would move focus itself.
+  await page
+    .waitForFunction(() => window.__atelierProbe.currentOpen() !== true, null, { timeout: DIALOG_EXIT_MS, polling: 50 })
+    .catch(() => {});
   let open = (await page.evaluate(() => window.__atelierProbe.currentOpen())) === true;
   let method = open ? null : 'escape';
   if (open) {
