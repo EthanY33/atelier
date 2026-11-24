@@ -968,3 +968,21 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
     }
   }, 120_000);
 });
+
+describe('rendered DOM depth', () => {
+  it('skips the rendered re-check with an error when script builds a DOM nested past the limit', async () => {
+    const { dir, cleanup } = tempDir('ux-deep-');
+    try {
+      writeFiles(dir, { 'index.html': '<!doctype html><html lang="en"><head><title>t</title></head><body><main><img src="a.png"></main></body></html>' });
+      const deep = `${'<div>'.repeat(600)}x${'</div>'.repeat(600)}`;
+      const res = await auditRuntimeUx({
+        url: join(dir, 'index.html'), dynamic: true, write: false, brand: null, timestamp: FIXED_TS,
+        dynamicImpl: async () => ({ ...emptyFacts(), rendered: { html: `<!doctype html><html><body>${deep}</body></html>` } }),
+      });
+      expect(res.raw.errors.map((e) => e.message)).toContain('the rendered DOM nests more than 512 elements deep, so it was not re-checked');
+      expect(res.raw.errors.find((e) => /nests more than 512/.test(e.message)).phase).toBe('dynamic');
+    } finally {
+      cleanup();
+    }
+  });
+});
