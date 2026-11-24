@@ -46,7 +46,7 @@ runs:
         fi
 
     - if: steps.node.outputs.ok != 'true'
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: '22'
         package-manager-cache: false
@@ -54,8 +54,10 @@ runs:
     - name: Install atelier
       shell: bash
       run: |
-        npm ci --prefix "$GITHUB_ACTION_PATH/plugins/atelier" --no-audit --no-fund
-        npm exec --prefix "$GITHUB_ACTION_PATH/plugins/atelier" -- playwright install --with-deps chromium
+        # Run from the action directory, not the caller's workspace, so a
+        # workspace node_modules/.bin cannot shadow node, sh, sudo or apt-get.
+        npm ci --prefix "$GITHUB_ACTION_PATH/plugins/atelier" --no-audit --no-fund --ignore-scripts
+        (cd "$GITHUB_ACTION_PATH/plugins/atelier" && node node_modules/playwright/cli.js install --with-deps chromium)
 
     - name: Run audits
       shell: bash
@@ -69,13 +71,16 @@ runs:
         set -u
         cli="$GITHUB_ACTION_PATH/plugins/atelier/bin/atelier"
         status=0
+        ran=0
         IFS=',' read -ra list <<< "$AUDITS"
-        for audit in "${list[@]}"; do
+        for audit in ${list[@]+"${list[@]}"}; do
           audit="$(echo "$audit" | tr -d '[:space:]')"
           case "$audit" in
             a11y)
+              ran=$((ran + 1))
               node "$cli" a11y "$TARGET" --out "$OUT/a11y" || status=$(( $? > status ? $? : status )) ;;
             ux)
+              ran=$((ran + 1))
               args=("$TARGET" --out "$OUT/ux")
               [ "$DYNAMIC" = "true" ] && args+=(--dynamic)
               [ -n "$BRAND" ] && args+=(--brand "$BRAND")
@@ -84,6 +89,10 @@ runs:
             *) echo "Unknown audit: $audit (expected a11y or ux)"; exit 2 ;;
           esac
         done
+        if [ "$ran" -eq 0 ]; then
+          echo "No audits selected (audits input: '$AUDITS'); expected a11y, ux or both"
+          exit 2
+        fi
         for f in "$OUT"/*/*-report.md; do
           [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
         done
