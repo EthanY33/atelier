@@ -7,7 +7,7 @@ Public Claude Code plugin, MIT, version 1.1. Eight design-automation skills shar
 ```
 npm install              # root dev deps; postinstall runs npm ci in plugins/atelier
 npm run setup:browsers   # Chromium matching the plugin's pinned Playwright
-npm test                 # Vitest; Chromium, ffmpeg and OS-specific tests skip when unavailable
+npm test                 # Vitest; needs Chromium (run setup:browsers first); ffmpeg and OS-specific tests skip when unavailable
 npm run test:coverage    # 70% gate on plugins/atelier/{skills,lib}; never lower it
 npm run lint:schemas     # manifests parse, schemas compile, example brand.json validates
 npm run check:versions   # versions, README badge, CHANGELOG section agree
