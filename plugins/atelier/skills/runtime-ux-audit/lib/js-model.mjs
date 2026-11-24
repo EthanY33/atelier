@@ -390,8 +390,12 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       prop = left.name;
     }
     if (!prop || !/^on[a-z]+$/.test(prop)) return;
-    const right = node.right;
-    if ((right.type === 'Literal' && right.value === null) || (right.type === 'Identifier' && right.name === 'undefined')) return;
+    // a.onx = b.ony = value assigns the last value to both.
+    let right = node.right;
+    while (right.type === 'AssignmentExpression' && right.operator === '=') right = right.right;
+    // null, undefined and void 0 (the minified undefined) clear the handler.
+    if ((right.type === 'Literal' && right.value === null) || (right.type === 'Identifier' && right.name === 'undefined')
+      || (right.type === 'UnaryExpression' && right.operator === 'void')) return;
     const handler = resolveFunctionIn(script, right);
     pushListener({
       script, node, ancestors: info.ancestors, via: 'property', event: prop.slice(2),

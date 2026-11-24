@@ -86,6 +86,29 @@ describe('no-unload-handler', () => {
     expect(res.status).toBe('passed');
   });
 
+  it('ignores handlers cleared through a chained assignment or void 0', async () => {
+    const res = await check('no-unload-handler', page(script([
+      'function cleanup() { window.onunload = window.onbeforeunload = null; }',
+      'function reset() { window.onunload = void 0; }',
+      'window.onunload = self.onunload = undefined;',
+    ].join('\n'))));
+    expect(res.status).toBe('passed');
+  });
+
+  it('still flags a handler assigned through a chain, with the handler it ends in', async () => {
+    const html = page(script([
+      'window.onunload = window.onpagehide = save;',
+      'window.onunload = handlers.last ||= null;',
+      'function save() {}',
+    ].join('\n')));
+    const res = await check('no-unload-handler', html);
+    expect(snippets(res)).toEqual(['window.onunload = window.onpagehide = save', 'window.onunload = handlers.last ||= null']);
+    const { js } = await contextFor({ 'index.html': html });
+    const [unload] = js.listenersByEvent('unload');
+    expect(unload.handler?.id.name).toBe('save');
+    expect(js.listenersByEvent('pagehide')[0].handler).toBe(unload.handler);
+  });
+
   it('honors atelier-ignore comments', async () => {
     const res = await check('no-unload-handler', page(script("// atelier-ignore no-unload-handler -- legacy\nwindow.addEventListener('unload', a);")));
     expect(res).toMatchObject({ status: 'passed', suppressed: 1 });
@@ -126,6 +149,13 @@ describe('no-beforeunload-always-attached', () => {
       "try { x(); } catch (e) { addEventListener('beforeunload', warn); }",
     ].join('\n'))));
     expect(res.status).toBe('passed');
+  });
+
+  it('reads chained assignments: a clear passes, a handler is flagged', async () => {
+    const cleared = await check('no-beforeunload-always-attached', page(script('window.onbeforeunload = window.onunload = null;\nwindow.onbeforeunload = void 0;')));
+    expect(cleared.status).toBe('passed');
+    const set = await check('no-beforeunload-always-attached', page(script('window.onbeforeunload = window.onpagehide = warn;')));
+    expect(snippets(set)).toEqual(['window.onbeforeunload = window.onpagehide = warn']);
   });
 });
 
