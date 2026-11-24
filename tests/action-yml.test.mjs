@@ -47,16 +47,25 @@ describe('action.yml pins', () => {
   });
 });
 
-const bash = spawnSync('bash', ['--version']);
-const hasBash = bash.status === 0;
+// Prove the resolved bash inherits the environment and can run node. The WSL
+// launcher on Windows answers --version but sees neither env nor Windows paths.
+const probe = spawnSync(
+  'bash',
+  ['--noprofile', '--norc', '-c', 'test "$ATELIER_BASH_PROBE" = ok && node -e ""'],
+  { env: { ...process.env, ATELIER_BASH_PROBE: 'ok' } },
+);
+const hasBash = probe.status === 0;
 
 describe.skipIf(!hasBash)('action.yml Run audits step', () => {
   const script = runBlock('Run audits');
   const tmp = mkdtempSync(join(tmpdir(), 'action-yml-'));
   const actionPath = join(tmp, 'action');
   mkdirSync(join(actionPath, 'plugins', 'atelier', 'bin'), { recursive: true });
-  // Stub CLI: ignore its arguments and succeed.
-  writeFileSync(join(actionPath, 'plugins', 'atelier', 'bin', 'atelier'), 'process.exit(0);\n');
+  // Stub CLI: report which audit it was asked for and succeed.
+  writeFileSync(
+    join(actionPath, 'plugins', 'atelier', 'bin', 'atelier'),
+    "console.log('ran ' + process.argv[2]);\nprocess.exit(0);\n",
+  );
   writeFileSync(join(tmp, 'summary.md'), '');
   afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -77,20 +86,40 @@ describe.skipIf(!hasBash)('action.yml Run audits step', () => {
     });
 
   it('exits 2 when the audits input is empty', () => {
-    expect(run('').status).toBe(2);
+    const r = run('');
+    expect(r.status).toBe(2);
+    expect(r.stdout).toContain('No audits selected');
   });
 
   it('exits 2 when the audits input holds only separators', () => {
-    expect(run(',').status).toBe(2);
-    expect(run(' , ').status).toBe(2);
+    for (const input of [',', ' , ']) {
+      const r = run(input);
+      expect(r.status).toBe(2);
+      expect(r.stdout).toContain('No audits selected');
+    }
   });
 
   it('still exits 2 for an unknown audit name', () => {
-    expect(run('bogus').status).toBe(2);
+    const r = run('bogus');
+    expect(r.status).toBe(2);
+    expect(r.stdout).toContain('Unknown audit: bogus');
   });
 
   it('exits 0 when a named audit runs and passes', () => {
     expect(run('a11y').status).toBe(0);
     expect(run('a11y, ux').status).toBe(0);
+  });
+
+  it('runs every audit when the input is separated by newlines', () => {
+    for (const input of ['a11y\nux\n', 'a11y\r\nux\r\n']) {
+      const r = run(input);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('ran a11y');
+      expect(r.stdout).toContain('ran ux');
+    }
+  });
+
+  it('still exits 2 when the input is only newlines', () => {
+    expect(run('\n\n').status).toBe(2);
   });
 });

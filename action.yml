@@ -72,7 +72,7 @@ runs:
         cli="$GITHUB_ACTION_PATH/plugins/atelier/bin/atelier"
         status=0
         ran=0
-        IFS=',' read -ra list <<< "$AUDITS"
+        IFS=',' read -ra list <<< "$(printf '%s' "$AUDITS" | tr '\r\n' ',,')"
         for audit in ${list[@]+"${list[@]}"}; do
           audit="$(echo "$audit" | tr -d '[:space:]')"
           case "$audit" in
