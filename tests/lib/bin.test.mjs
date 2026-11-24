@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { binPath, isWin, makeTmp, pluginRoot, runNode, touch } from './helpers.mjs';
+import { binPath, envWithPath, isWin, makeTmp, pluginRoot, runNode, touch } from './helpers.mjs';
 
 const pkg = JSON.parse(readFileSync(join(pluginRoot, 'package.json'), 'utf8'));
 const manifest = JSON.parse(readFileSync(join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'));
@@ -189,11 +189,29 @@ describe('atelier skill forwarding', () => {
 
 describe.skipIf(!isWin)('atelier.cmd shim', () => {
   const cmdPath = join(pluginRoot, 'bin', 'atelier.cmd');
-  // cmd /s /c strips the first and the last quote of the command line, so the
-  // whole line gets its own pair around the quoted path.
-  const viaCmd = (args, shim = cmdPath) => spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${shim}" ${args}"`], {
-    cwd: tmp, encoding: 'utf8', windowsVerbatimArguments: true, windowsHide: true,
-  });
+  const comspec = process.env.ComSpec || 'cmd.exe';
+  const powershell = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const run = (file, args, opts) => spawnSync(file, args, { cwd: tmp, encoding: 'utf8', windowsHide: true, timeout: 60_000, ...opts });
+
+  // A command line in cmd syntax, the way a cmd prompt, a batch file or
+  // `shell: true` runs it. cmd /s /c strips the first and the last quote of
+  // the command line, so the whole line gets its own pair around the quoted
+  // path. `switches` go before /s.
+  const viaCmd = (args, shim = cmdPath, switches = []) =>
+    run(comspec, ['/d', ...switches, '/s', '/c', `""${shim}" ${args}"`], { windowsVerbatimArguments: true });
+
+  // cmd.exe exactly as Windows starts it when a program launches the .cmd
+  // file itself: `cmd.exe /c ""<file>" <arguments>"`, the arguments quoted
+  // for a program and not for cmd. PowerShell is the usual such launcher;
+  // Node refuses to spawn a .cmd file without a shell.
+  const direct = (rawArgs, shim = cmdPath) => run(comspec, ['/c', `""${shim}" ${rawArgs}"`], { windowsVerbatimArguments: true });
+
+  // Windows PowerShell with `binDir` first on PATH, so a bare `atelier` is
+  // the shim. `command` is PowerShell syntax. Progress records are off
+  // because a redirected PowerShell writes them to stderr as CLIXML.
+  const viaPowerShell = (command, binDir) => run(powershell, [
+    '-NoProfile', '-NonInteractive', '-Command', `$ProgressPreference = 'SilentlyContinue'; ${command}; exit $LASTEXITCODE`,
+  ], { env: envWithPath(`${binDir};${process.env.PATH}`) });
 
   /**
    * A copy of the shim under a directory with a space in its name, beside a
@@ -230,5 +248,57 @@ describe.skipIf(!isWin)('atelier.cmd shim', () => {
   it('runs from a path with a space and passes quoted arguments unchanged', () => {
     const r = viaCmd('og --title "a b" --x "50% & more" "p|q" "c^d" "wow!" "<x>" "a&b" "say \\"hi\\""', join(stubInstall(), 'atelier.cmd'));
     expect(argvOf(r)).toEqual(['og', '--title', 'a b', '--x', '50% & more', 'p|q', 'c^d', 'wow!', '<x>', 'a&b', 'say "hi"']);
+  });
+
+  // Regression: the shim's own line was expanded a second time when the
+  // calling cmd.exe had delayed expansion on, which ate every `!`.
+  it('keeps ! in an argument when the calling cmd.exe has delayed expansion on', () => {
+    const r = viaCmd('"wow^!" "a^!b^!c"', join(stubInstall(), 'atelier.cmd'), ['/v:on']);
+    expect(argvOf(r)).toEqual(['wow!', 'a!b!c']);
+  });
+
+  it('leaves cmd operators after the shim to a caller that wrote cmd syntax', () => {
+    const r = viaCmd('x & echo AFTER', join(stubInstall(), 'atelier.cmd'));
+    expect(r.stderr).toBe('');
+    expect(r.stdout.split(/\r?\n/).filter(Boolean)).toEqual(['["x"]', 'AFTER']);
+  });
+
+  // The shim reads %CMDCMDLINE% and may end cmd.exe; neither may touch a
+  // session it was merely called from. (A substitution made directly on
+  // %CMDCMDLINE% rewrites it for the rest of the session.)
+  it('does not end an interactive cmd.exe session or change its %CMDCMDLINE%', () => {
+    const shim = join(stubInstall(), 'atelier.cmd');
+    const r = run(comspec, ['/d', '/q', '/k'], { input: `"${shim}" a\r\necho SEEN=%CMDCMDLINE%\r\nexit 4\r\n` });
+    expect(r.stdout).toContain('["a"]');
+    expect(r.stdout).toMatch(/SEEN=.+ \/d \/q \/k/);
+    expect(r.status).toBe(4);
+  });
+
+  // Regression: a program that starts the .cmd file itself (PowerShell above
+  // all) does not quote a whitespace-free argument for cmd, so cmd.exe cut the
+  // command line at an &, expanded %VAR%, dropped ^ and ran the remainder as
+  // a command: `atelier a11y "https://x.example/?a=1&b=2"` audited
+  // https://x.example/?a=1 and then executed `b=2`.
+  it('passes cmd metacharacters through when the shim is started directly', () => {
+    const r = direct('og --title Q&A --slug faq a^b 100%PATHEXT% x&&y p||q wow! (z) "a b" "50% & more"', join(stubInstall(), 'atelier.cmd'));
+    expect(argvOf(r)).toEqual(['og', '--title', 'Q&A', '--slug', 'faq', 'a^b', '100%PATHEXT%', 'x&&y', 'p||q', 'wow!', '(z)', 'a b', '50% & more']);
+  });
+
+  // Not covered, because no .cmd file can fix it: a | < or > in a
+  // whitespace-free argument. cmd.exe starts the other side of the pipe or
+  // opens the file before the shim runs. See the note in atelier.cmd.
+  describe.skipIf(!existsSync(powershell))('from PowerShell', () => {
+    it('passes arguments to node unchanged', () => {
+      const r = viaPowerShell("atelier og --title 'Q&A' --slug faq 'a^b' '100%PATHEXT%' 'wow!' 'a b' '50% & more' 'p | q'", stubInstall());
+      expect(r.stdout.trim()).toBe(JSON.stringify(['og', '--title', 'Q&A', '--slug', 'faq', 'a^b', '100%PATHEXT%', 'wow!', 'a b', '50% & more', 'p | q']));
+      expect(r.status).toBe(3);
+    });
+
+    it('runs nothing after an & in an argument', () => {
+      const r = viaPowerShell("atelier 'nope&echo=INJECTED'", join(pluginRoot, 'bin'));
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain('unknown command "nope&echo=INJECTED"');
+      expect(r.stdout).toBe('');
+    });
   });
 });
