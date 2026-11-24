@@ -419,6 +419,8 @@ var late = function () { six(); };
 function wrap(shared, { late }) { el.addEventListener('scroll', shared); el.addEventListener('resize', late); }
 const named = function self() { el.addEventListener('wheel', self); };
 for (const cb of list) el.addEventListener('copy', cb);
+function more([shared], late = 1, ...cb) { el.addEventListener('cut', shared); el.addEventListener('drop', late); el.addEventListener('drag', cb); }
+function plain() { el.addEventListener('dragend', cb); }
 `;
 
   it('picks the declaration the reference can see, and nothing when a binding shadows it', async () => {
@@ -433,6 +435,8 @@ for (const cb of list) el.addEventListener('copy', cb);
       input: 'seven', change: null, paste: 'eight',
       // Parameters, destructured parameters, catch and loop bindings shadow outer functions.
       focus: null, error: null, scroll: null, resize: null, copy: null,
+      // So do array, default and rest parameters; the same name resolves where nothing shadows it.
+      cut: null, drop: null, drag: null, dragend: 'five',
       // A named function expression sees itself.
       wheel: 'self',
     });
