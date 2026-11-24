@@ -801,7 +801,123 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
     expect(out.bfcache).toBeNull();
   }, 120_000);
 
-  it('serves a missing local document as a 404 navigation, not an error', async () => {
+  // A page of another origin that must never be loaded, swept, clicked or quoted.
+  const OTHER_PAGE = '<!doctype html><meta name="viewport" content="width=device-width, user-scalable=no" data-secret="INTERNAL-TOKEN-8841">'
+    + '<button id="wipe" style="width:12px;height:12px" onclick="fetch(\'/wipe\', { method: \'POST\' })">w</button>';
+  const otherOrigin = (hits, fn) => withServer((req, res) => {
+    hits.push(`${req.method} ${req.url}`);
+    req.resume();
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(OTHER_PAGE);
+  }, fn);
+  const httpInput = (base, limits = {}) => ({
+    page: { kind: 'http', url: `${base}/`, filePath: null, root: null },
+    limits: { settleMs: 100, maxTabs: 1, maxDialogTriggers: 1, ...limits },
+  });
+
+  const PROBES = ['navigation', 'rendered', 'sweep', 'interactions', 'dialogs', 'bfcache'];
+  const refusedFor = (other) => `navigation to ${other} was refused: the dynamic pass only loads the audited origin; audit that URL directly if that was intended`;
+
+  it('refuses a redirect to another origin instead of auditing that page', async () => {
+    const hits = [];
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      res.writeHead(302, { location: `${other}/admin` });
+      res.end();
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base));
+      expect(hits).toEqual([]);
+      expect(out.errors).toEqual([{ probe: 'navigate', message: refusedFor(other) }]);
+      expect(out.engine).not.toBeNull();
+      for (const probe of PROBES) expect(out[probe], probe).toBeNull();
+      expect(JSON.stringify(out)).not.toContain('INTERNAL-TOKEN');
+    }));
+  }, 120_000);
+
+  it('refuses a script navigation to another origin right after load', async () => {
+    const hits = [];
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><meta name="viewport" content="width=device-width"><p>shell</p>'
+        + `<script>setTimeout(() => { location.href = '${other}/by-script'; }, 50);</script>`);
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base));
+      expect(hits).toEqual([]);
+      expect(out.errors).toEqual([{ probe: 'navigate', message: refusedFor(other) }]);
+      for (const probe of PROBES) expect(out[probe], probe).toBeNull();
+    }));
+  }, 120_000);
+
+  it('reports an HTTP error answered to Chromium only as a probe error, with no finding about the error page', async () => {
+    // The static fetch gets the page; Chromium gets a 503 (a bot check or a flaky origin).
+    await withServer((req, res) => {
+      const chromium = /Chrome\//.test(req.headers['user-agent'] ?? '');
+      res.writeHead(chromium ? 503 : 200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width"><title>t</title><p>page</p><button>Retry</button>');
+    }, async (base) => {
+      const res = await auditRuntimeUx({ url: `${base}/`, dynamic: true, write: false, brand: null, timestamp: FIXED_TS });
+      expect(res.raw.errors).toEqual([{ phase: 'dynamic', message: 'navigate: the page answered Chromium with HTTP 503, so it was not probed' }]);
+      expect(res.metrics.bfcache).toBeNull();
+      expect(res.metrics.inp).toBeNull();
+      expect(res.violations.all.map((v) => v.id)).not.toContain('atelier/runtime-ux/bfcache-not-restored');
+    });
+  }, 120_000);
+
+  it('keeps the main frame on the audited origin when a tap or a later load tries to leave', async () => {
+    const hits = [];
+    let documents = 0;
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      if (req.url !== '/') {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      documents += 1;
+      // The first load is the audited page; every later load answers with a redirect to the other origin.
+      if (documents > 1) {
+        res.writeHead(302, { location: `${other}/later` });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><meta name="viewport" content="width=device-width"><p id="audited">audited</p><button id="go" type="button">Go</button>'
+        + `<script>document.getElementById('go').addEventListener('click', () => { location.href = '${other}/by-tap'; });</script>`);
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base));
+      expect(hits).toEqual([]);
+      expect(out.navigation).toMatchObject({ status: 200, finalUrl: '/' });
+      expect(out.rendered.html).toContain('id="audited"');
+      expect(out.sweep.interactive.map((t) => t.selector)).toEqual(['#go']);
+      expect(out.interactions.attempted.map((a) => a.target)).toContain('#go');
+      // The reloads of the later probes were redirected, so those probes did not run.
+      expect(out.dialogs).toBeNull();
+      expect(out.bfcache).toBeNull();
+      expect(out.errors.map((e) => e.probe)).toEqual(['interactions', 'dialogs', 'bfcache', 'navigate']);
+      expect(out.errors[0].message).toMatch(/^navigated-away: tapping #go left the page/);
+      expect(out.errors[3].message).toBe(refusedFor(other));
+      expect(JSON.stringify(out)).not.toContain('INTERNAL-TOKEN');
+    }));
+  }, 120_000);
+
+  it('follows a same-origin redirect and leaves frames of other origins alone', async () => {
+    const hits = [];
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      if (req.url === '/') {
+        res.writeHead(302, { location: '/home' });
+        res.end();
+        return;
+      }
+      res.writeHead(req.url === '/home' ? 200 : 404, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><meta name="viewport" content="width=device-width"><p>home</p><iframe src="${other}/frame"></iframe>`);
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base));
+      expect(out.errors).toEqual([]);
+      expect(out.navigation).toMatchObject({ status: 200, finalUrl: '/home' });
+      expect(hits).toContain('GET /frame');
+      expect(out.bfcache).toEqual({ supported: true, restored: true, reasons: [] });
+    }));
+  }, 120_000);
+
+  it('records a missing local document as a failed navigation', async () => {
     const { dir, cleanup } = tempDir('ux-dyn-gone-');
     try {
       writeFiles(dir, { 'index.html': '<p>x</p>' });
@@ -809,7 +925,10 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
       const filePath = join(root, 'index.html');
       rmSync(filePath);
       const out = await runDynamicPass({ page: { kind: 'file', url: pathToFileURL(filePath).href, filePath, root }, limits: { settleMs: 100, maxTabs: 1 } });
-      expect(out.navigation).toEqual({ status: 404, finalUrl: 'index.html' });
+      expect(out.errors).toEqual([{ probe: 'navigate', message: expect.stringContaining('HTTP 404') }]);
+      expect(out.navigation).toBeNull();
+      expect(out.rendered).toBeNull();
+      expect(out.sweep).toBeNull();
     } finally {
       cleanup();
     }

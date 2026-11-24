@@ -9,7 +9,9 @@
  *
  * Sequence (each step isolated; a failure becomes errors[] and later steps
  * still run; a global dynamicTimeoutMs deadline skips what is left):
- *   1. navigate   load the page (local inputs over a loopback server)
+ *   1. navigate   load the page (local inputs over a loopback server); an HTTP
+ *                 status of 400 or more, or ending on another origin, fails
+ *                 the step and the page probes do not run
  *   2. sweep      rendered HTML and DOM facts (targets, repeated groups, view-transition names)
  *   3-5. interactions  4x CPU, settle, Tab presses and taps; Event Timing and LoAF
  *   6. dialogs    open each dialog trigger by keyboard, close it, check where focus went
@@ -18,7 +20,9 @@
  * For local inputs Chromium runs behind a deny-by-default proxy that forwards
  * only to the loopback server and the allowOrigins origins, with no WebRTC
  * UDP and no DNS of its own; blocked requests Playwright sees are listed in
- * errors[].
+ * errors[]. For http(s) inputs the main frame is pinned to the audited
+ * origin: a redirect or script navigation to another origin is refused and
+ * listed in errors[].
  */
 import http from 'node:http';
 import net from 'node:net';
@@ -253,6 +257,41 @@ async function restrictEgress(context, allowed) {
   return blocked;
 }
 
+/**
+ * http(s) inputs: the main frame only ever loads documents of the audited
+ * origin, so a redirect or a script cannot move the audit onto another site
+ * or an internal address. Chromium pauses every document request, redirect
+ * hops included (Playwright's routing never sees those), and a main-frame
+ * request to another origin is failed before it is sent, which leaves
+ * Chromium's error page in the main frame. Frames inside the page are not
+ * restricted. Returns the set of refused origins.
+ */
+async function pinMainFrame(context, page, origin) {
+  const refused = new Set();
+  const cdp = await context.newCDPSession(page);
+  // Read once, up front: the id survives navigations, and asking for the
+  // frame tree while a request is paused never answers.
+  const mainFrameId = (await cdp.send('Page.getFrameTree')).frameTree.frame.id;
+  cdp.on('Fetch.requestPaused', (event) => {
+    let refuse = false;
+    if (event.frameId === mainFrameId) {
+      try {
+        const hop = new URL(event.request.url).origin;
+        refuse = hop !== origin;
+        if (refuse) refused.add(hop);
+      } catch {
+        // not a URL: Chromium fails it on its own
+      }
+    }
+    const reply = refuse
+      ? cdp.send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'BlockedByClient' })
+      : cdp.send('Fetch.continueRequest', { requestId: event.requestId });
+    reply.catch(() => {});
+  });
+  await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', resourceType: 'Document' }] });
+  return refused;
+}
+
 function lowercaseHeaders(headers) {
   const out = {};
   for (const [k, v] of Object.entries(headers ?? {})) out[String(k).toLowerCase()] = String(v);
@@ -288,6 +327,7 @@ export async function runDynamicPass(input = {}) {
 
   const server = target.kind === 'file' ? await startServer(target.root) : null;
   if (server) targetUrl = server.urlFor(target.filePath);
+  const targetOrigin = new URL(targetUrl).origin;
   // Core passes ctx.page.toDisplay; direct callers get the same mapping by default.
   const toDisplay = typeof input.toDisplay === 'function' ? input.toDisplay : defaultToDisplay(target, server, targetUrl);
   // Served URLs never leak into facts: map them back to file URLs, then to display strings.
@@ -349,11 +389,24 @@ export async function runDynamicPass(input = {}) {
   let launching = null;
   let proxy = null;
   let blockedOrigins = null;
+  let refusedOrigins = null;
+  const listOrigins = (origins) => {
+    const list = [...origins].sort();
+    return list.slice(0, MAX_BLOCKED_SHOWN).join(', ') + (list.length > MAX_BLOCKED_SHOWN ? ` and ${list.length - MAX_BLOCKED_SHOWN} more` : '');
+  };
+  // Refused main-frame navigations (pinMainFrame) that no error has named yet.
+  const refusal = () => {
+    const fresh = [...(refusedOrigins ?? [])];
+    if (fresh.length === 0) return null;
+    refusedOrigins.clear();
+    return new Error(`navigation to ${listOrigins(fresh)} was refused: the dynamic pass only loads the audited origin; audit that URL directly if that was intended`);
+  };
   const noteBlocked = () => {
-    if (!blockedOrigins?.size) return;
-    const list = [...blockedOrigins].sort();
-    const shown = list.slice(0, MAX_BLOCKED_SHOWN).join(', ') + (list.length > MAX_BLOCKED_SHOWN ? ` and ${list.length - MAX_BLOCKED_SHOWN} more` : '');
-    errors.push({ probe: 'network', message: `blocked requests to ${shown}; a local page only reaches the loopback server and --allow-origin origins` });
+    if (blockedOrigins?.size) {
+      errors.push({ probe: 'network', message: `blocked requests to ${listOrigins(blockedOrigins)}; a local page only reaches the loopback server and --allow-origin origins` });
+    }
+    const refused = refusal();
+    if (refused) errors.push({ probe: 'navigate', message: refused.message });
   };
   try {
     const allowed = server ? new Set([server.origin, ...(input.allowOrigins ?? [])]) : null;
@@ -378,6 +431,7 @@ export async function runDynamicPass(input = {}) {
       page.setDefaultTimeout(Math.min(limits.navigationTimeoutMs, 10_000));
       await page.addInitScript({ path: OBSERVERS_JS });
       await page.addInitScript({ path: SWEEP_JS });
+      if (!server) refusedOrigins = await pinMainFrame(context, page, targetOrigin);
       return {
         page,
         engine: { name: 'chromium', version: String(browser.version()), headless: 'new' },
@@ -401,6 +455,19 @@ export async function runDynamicPass(input = {}) {
     const { page } = session;
     facts.engine = session.engine;
     facts.profile = session.profile;
+    /** Throws when the main frame is not on a document of the audited origin. */
+    const onTarget = () => {
+      const url = page.url();
+      let origin = null;
+      try {
+        origin = new URL(url).origin;
+      } catch {
+        // not a URL
+      }
+      if (origin === targetOrigin) return;
+      const where = origin && origin !== 'null' ? origin : url.slice(0, 80);
+      throw refusal() ?? new Error(`the page left the audited origin (it is on ${where}), so it was not probed`);
+    };
 
     const nav = await step('navigate', async (errs) => {
       let status = null;
@@ -413,33 +480,52 @@ export async function runDynamicPass(input = {}) {
         }
       } catch (err) {
         // A load event that never came still leaves a usable document; an error page does not.
-        if (!/^https?:/i.test(page.url())) throw err;
+        if (!/^https?:/i.test(page.url())) throw refusal() ?? err;
         errs.push({ probe: 'navigate', message: errorMessage(err, scrub) });
       }
+      // An error page is not the page that was asked for: nothing on it is probed.
+      if (status !== null && status >= 400) throw new Error(`the page answered Chromium with HTTP ${status}, so it was not probed`);
       await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
       await doubleRaf(page).catch(() => {});
+      onTarget();
       const finalUrl = display(page.url());
       return headers ? { status, finalUrl, headers } : { status, finalUrl };
     });
 
     if (nav) {
       facts.navigation = nav.value;
+      // The page can navigate itself after load, and a refused navigation
+      // leaves an error page behind. The probes that read or drive the loaded
+      // document check where it is first, and what was read only counts when
+      // the page is still there afterwards. The dialog and bfcache probes
+      // load the target themselves.
       const rendered = await step('sweep', async () => {
+        onTarget();
         const html = await page.content();
+        onTarget();
         if (html.length > MAX_RENDERED_CHARS) throw new Error(`the rendered DOM is over ${MAX_RENDERED_CHARS} characters, so it was not re-checked`);
         return { html: server ? html.split(server.origin).join('') : html };
       });
       if (rendered) facts.rendered = rendered.value;
       const sweep = await step('sweep', async () => {
+        onTarget();
         const raw = await page.evaluate((o) => window.__atelierSweep(o), { maxInteractive: limits.maxInteractive });
+        onTarget();
         return cleanSweep(raw, limits.maxInteractive);
       });
       if (sweep) facts.sweep = sweep.value;
-      const interactions = await step('interactions', (errs) => runInteractions(page, context, { targetUrl, limits, errors: errs, display, scrub }));
+      const interactions = await step('interactions', (errs) => {
+        onTarget();
+        return runInteractions(page, context, { targetUrl, limits, errors: errs, display, scrub });
+      });
       if (interactions) facts.interactions = interactions.value;
       const dialogs = await step('dialogs', (errs) => probeDialogs(page, targetUrl, { limits, errors: errs, scrub }));
       if (dialogs) facts.dialogs = dialogs.value;
-      const bfcache = await step('bfcache', () => probeBfcache(page, targetUrl, { limits }));
+      const bfcache = await step('bfcache', async () => {
+        const state = await probeBfcache(page, targetUrl, { limits });
+        onTarget();
+        return state;
+      });
       if (bfcache) facts.bfcache = bfcache.value;
     }
     if (expired) noteTimeout();
