@@ -15,9 +15,13 @@
  *   6. dialogs    open each dialog trigger by keyboard, close it, check where focus went
  *   7. bfcache    about:blank and back; restored or notRestoredReasons
  * A launch failure (Chromium or Playwright missing) is thrown, not recorded.
- * For local inputs the page can only reach the loopback server and the
- * allowOrigins origins; other requests are blocked and listed in errors[].
+ * For local inputs Chromium runs behind a deny-by-default proxy that forwards
+ * only to the loopback server and the allowOrigins origins, with no WebRTC
+ * UDP and no DNS of its own; blocked requests Playwright sees are listed in
+ * errors[].
  */
+import http from 'node:http';
+import net from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DYNAMIC_LIMITS } from '../lib/options.mjs';
 import { createPageUrls } from '../lib/url.mjs';
@@ -82,11 +86,139 @@ function defaultToDisplay(target, server, targetUrl) {
 
 const MAX_BLOCKED_SHOWN = 5;
 
+/** Chromium switches for local inputs, next to the proxy (startEgressProxy). */
+const LOCAL_EGRESS_ARGS = Object.freeze([
+  // WebRTC gets no UDP socket (STUN, TURN over UDP, peer traffic), and its TCP goes through the proxy.
+  '--webrtc-ip-handling-policy=disable_non_proxied_udp',
+  // Chromium resolves no host names itself, so a lookup (WebRTC resolves ICE
+  // server names on its own) cannot carry data out. The proxy resolves the
+  // hosts it forwards to.
+  '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1',
+]);
+
+/**
+ * Deny-by-default forward proxy for local inputs. Chromium is launched with
+ * it as the proxy for every scheme and host, loopback included, so each
+ * http(s) and ws(s) connection passes through it whoever opens it: the page,
+ * a dedicated or shared worker, a prefetch, a redirect, WebRTC over TCP. Only
+ * the allowed origins get an upstream connection; the rest is answered 403.
+ * @param {Set<string>} allowed - http(s) origins
+ * @returns {Promise<{ url: string, close(): Promise<void> }>}
+ */
+async function startEgressProxy(allowed) {
+  const authority = (u) => `${u.hostname}:${u.port || (u.protocol === 'https:' ? 443 : 80)}`;
+  const bare = (hostname) => hostname.replace(/^\[|\]$/g, '');
+  // CONNECT names no scheme, so tunnels (https, wss, and ws to an http origin) are matched on host:port.
+  const tunnels = new Set();
+  for (const origin of allowed) {
+    try {
+      tunnels.add(authority(new URL(origin)));
+    } catch {
+      // not an origin: nothing to allow
+    }
+  }
+  const sockets = new Set();
+
+  const proxy = http.createServer((req, res) => {
+    let url = null;
+    try {
+      url = new URL(req.url);
+    } catch {
+      // origin-form target: not a proxy request
+    }
+    req.on('error', () => {});
+    res.on('error', () => {});
+    if (!url || url.protocol !== 'http:' || !allowed.has(url.origin)) {
+      req.resume();
+      res.writeHead(403, { 'Content-Length': 0 });
+      res.end();
+      return;
+    }
+    const headers = { ...req.headers, connection: 'close' };
+    delete headers['proxy-connection'];
+    delete headers['proxy-authorization'];
+    const upstream = http.request({
+      host: bare(url.hostname), port: url.port || 80, method: req.method, path: `${url.pathname}${url.search}`, headers, agent: false,
+    }, (up) => {
+      const out = { ...up.headers };
+      delete out.connection;
+      delete out['keep-alive'];
+      up.on('error', () => res.destroy());
+      res.writeHead(up.statusCode, up.statusMessage, out);
+      up.pipe(res);
+    });
+    upstream.on('error', () => {
+      if (res.headersSent) {
+        res.destroy();
+      } else {
+        res.writeHead(502, { 'Content-Length': 0 });
+        res.end();
+      }
+    });
+    res.on('close', () => upstream.destroy());
+    req.pipe(upstream);
+  });
+
+  proxy.on('connect', (req, client, head) => {
+    client.on('error', () => {});
+    let target = null;
+    try {
+      target = new URL(`https://${req.url}`);
+    } catch {
+      // malformed authority
+    }
+    if (!target || !tunnels.has(authority(target))) {
+      client.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
+    let open = false;
+    const upstream = net.connect(Number(target.port || 443), bare(target.hostname), () => {
+      open = true;
+      client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head.length > 0) upstream.write(head);
+      upstream.pipe(client);
+      client.pipe(upstream);
+    });
+    upstream.on('error', () => {
+      if (open) client.destroy();
+      else client.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n');
+    });
+    upstream.on('close', () => client.destroy());
+    client.on('close', () => upstream.destroy());
+  });
+
+  // A tunnelled socket leaves the HTTP server, so closeAllConnections() would miss it.
+  proxy.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+
+  await new Promise((ok, fail) => {
+    proxy.once('error', fail);
+    proxy.listen(0, '127.0.0.1', () => {
+      proxy.off('error', fail);
+      ok();
+    });
+  });
+  return {
+    url: `http://127.0.0.1:${proxy.address().port}`,
+    close() {
+      return new Promise((ok) => {
+        for (const socket of sockets) socket.destroy();
+        proxy.close(() => ok());
+      });
+    },
+  };
+}
+
 /**
  * Local inputs: page scripts run against the loopback server, so they could
- * read files under the root and send them anywhere. Only the server's origin
- * and --allow-origin origins are reachable; every other http(s) or ws(s)
- * request is aborted. Returns the set of blocked origins.
+ * read files under the root and send them anywhere. The proxy above is what
+ * stops them: only the server's origin and --allow-origin origins are
+ * reachable. This routing aborts the requests Playwright can intercept before
+ * they leave the page and collects the origins that were refused, for the
+ * report; it does not see shared worker requests or WebRTC. Returns the set
+ * of blocked origins.
  */
 async function restrictEgress(context, allowed) {
   const blocked = new Set();
@@ -107,6 +239,11 @@ async function restrictEgress(context, allowed) {
     return false;
   };
   await context.route('**/*', (route) => (permitted(route.request().url()) ? route.continue() : route.abort('blockedbyclient')).catch(() => {}));
+  // Routing skips redirect hops, prefetches and some worker requests. The
+  // proxy refuses those; the request event still names them.
+  context.on('request', (request) => {
+    permitted(request.url());
+  });
   if (typeof context.routeWebSocket === 'function') {
     await context.routeWebSocket(/.*/, (ws) => {
       if (permitted(ws.url())) ws.connectToServer();
@@ -210,6 +347,7 @@ export async function runDynamicPass(input = {}) {
   let browser = null;
   let context = null;
   let launching = null;
+  let proxy = null;
   let blockedOrigins = null;
   const noteBlocked = () => {
     if (!blockedOrigins?.size) return;
@@ -218,13 +356,18 @@ export async function runDynamicPass(input = {}) {
     errors.push({ probe: 'network', message: `blocked requests to ${shown}; a local page only reaches the loopback server and --allow-origin origins` });
   };
   try {
+    const allowed = server ? new Set([server.origin, ...(input.allowOrigins ?? [])]) : null;
+    if (server) proxy = await startEgressProxy(allowed);
     const setup = async () => {
-      launching = Promise.resolve().then(() => launch({ ...LAUNCH_OPTIONS }));
+      launching = Promise.resolve().then(() => launch(proxy
+        // <-loopback> drops Chromium's built-in proxy bypass for localhost and 127.0.0.1.
+        ? { ...LAUNCH_OPTIONS, proxy: { server: proxy.url, bypass: '<-loopback>' }, args: [...LOCAL_EGRESS_ARGS] }
+        : { ...LAUNCH_OPTIONS }));
       browser = await launching;
       const device = await deviceDescriptor();
       // Service worker fetches would bypass the request routing below.
       context = await browser.newContext(server ? { ...device, serviceWorkers: 'block' } : { ...device });
-      if (server) blockedOrigins = await restrictEgress(context, new Set([server.origin, ...(input.allowOrigins ?? [])]));
+      if (server) blockedOrigins = await restrictEgress(context, allowed);
       const page = await context.newPage();
       // Popups would hold an opener and block the bfcache; dialogs would block the page.
       context.on('page', (p) => {
@@ -312,6 +455,7 @@ export async function runDynamicPass(input = {}) {
     // seconds on the page kept in the back/forward cache).
     if (context) await Promise.race([context.close().catch(() => {}), sleep(CLOSE_WAIT_MS)]);
     if (browser) await Promise.race([browser.close().catch(() => {}), sleep(CLOSE_WAIT_MS)]);
+    if (proxy) await proxy.close();
     if (server) await server.close();
   }
 }

