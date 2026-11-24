@@ -86,24 +86,33 @@ export function traverse(root, enter) {
   }
 }
 
-/** Dotted path of an expression; '?' marks a computed or call segment. */
+/**
+ * Dotted path of an expression; '?' marks a computed or call segment.
+ * Walks the member chain in a loop: one chain can be tens of thousands of
+ * segments long, which would overflow the stack if each segment recursed.
+ */
 export function pathOf(n) {
-  if (!n) return '?';
-  switch (n.type) {
-    case 'Identifier': return n.name;
-    case 'ThisExpression': return 'this';
-    case 'Super': return 'super';
-    case 'ChainExpression': return pathOf(n.expression);
-    case 'MetaProperty': return `${n.meta.name}.${n.property.name}`;
-    case 'MemberExpression': {
+  const props = [];
+  let node = n;
+  for (;;) {
+    if (node?.type === 'ChainExpression') {
+      node = node.expression;
+    } else if (node?.type === 'MemberExpression') {
       let prop = '?';
-      if (!n.computed) prop = n.property.type === 'PrivateIdentifier' ? `#${n.property.name}` : n.property.name;
-      else if (n.property.type === 'Literal' && typeof n.property.value === 'string') prop = n.property.value;
-      else if (n.property.type === 'TemplateLiteral' && n.property.expressions.length === 0) prop = n.property.quasis[0].value.cooked;
-      return `${pathOf(n.object)}.${prop}`;
-    }
-    default: return '?';
+      if (!node.computed) prop = node.property.type === 'PrivateIdentifier' ? `#${node.property.name}` : node.property.name;
+      else if (node.property.type === 'Literal' && typeof node.property.value === 'string') prop = node.property.value;
+      else if (node.property.type === 'TemplateLiteral' && node.property.expressions.length === 0) prop = node.property.quasis[0].value.cooked;
+      props.push(prop);
+      node = node.object;
+    } else break;
   }
+  let path = '?';
+  if (node?.type === 'Identifier') path = node.name;
+  else if (node?.type === 'ThisExpression') path = 'this';
+  else if (node?.type === 'Super') path = 'super';
+  else if (node?.type === 'MetaProperty') path = `${node.meta.name}.${node.property.name}`;
+  for (let i = props.length - 1; i >= 0; i--) path += `.${props[i]}`;
+  return path;
 }
 
 const stripGlobal = (p) => String(p).replace(GLOBAL_PREFIX_RE, '');

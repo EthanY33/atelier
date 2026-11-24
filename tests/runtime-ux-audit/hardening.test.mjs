@@ -13,6 +13,7 @@ import {
   findUnitValues, normalizeSelector, parseAnimationList, parseLength, parseTimeMs, stripCssComments,
 } from '../../plugins/atelier/skills/runtime-ux-audit/lib/css-values.mjs';
 import { buildHtmlModel, MAX_HTML_DEPTH } from '../../plugins/atelier/skills/runtime-ux-audit/lib/html-model.mjs';
+import { parseJs, pathOf } from '../../plugins/atelier/skills/runtime-ux-audit/lib/js-model.mjs';
 import { compileSelector, matchesSelector, selectAll } from '../../plugins/atelier/skills/runtime-ux-audit/lib/selector-match.mjs';
 import { REF_META } from '../../plugins/atelier/skills/runtime-ux-audit/lib/context.mjs';
 import { createSuppressor } from '../../plugins/atelier/skills/runtime-ux-audit/lib/suppress.mjs';
@@ -443,6 +444,37 @@ describe('HTML nesting depth', () => {
     const m = buildHtmlModel('<!doctype html><table><tr><td>a<b>x<p>y</b>z</td></tr></table><p>1<p>2');
     expect(m.querySelectorAll('td p')).toHaveLength(1);
     expect(m.querySelectorAll('body > p')).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('long property chains in scripts', () => {
+  const chain = `a${'.b'.repeat(50_000)}`;
+
+  it('reads a 50000-segment path without overflowing the stack', () => {
+    const { ast, error } = parseJs(`${chain};`);
+    expect(error).toBeNull();
+    expect(pathOf(ast.body[0].expression) === chain).toBe(true);
+  });
+
+  it('audits a page whose scripts use such a chain as a callee and as an assignment target', async () => {
+    const { dir, cleanup } = tempDir('ux-chain-');
+    try {
+      writeFiles(dir, {
+        'index.html': '<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>t</title></head>'
+          + '<body><p>x</p><script src="call.js"></script><script src="assign.js"></script><script>window.addEventListener("unload", () => {});</script></body></html>',
+        'call.js': `${chain}();`,
+        'assign.js': `${chain} = 1;`,
+      });
+      const res = await auditRuntimeUx({ url: join(dir, 'index.html'), timestamp: FIXED_TS, write: false });
+      // The rest of the page is still audited: the inline unload handler is reported.
+      expect(res.violations.critical.map((v) => v.ruleId)).toEqual(['atelier/runtime-ux/no-unload-handler']);
+      expect(res.raw.errors).toEqual([]);
+      expect(res.pass).toBe(false);
+    } finally {
+      cleanup();
+    }
   });
 });
 
