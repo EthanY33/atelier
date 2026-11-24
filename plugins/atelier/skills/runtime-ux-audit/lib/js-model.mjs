@@ -209,6 +209,9 @@ export function buildJsModel(scripts, { complete = true } = {}) {
   const fnIndex = new Map(); // script -> Map(name -> fn node)
   const initIndex = new Map(); // script -> Map(name -> init node)
   const listenerByFn = new Map();
+  // Programs of event attributes. Their code is the body of the attribute's
+  // handler: it runs when the event fires, not when the page loads.
+  const handlerPrograms = new Set();
 
   const sourceOf = (script, node) => (node && script?.source ? script.source.slice(node.start, node.end) : '');
 
@@ -231,6 +234,8 @@ export function buildJsModel(scripts, { complete = true } = {}) {
 
   for (const script of scripts) {
     if (!script.ast) continue;
+    const inHandler = script.kind === 'event-attr';
+    if (inHandler) handlerPrograms.add(script.ast);
     const fns = new Map();
     const inits = new Map();
     fnIndex.set(script, fns);
@@ -259,7 +264,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
         const method = callee.includes('.') ? callee.slice(callee.lastIndexOf('.') + 1) : callee;
         const info = Object.freeze({
           script, node, ancestors, callee, method, args: node.arguments, isNew: node.type === 'NewExpression',
-          optional: node.optional === true, topLevel: computeTopLevel(ancestors), inLoop: computeInLoop(ancestors),
+          optional: node.optional === true, topLevel: !inHandler && computeTopLevel(ancestors), inLoop: computeInLoop(ancestors),
         });
         calls.push(info);
         collectListenerFromCall(script, node, calleeNode, info);
@@ -402,7 +407,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       target: receiver ? classifyTarget(receiver, info.ancestors) : 'window',
       targetText: receiver ? collapse(sourceOf(script, receiver)) : 'window',
       handler, handlerText: handler ? sourceOf(script, handler) : sourceOf(script, right),
-      options: parseListenerOptions(null), topLevel: computeTopLevel(info.ancestors),
+      options: parseListenerOptions(null), topLevel: !handlerPrograms.has(script.ast) && computeTopLevel(info.ancestors),
     });
   }
 
@@ -430,7 +435,8 @@ export function buildJsModel(scripts, { complete = true } = {}) {
     }
   };
 
-  const enclosingFunctions = (ancestors) => ancestors.filter((a) => FUNCTION_TYPES.has(a.type)).reverse();
+  /** Functions around a node, innermost first. For code in an event attribute the last one is the attribute's Program. */
+  const enclosingFunctions = (ancestors) => ancestors.filter((a) => FUNCTION_TYPES.has(a.type) || (a.type === 'Program' && handlerPrograms.has(a))).reverse();
 
   const isConditional = (arg, stopAt, nodeArg) => {
     const ancestors = Array.isArray(arg) ? arg : arg?.ancestors ?? [];

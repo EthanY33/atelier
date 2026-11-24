@@ -380,6 +380,12 @@ function onScroll() {}
     const attr = js.listeners.find((l) => l.via === 'attribute' && l.event === 'scroll');
     expect(attr.handler.type).toBe('Program');
     expect(attr.handlerText).toBe('s()');
+    // Code in an event attribute is the body of that handler: it does not run at script start.
+    expect(['s', 'c', 'x'].map((name) => js.callsByCallee(name).map((c) => c.topLevel))).toEqual([[false], [false], [false]]);
+    const inAttr = js.callsByCallee('x')[0];
+    expect(js.enclosingFunctions(inAttr.ancestors)).toEqual([inAttr.script.ast]);
+    expect(js.listenerForFunction(inAttr.script.ast)).toMatchObject({ via: 'attribute', event: 'click', target: 'element' });
+    expect(js.enclosingFunctions(js.listenersByEvent('touchstart')[0].ancestors)).toEqual([]);
     expect(js.assignments.map((a) => [a.target, a.normalizedTarget, a.property])).toEqual([
       ['window.onbeforeunload', 'onbeforeunload', 'onbeforeunload'], ['onunload', 'onunload', 'onunload'], ['window.onpagehide', 'onpagehide', 'onpagehide'],
     ]);

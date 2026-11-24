@@ -151,6 +151,19 @@ describe('no-beforeunload-always-attached', () => {
     expect(res.status).toBe('passed');
   });
 
+  it('passes guards armed from an event attribute, and flags the ones armed on every load', async () => {
+    const onEdit = await check('no-beforeunload-always-attached', page(
+      '<textarea oninput="window.onbeforeunload = confirmLeave"></textarea>'
+      + '<button onclick="window.addEventListener(\'beforeunload\', warn)">Edit</button>',
+    ));
+    expect(onEdit.status).toBe('passed');
+    const body = (attrs) => `<!doctype html><html><head></head><body ${attrs}><p>x</p></body></html>`;
+    const onLoad = await check('no-beforeunload-always-attached', body('onload="window.onbeforeunload = warn" onpageshow="addEventListener(\'beforeunload\', warn)"'));
+    expect(onLoad.nodes.map((n) => [n.data.via, n.selector])).toEqual([['property', 'body[onload]'], ['addEventListener', 'body[onpageshow]']]);
+    const guarded = await check('no-beforeunload-always-attached', body('onload="if (editor.dirty) window.onbeforeunload = warn"'));
+    expect(guarded.status).toBe('passed');
+  });
+
   it('reads chained assignments: a clear passes, a handler is flagged', async () => {
     const cleared = await check('no-beforeunload-always-attached', page(script('window.onbeforeunload = window.onunload = null;\nwindow.onbeforeunload = void 0;')));
     expect(cleared.status).toBe('passed');
@@ -646,6 +659,13 @@ describe('analytics-without-prerender-guard', () => {
       const res = await run(js);
       expect(res.status, js).toBe(want);
     }
+  });
+
+  it('does not read a page view sent from an event attribute as running at script start', async () => {
+    const res = await run("fbq('track', 'PageView');", '<button onclick="ga(\'send\', \'pageview\')">Next</button>');
+    expect(snippets(res)).toEqual(["fbq('track', 'PageView')"]);
+    const onlyAttr = await check('analytics-without-prerender-guard', page('<button onclick="analytics.page()">Next</button>'));
+    expect(onlyAttr.status).toBe('passed');
   });
 
   it('routes findings to incomplete when a script could not be read', async () => {

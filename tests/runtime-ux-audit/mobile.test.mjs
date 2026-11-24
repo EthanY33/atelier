@@ -300,6 +300,13 @@ describe('non-passive-touch-listener', () => {
     ].join('\n');
     expect((await run('non-passive-touch-listener', withJs(js))).status).toBe('passed');
   });
+
+  it('reads event attributes as handlers: a blocker added from ontouchstart is the drag pattern', async () => {
+    const handle = (attr) => page(VP, `<div class="handle" ${attr}="document.addEventListener('touchmove', block, { passive: false })">drag</div>`);
+    expect((await run('non-passive-touch-listener', handle('ontouchstart'))).status).toBe('passed');
+    const onClick = await run('non-passive-touch-listener', handle('onclick'));
+    expect(onClick.nodes.map((n) => [n.data.event, n.data.target])).toEqual([['touchmove', 'document']]);
+  });
 });
 
 describe('scroll-hijack', () => {
