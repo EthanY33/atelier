@@ -200,10 +200,10 @@ describe.skipIf(!isWin)('atelier.cmd shim', () => {
   const viaCmd = (args, shim = cmdPath, switches = []) =>
     run(comspec, ['/d', ...switches, '/s', '/c', `""${shim}" ${args}"`], { windowsVerbatimArguments: true });
 
-  // cmd.exe exactly as Windows starts it when a program launches the .cmd
-  // file itself: `cmd.exe /c ""<file>" <arguments>"`, the arguments quoted
-  // for a program and not for cmd. PowerShell is the usual such launcher;
-  // Node refuses to spawn a .cmd file without a shell.
+  // cmd.exe exactly as Windows starts it when PowerShell (or another .NET
+  // program) launches the .cmd file itself: `cmd.exe /c ""<file>" <arguments>"`,
+  // the arguments quoted for a program and not for cmd. Node refuses to
+  // spawn a .cmd file without a shell, so the test builds that line itself.
   const direct = (rawArgs, shim = cmdPath) => run(comspec, ['/c', `""${shim}" ${rawArgs}"`], { windowsVerbatimArguments: true });
 
   // Windows PowerShell with `binDir` first on PATH, so a bare `atelier` is
