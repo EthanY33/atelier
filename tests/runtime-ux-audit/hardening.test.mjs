@@ -13,13 +13,15 @@ import {
   findUnitValues, normalizeSelector, parseAnimationList, parseLength, parseTimeMs, stripCssComments,
 } from '../../plugins/atelier/skills/runtime-ux-audit/lib/css-values.mjs';
 import { buildHtmlModel, MAX_HTML_DEPTH } from '../../plugins/atelier/skills/runtime-ux-audit/lib/html-model.mjs';
-import { parseJs, pathOf } from '../../plugins/atelier/skills/runtime-ux-audit/lib/js-model.mjs';
+import { MAX_JS_DEPTH, buildJsModel, parseJs, pathOf } from '../../plugins/atelier/skills/runtime-ux-audit/lib/js-model.mjs';
 import { compileSelector, matchesSelector, selectAll } from '../../plugins/atelier/skills/runtime-ux-audit/lib/selector-match.mjs';
 import { REF_META } from '../../plugins/atelier/skills/runtime-ux-audit/lib/context.mjs';
 import { createSuppressor } from '../../plugins/atelier/skills/runtime-ux-audit/lib/suppress.mjs';
 import { code, inline } from '../../plugins/atelier/skills/runtime-ux-audit/lib/report-md.mjs';
 import { isInternalHost } from '../../plugins/atelier/skills/runtime-ux-audit/lib/url.mjs';
 import { launchUxChromium } from '../../plugins/atelier/skills/runtime-ux-audit/lib/browser.mjs';
+import { analyticsWithoutPrerenderGuard } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/analytics.mjs';
+import { noUnloadHandler } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/bfcache.mjs';
 import { speculationRulesCspGap } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/speculation.mjs';
 
 /** Milliseconds fn takes, and its result. */
@@ -475,6 +477,77 @@ describe('long property chains in scripts', () => {
     } finally {
       cleanup();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('JS nesting depth', () => {
+  const model = (source) => {
+    const { ast, comments, error } = parseJs(source);
+    const js = buildJsModel([{ order: 1, displayPath: 'a.js', kind: 'external', type: 'classic', el: null, src: 'a.js', source, rawText: source, ast, comments, selector: 'script', inDocument: false }]);
+    return { js, error };
+  };
+  const chainOf = (n) => `x${'.a()'.repeat(n)};`;
+
+  it('indexes a 20000-call chain down to the depth bound, with no ancestor copy per call', () => {
+    const { ms, value: { js, error } } = timed(() => model(chainOf(20_000)));
+    expect(error).toBeNull();
+    // The depth bound caps the work: unbounded, all 20,000 calls are indexed
+    // and each keeps a copy of its path (3.2 GB). The time is only a backstop.
+    expect(js.calls.length).toBeGreaterThan(0);
+    expect(js.calls.length).toBeLessThanOrEqual(MAX_JS_DEPTH);
+    expect(Math.max(...js.calls.map((c) => c.ancestors.length))).toBeLessThanOrEqual(MAX_JS_DEPTH);
+    expect(js.complete).toBe(false);
+    expect(ms).toBeLessThan(30_000);
+  });
+
+  it('does the same for a long run of calls joined by +', () => {
+    // 2500 terms nest 2500 deep. A parser that runs out of stack first gives
+    // a parse error, which also leaves the model incomplete.
+    const { js } = model(`${Array.from({ length: 2500 }, () => 'f()').join('+')};`);
+    expect(js.calls.length).toBeLessThanOrEqual(MAX_JS_DEPTH);
+    expect(js.complete).toBe(false);
+  });
+
+  it('keeps one ancestor list at a time instead of one per record', () => {
+    const { js } = model('function a() { if (x) { f(); } }\nfunction b() { for (;;) { g(); } }');
+    const [f, g] = js.calls;
+    const first = f.ancestors;
+    expect(f.ancestors).toBe(first);
+    expect(first.map((n) => n.type)).toEqual(['Program', 'FunctionDeclaration', 'BlockStatement', 'IfStatement', 'BlockStatement', 'ExpressionStatement']);
+    expect(g.ancestors.map((n) => n.type)).toEqual(['Program', 'FunctionDeclaration', 'BlockStatement', 'ForStatement', 'BlockStatement', 'ExpressionStatement']);
+    // Reading g dropped the list of f; it is rebuilt on the next read.
+    expect(f.ancestors).not.toBe(first);
+    expect(f.ancestors).toEqual(first);
+    expect(Object.isFrozen(first) && Object.isFrozen(f.ancestors)).toBe(true);
+  });
+
+  it('indexes deep code below the bound completely', () => {
+    const { js } = model(`window.addEventListener('unload', bye);\n${chainOf(900)}\nfunction bye() {}`);
+    expect(js.complete).toBe(true);
+    expect(js.calls).toHaveLength(901);
+    expect(js.calls[900].ancestors).toHaveLength(1800);
+    expect(js.calls.every((c) => c.topLevel && !c.inLoop)).toBe(true);
+    expect(js.listenersByEvent('unload')[0].handler.id.name).toBe('bye');
+  });
+
+  it('keeps findings from the part of a script above the bound and sends absence-based ones to review', async () => {
+    const ctx = await contextFor({
+      'index.html': '<!doctype html><html><head></head><body><p>x</p><script src="a.js"></script></body></html>',
+      'a.js': `window.addEventListener('unload', bye);\nga('send', 'pageview');\n${chainOf(20_000)}`,
+    });
+    expect(ctx.js.complete).toBe(false);
+    expect(runRule(noUnloadHandler, ctx).nodes.map((n) => n.location)).toEqual(['a.js:1:1']);
+    const analytics = runRule(analyticsWithoutPrerenderGuard, ctx);
+    expect(analytics.status).toBe('incomplete');
+    expect(analytics.incomplete.map((n) => n.location)).toEqual(['a.js:2:1']);
+    // The same page without the deep chain: a plain violation.
+    const plain = await contextFor({
+      'index.html': '<!doctype html><html><head></head><body><p>x</p><script src="a.js"></script></body></html>',
+      'a.js': `ga('send', 'pageview');\n${chainOf(900)}`,
+    });
+    expect(runRule(analyticsWithoutPrerenderGuard, plain).nodes.map((n) => n.location)).toEqual(['a.js:1:1']);
   });
 });
 

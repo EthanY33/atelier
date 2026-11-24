@@ -17,6 +17,11 @@ const JQUERY_SHORTHANDS = new Set(['blur', 'focus', 'focusin', 'focusout', 'resi
 // Body/frameset attributes that register on the window (HTML "window-reflecting" handlers).
 const WINDOW_REFLECTING = new Set(['blur', 'error', 'focus', 'load', 'resize', 'scroll', 'afterprint', 'beforeprint', 'beforeunload', 'hashchange', 'languagechange', 'message', 'messageerror', 'offline', 'online', 'pageswap', 'pagehide', 'pagereveal', 'pageshow', 'popstate', 'rejectionhandled', 'storage', 'unhandledrejection', 'unload']);
 
+// Syntax nested deeper than this is not indexed, and the model then reports
+// complete: false. One very long call chain or run of operators nests one
+// level per link, and work on a node grows with its depth.
+export const MAX_JS_DEPTH = 2000;
+
 export const isFunctionNode = (n) => Boolean(n) && FUNCTION_TYPES.has(n.type);
 
 /**
@@ -137,27 +142,11 @@ function markIife(fn, parent, grand) {
   Object.defineProperty(fn, '__iife', { value: iife, enumerable: false, configurable: true });
 }
 
-function hasEnclosingNonArrowFn(ancestors) {
-  return ancestors.some((a) => a.type === 'FunctionDeclaration' || a.type === 'FunctionExpression');
-}
-
-function computeTopLevel(ancestors) {
-  return ancestors.every((a) => !FUNCTION_TYPES.has(a.type) || a.__iife === true);
-}
-
-function computeInLoop(ancestors) {
-  for (let i = ancestors.length - 1; i >= 0; i--) {
-    const a = ancestors[i];
-    if (FUNCTION_TYPES.has(a.type)) return false;
-    if (LOOP_TYPES.has(a.type)) return true;
-  }
-  return false;
-}
-
-function classifyTarget(receiver, ancestors) {
+/** `inFunction`: the receiver sits in a non-arrow function, where `this` is not the window. */
+function classifyTarget(receiver, inFunction) {
   if (!receiver) return 'window';
   const node = unwrapChain(receiver);
-  if (node.type === 'ThisExpression') return hasEnclosingNonArrowFn(ancestors) ? 'unknown' : 'window';
+  if (node.type === 'ThisExpression') return inFunction ? 'unknown' : 'window';
   const raw = pathOf(node);
   if (raw === 'window' || raw === 'self' || raw === 'globalThis') return 'window';
   const p = stripGlobal(raw);
@@ -166,11 +155,11 @@ function classifyTarget(receiver, ancestors) {
   return 'element';
 }
 
-function classifyJqueryTarget(arg, ancestors) {
+function classifyJqueryTarget(arg, inFunction) {
   if (!arg) return 'unknown';
   const s = stringValue(arg);
   if (s !== null) return /^\s*(body|html)\s*$/i.test(s) ? 'root-element' : 'element';
-  return classifyTarget(arg, ancestors);
+  return classifyTarget(arg, inFunction);
 }
 
 function parseListenerOptions(node) {
@@ -244,6 +233,23 @@ export function buildJsModel(scripts, { complete = true } = {}) {
   // Programs of event attributes. Their code is the body of the attribute's
   // handler: it runs when the event fires, not when the page loads.
   const handlerPrograms = new Set();
+  let truncated = false;
+
+  // A record's ancestors are listed on demand from parent links that records
+  // share, and only the latest list is kept. A copy of the path on every
+  // record costs time and memory quadratic in nesting depth.
+  const NO_ANCESTORS = Object.freeze([]);
+  let listedChain = null;
+  let listed = NO_ANCESTORS;
+  const ancestorsOf = (chain) => {
+    if (chain !== listedChain) {
+      const list = new Array(chain ? chain.depth : 0);
+      for (let link = chain; link; link = link.up) list[link.depth - 1] = link.node;
+      listedChain = chain;
+      listed = Object.freeze(list);
+    }
+    return listed;
+  };
 
   const sourceOf = (script, node) => (node && script?.source ? script.source.slice(node.start, node.end) : '');
 
@@ -307,6 +313,10 @@ export function buildJsModel(scripts, { complete = true } = {}) {
     // Pass 1: scopes, function names and initializers, so handlers resolve regardless of order.
     traverse(script.ast, (node, ancestors) => {
       const depth = ancestors.length;
+      if (depth > MAX_JS_DEPTH) {
+        truncated = true;
+        return false;
+      }
       const parent = ancestors[depth - 1];
       let scope = depth ? scopeAt[depth - 1] : null;
       let varScope = depth ? varScopeAt[depth - 1] : null;
@@ -338,22 +348,52 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       varScopeAt[depth] = varScope;
       if (node.type === 'Literal' && typeof node.value === 'string') push(literalIndex, node.value, { script, node });
       if (node.type === 'TemplateLiteral' && node.expressions.length === 0) push(literalIndex, node.quasis[0].value.cooked, { script, node });
+      return true;
     });
     scopes.sort((a, b) => a.start - b.start);
 
-    // Pass 2: calls, listeners, assignments, imports.
+    // Pass 2: calls, listeners, assignments, imports. The flags are kept per
+    // depth, for a node with that many ancestors: it runs at script start
+    // (every function around it is an IIFE), it is in a loop of its function,
+    // it is in a non-arrow function.
+    const top = [];
+    const inLoop = [];
+    const inFunction = [];
+    // links[i]: parent link of live[i], made when a record first needs it.
+    const links = [];
+    const chainFor = (live) => {
+      for (let i = links.length; i < live.length; i++) links[i] = { node: live[i], up: i ? links[i - 1] : null, depth: i + 1 };
+      return live.length ? links[live.length - 1] : null;
+    };
     traverse(script.ast, (node, live) => {
+      const depth = live.length;
+      if (depth > MAX_JS_DEPTH) return false;
+      if (links.length > depth) links.length = depth;
+      const parent = live[depth - 1];
+      if (!parent) {
+        top[0] = !inHandler;
+        inLoop[0] = false;
+        inFunction[0] = false;
+      } else if (FUNCTION_TYPES.has(parent.type)) {
+        top[depth] = top[depth - 1] && parent.__iife === true;
+        inLoop[depth] = false;
+        inFunction[depth] = inFunction[depth - 1] || parent.type !== 'ArrowFunctionExpression';
+      } else {
+        top[depth] = top[depth - 1];
+        inLoop[depth] = inLoop[depth - 1] || LOOP_TYPES.has(parent.type);
+        inFunction[depth] = inFunction[depth - 1];
+      }
       if (node.type === 'CallExpression' || node.type === 'NewExpression') {
-        const ancestors = Object.freeze(live.slice());
+        const chain = chainFor(live);
         const calleeNode = unwrapChain(node.callee);
         const callee = stripGlobal(pathOf(calleeNode));
         const method = callee.includes('.') ? callee.slice(callee.lastIndexOf('.') + 1) : callee;
         const info = Object.freeze({
-          script, node, ancestors, callee, method, args: node.arguments, isNew: node.type === 'NewExpression',
-          optional: node.optional === true, topLevel: !inHandler && computeTopLevel(ancestors), inLoop: computeInLoop(ancestors),
+          script, node, get ancestors() { return ancestorsOf(chain); }, callee, method, args: node.arguments, isNew: node.type === 'NewExpression',
+          optional: node.optional === true, topLevel: top[depth], inLoop: inLoop[depth],
         });
         calls.push(info);
-        collectListenerFromCall(script, node, calleeNode, info);
+        collectListenerFromCall(script, node, calleeNode, info, chain, inFunction[depth]);
         if (node.type === 'CallExpression' && calleeNode.type === 'Identifier') {
           const src = stringValue(node.arguments[0]);
           if (src !== null && calleeNode.name === 'require') imports.push(Object.freeze({ script, node, source: src, kind: 'require', specifiers: Object.freeze([]) }));
@@ -365,14 +405,14 @@ export function buildJsModel(scripts, { complete = true } = {}) {
           }
         }
       } else if (node.type === 'AssignmentExpression') {
-        const ancestors = Object.freeze(live.slice());
+        const chain = chainFor(live);
         const target = pathOf(node.left);
         const property = node.left.type === 'MemberExpression' ? target.slice(target.lastIndexOf('.') + 1) : (node.left.type === 'Identifier' ? node.left.name : '?');
         const info = Object.freeze({
-          script, node, ancestors, target, normalizedTarget: stripGlobal(target), property, operator: node.operator, valueNode: node.right,
+          script, node, get ancestors() { return ancestorsOf(chain); }, target, normalizedTarget: stripGlobal(target), property, operator: node.operator, valueNode: node.right,
         });
         assignments.push(info);
-        collectListenerFromAssignment(script, node, info);
+        collectListenerFromAssignment(script, node, chain, top[depth], inFunction[depth]);
       } else if (node.type === 'ImportDeclaration') {
         imports.push(Object.freeze({
           script, node, source: String(node.source.value), kind: 'static',
@@ -398,15 +438,14 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       if ((tag === 'body' || tag === 'frameset') && WINDOW_REFLECTING.has(event)) target = 'window';
       else if (tag === 'body' || tag === 'html') target = 'root-element';
       pushListener({
-        script, node: script.ast, ancestors: Object.freeze([]), via: 'attribute', event, target,
+        script, node: script.ast, ancestors: NO_ANCESTORS, via: 'attribute', event, target,
         targetText: script.selector.replace(/\[on[a-z-]+\]$/, ''), handler: script.ast, handlerText: script.source,
         options: parseListenerOptions(null), topLevel: true,
       });
     }
   }
 
-  function collectListenerFromCall(script, node, calleeNode, info) {
-    const { ancestors } = info;
+  function collectListenerFromCall(script, node, calleeNode, info, chain, inFunction) {
     // addEventListener(type, handler, options)
     if (info.method === 'addEventListener' && node.type === 'CallExpression') {
       const type = stringValue(node.arguments[0]);
@@ -415,8 +454,8 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       const handlerArg = node.arguments[1] ?? null;
       const handler = resolveFunctionIn(script, handlerArg);
       pushListener({
-        script, node, ancestors, via: 'addEventListener', event: type.toLowerCase(),
-        target: classifyTarget(receiver, ancestors),
+        script, node, get ancestors() { return ancestorsOf(chain); }, via: 'addEventListener', event: type.toLowerCase(),
+        target: classifyTarget(receiver, inFunction),
         targetText: receiver ? collapse(sourceOf(script, receiver)) : 'window',
         handler, handlerText: handler ? sourceOf(script, handler) : sourceOf(script, handlerArg),
         options: parseListenerOptions(node.arguments[2] ?? null), topLevel: info.topLevel,
@@ -429,7 +468,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       const handler = resolveFunctionIn(script, node.arguments[0]);
       if (handler) {
         pushListener({
-          script, node, ancestors, via: 'jquery', event: 'domcontentloaded', target: 'document', targetText: 'document',
+          script, node, get ancestors() { return ancestorsOf(chain); }, via: 'jquery', event: 'domcontentloaded', target: 'document', targetText: 'document',
           handler, handlerText: sourceOf(script, handler), options: parseListenerOptions(null), topLevel: info.topLevel,
         });
       }
@@ -441,7 +480,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       if (obj?.type !== 'CallExpression' || unwrapChain(obj.callee)?.type !== 'Identifier' || !JQUERY_NAMES.has(unwrapChain(obj.callee).name)) return;
       const name = calleeNode.property.name;
       const targetArg = obj.arguments[0] ?? null;
-      const target = classifyJqueryTarget(targetArg, ancestors);
+      const target = classifyJqueryTarget(targetArg, inFunction);
       const targetText = collapse(sourceOf(script, obj));
       let events = [];
       let handlerArg = null;
@@ -461,7 +500,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       if (name !== 'ready' && JQUERY_SHORTHANDS.has(name) && !handler && handlerArg?.type !== 'Identifier') return;
       for (const event of events) {
         pushListener({
-          script, node, ancestors, via: 'jquery', event, target: name === 'ready' ? 'document' : target, targetText,
+          script, node, get ancestors() { return ancestorsOf(chain); }, via: 'jquery', event, target: name === 'ready' ? 'document' : target, targetText,
           handler, handlerText: handler ? sourceOf(script, handler) : sourceOf(script, handlerArg),
           options: parseListenerOptions(null), topLevel: info.topLevel,
         });
@@ -469,7 +508,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
     }
   }
 
-  function collectListenerFromAssignment(script, node, info) {
+  function collectListenerFromAssignment(script, node, chain, topLevel, inFunction) {
     if (node.operator !== '=') return;
     const left = node.left;
     let receiver = null;
@@ -489,11 +528,11 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       || (right.type === 'UnaryExpression' && right.operator === 'void')) return;
     const handler = resolveFunctionIn(script, right);
     pushListener({
-      script, node, ancestors: info.ancestors, via: 'property', event: prop.slice(2),
-      target: receiver ? classifyTarget(receiver, info.ancestors) : 'window',
+      script, node, get ancestors() { return ancestorsOf(chain); }, via: 'property', event: prop.slice(2),
+      target: receiver ? classifyTarget(receiver, inFunction) : 'window',
       targetText: receiver ? collapse(sourceOf(script, receiver)) : 'window',
       handler, handlerText: handler ? sourceOf(script, handler) : sourceOf(script, right),
-      options: parseListenerOptions(null), topLevel: !handlerPrograms.has(script.ast) && computeTopLevel(info.ancestors),
+      options: parseListenerOptions(null), topLevel,
     });
   }
 
@@ -631,7 +670,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
   };
 
   return Object.freeze({
-    complete: Boolean(complete),
+    complete: Boolean(complete) && !truncated,
     scripts: Object.freeze(scripts),
     calls: Object.freeze(calls),
     listeners: Object.freeze(listeners),

@@ -4,7 +4,7 @@ import * as V from '../../plugins/atelier/skills/runtime-ux-audit/lib/css-values
 import { buildHtmlModel, cssEscape, collapseSnippet } from '../../plugins/atelier/skills/runtime-ux-audit/lib/html-model.mjs';
 import { compileSelector } from '../../plugins/atelier/skills/runtime-ux-audit/lib/selector-match.mjs';
 import { parseCsp } from '../../plugins/atelier/skills/runtime-ux-audit/lib/csp.mjs';
-import { parseJs, pathOf, childNodes } from '../../plugins/atelier/skills/runtime-ux-audit/lib/js-model.mjs';
+import { parseJs, pathOf, childNodes, traverse } from '../../plugins/atelier/skills/runtime-ux-audit/lib/js-model.mjs';
 import { parseCss, isPrintOnlyMedia, normalizePrelude } from '../../plugins/atelier/skills/runtime-ux-audit/lib/css-model.mjs';
 
 // ---------------------------------------------------------------------------
@@ -496,6 +496,22 @@ importScripts('w.js', 'v.js');
     expect(fns.map((fn) => fn.__iife)).toEqual([true]);
     expect(Object.keys(fns[0])).not.toContain('__iife');
     expect(js.enclosingFunctions(js.callsByCallee('z')[0].ancestors).map((fn) => fn.__iife)).toEqual([false]);
+  });
+
+  it('lists the ancestors of each record on demand, equal to its path from the Program', async () => {
+    const { js } = await contextFor({ 'index.html': '<script src="a.js"></script>', 'a.js': `${src}window.onload = function () { el.onclick = go; };\n` });
+    const paths = new Map();
+    traverse(js.scripts[0].ast, (node, live) => { paths.set(node, live.slice()); });
+    const records = [...js.calls, ...js.assignments, ...js.listeners];
+    expect([js.calls.length > 20, js.assignments.length, js.listeners.length]).toEqual([true, 2, 2]);
+    for (const r of records) {
+      const want = paths.get(r.node);
+      expect(r.ancestors).toHaveLength(want.length);
+      expect(r.ancestors.every((a, i) => a === want[i])).toBe(true);
+      expect(Object.isFrozen(r.ancestors)).toBe(true);
+      expect(Object.keys(r)).toContain('ancestors');
+    }
+    expect(js.listeners.map((l) => [l.event, l.topLevel, js.enclosingFunctions(l.ancestors).length])).toEqual([['load', true, 0], ['click', false, 1]]);
   });
 
   it('isGuarded covers the (a) to (e) guard forms', async () => {
