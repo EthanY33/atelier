@@ -200,6 +200,13 @@ jobs:
           audits: ','
           out: leg-empty
 
+      # The example brand has no targets, so budgets match the defaults with or
+      # without --brand. Give it a non-default budget the run must report.
+      - name: Write a brand with a non-default budget
+        if: matrix.caller-node == '24'
+        run: |
+          node -e "const fs=require('fs');const b=JSON.parse(fs.readFileSync('plugins/atelier/examples/brand.json','utf8'));b.targets={inpBudgetMs:500};fs.writeFileSync('brand-ci.json',JSON.stringify(b))"
+
       - name: Action with dynamic and brand
         id: leg-dynamic
         if: matrix.caller-node == '24'
@@ -208,7 +215,7 @@ jobs:
           target: plugins/atelier/examples/page.html
           audits: ux
           dynamic: 'true'
-          brand: plugins/atelier/examples/brand.json
+          brand: brand-ci.json
           out: leg-dynamic
 
       - name: Failing legs failed and the dynamic leg wrote its report
@@ -223,7 +230,7 @@ jobs:
           test "$BOGUS" = failure
           test "$MISSING" = failure
           test "$EMPTY" = failure
-          node -e "process.exit(JSON.parse(require('fs').readFileSync('leg-dynamic/ux/ux-raw.json','utf8')).mode?.dynamic === true ? 0 : 1)"
+          node -e "const r=JSON.parse(require('fs').readFileSync('leg-dynamic/ux/ux-raw.json','utf8'));process.exit(r.mode?.dynamic === true && r.budgets?.inpBudgetMs === 500 ? 0 : 1)"
 
       - name: Job's Node after the action
         env:
