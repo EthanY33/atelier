@@ -24,6 +24,8 @@ import { clickHandlerForcedLayout } from '../../plugins/atelier/skills/runtime-u
 import { analyticsWithoutPrerenderGuard } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/analytics.mjs';
 import { noUnloadHandler } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/bfcache.mjs';
 import { speculationRulesCspGap } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/speculation.mjs';
+import { compileHrefPattern } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/shared.mjs';
+import { vtaDuplicateNames } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/view-transitions.mjs';
 
 /** Milliseconds fn takes, and its result. */
 function timed(fn) {
@@ -299,6 +301,54 @@ describe('speculation-rules-csp-gap on hostile hash sources', () => {
     expect(value.nodes).toHaveLength(1);
     expect(ms).toBeLessThan(5000);
   });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('speculation href_matches patterns', () => {
+  const resolve = (h) => (h.startsWith('/') ? `https://a.example${h}` : h);
+
+  it('matches a pattern with many wildcards against a long link in linear time', () => {
+    const re = compileHrefPattern(`/${'*a'.repeat(30)}*z`, resolve);
+    expect(re).not.toBeNull();
+    const link = `https://a.example/${'a'.repeat(2000)}`;
+    const { ms, value } = timed(() => re.test(link));
+    expect(ms).toBeLessThan(FAST_MS);
+    expect(value).toBe(false);
+    expect(re.test(`${link}z`)).toBe(true);
+  });
+
+  it('keeps ordinary wildcard and :name semantics', () => {
+    const re = compileHrefPattern('/docs/:id/*/end', resolve);
+    expect(re.test('https://a.example/docs/7/x/y/end')).toBe(true);
+    expect(re.test('https://a.example/docs/7/end')).toBe(false);
+    expect(re.test('https://a.example/docs//x/end')).toBe(false);
+    expect(re.test('https://a.example/docs/7/x/end/more')).toBe(false);
+  });
+
+  it('does not stall the static pass on a hostile rule', async () => {
+    const pattern = `/${'*a'.repeat(30)}*z`;
+    const html = `<!doctype html><html><head><script type="speculationrules">${JSON.stringify({ prefetch: [{ where: { href_matches: pattern }, eagerness: 'conservative' }] })}</script></head>`
+      + `<body><a href="/${'a'.repeat(60)}">a</a></body></html>`;
+    const { ms } = await timedAsync(async () => runRule(speculationRulesCspGap, await contextFor({ 'index.html': html })));
+    expect(ms).toBeLessThan(5000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('vta-duplicate-names on broad repeated selectors', () => {
+  it('stays bounded for hundreds of universal view-transition-name rules over many elements', async () => {
+    const css = '*{view-transition-name:a}'.repeat(400);
+    const html = `<!doctype html><html><head><style>${css}</style></head><body>${'<i></i>'.repeat(20000)}</body></html>`;
+    const ctx = await contextFor({ 'index.html': html }, { areas: ['transitions'] });
+    const before = process.memoryUsage().heapUsed;
+    const { ms, value } = await timedAsync(async () => runRule(vtaDuplicateNames, ctx));
+    expect(ms).toBeLessThan(15_000);
+    expect(value.status).toBe('failed');
+    expect(value.nodes[0].data).toMatchObject({ name: 'a' });
+    expect(process.memoryUsage().heapUsed - before).toBeLessThan(400 * 1024 * 1024);
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------------------

@@ -190,14 +190,16 @@ export function specificity(sel) {
 const TOKEN = 'zzatelier';
 
 /**
- * Compile the supported subset of a URL pattern string into a RegExp over
+ * Compile the supported subset of a URL pattern string into a matcher over
  * absolute URLs without query or hash. '*' matches anything and ':name' one
  * path segment. Relative patterns resolve like links (resolveHref, which
  * honors <base href> and the local root). Regex groups, braces, modifiers,
- * escapes and search or hash parts are unsupported: null.
+ * escapes and search or hash parts are unsupported: null. The matcher runs
+ * in time linear in pattern length times URL length (no regex backtracking),
+ * so a hostile pattern cannot stall the audit.
  * @param {unknown} pattern
  * @param {(href: string) => string|null} resolveHref
- * @returns {RegExp|null}
+ * @returns {{ test: (url: string) => boolean }|null}
  */
 export function compileHrefPattern(pattern, resolveHref) {
   if (typeof pattern !== 'string' || !pattern.trim()) return null;
@@ -205,15 +207,55 @@ export function compileHrefPattern(pattern, resolveHref) {
   if (/[(){}\\?#+]/.test(p)) return null;
   const kinds = [];
   const withTokens = p.replace(/\*|:([A-Za-z_$][\w$]*)/g, (m) => {
-    kinds.push(m === '*' ? '.*' : '[^/]+');
+    kinds.push(m === '*' ? 'any' : 'seg');
     return `${TOKEN}${kinds.length - 1}x`;
   });
   const abs = resolveHref(withTokens);
   if (!abs) return null;
   const bare = stripQueryHash(abs);
-  let src = bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  src = src.replace(new RegExp(`${TOKEN}(\\d+)x`, 'g'), (m, n) => kinds[Number(n)] ?? m);
-  return new RegExp(`^${src}$`);
+  // Items: a literal char, 'any' (zero or more of anything) or 'ns' / 'nsstar'
+  // (one, then zero or more, non-slash chars: a ':name' segment).
+  const items = [];
+  const tokenRe = new RegExp(`${TOKEN}(\\d+)x`, 'g');
+  const pushLiteral = (text) => { for (const ch of text) items.push(ch); };
+  let last = 0;
+  for (const m of bare.matchAll(tokenRe)) {
+    pushLiteral(bare.slice(last, m.index));
+    last = m.index + m[0].length;
+    const kind = kinds[Number(m[1])];
+    if (kind === 'seg') items.push('ns', 'nsstar');
+    else if (kind === 'any') { if (items[items.length - 1] !== 'any') items.push('any'); }
+    else pushLiteral(m[0]);
+  }
+  pushLiteral(bare.slice(last));
+  return { test: (url) => matchItems(items, String(url)) };
+}
+
+/** Simulate the pattern as an NFA over the input, one state set per character. */
+function matchItems(items, input) {
+  const m = items.length;
+  const loops = (i) => items[i] === 'any' || items[i] === 'nsstar';
+  let cur = new Uint8Array(m + 1);
+  let next = new Uint8Array(m + 1);
+  const close = (set) => { for (let i = 0; i < m; i++) if (set[i] && loops(i)) set[i + 1] = 1; };
+  cur[0] = 1;
+  close(cur);
+  for (const ch of input) {
+    next.fill(0);
+    let any = false;
+    for (let i = 0; i < m; i++) {
+      if (!cur[i]) continue;
+      const it = items[i];
+      if (it === 'any') { next[i] = 1; any = true; }
+      else if (it === 'nsstar') { if (ch !== '/') { next[i] = 1; any = true; } }
+      else if (it === 'ns') { if (ch !== '/') { next[i + 1] = 1; any = true; } }
+      else if (it === ch) { next[i + 1] = 1; any = true; }
+    }
+    if (!any) return false;
+    close(next);
+    [cur, next] = [next, cur];
+  }
+  return cur[m] === 1;
 }
 
 /** Drop the query and fragment of a URL string. */
