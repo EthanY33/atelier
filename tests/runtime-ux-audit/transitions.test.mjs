@@ -151,6 +151,19 @@ describe('no-beforeunload-always-attached', () => {
     expect(res.status).toBe('passed');
   });
 
+  it('resolves a ready handler in its own scope when two modules share its name', async () => {
+    const other = "(function () { function init() { document.documentElement.classList.add('ready'); } document.addEventListener('DOMContentLoaded', init); })();";
+    const onEdit = "(function () { var armed = false; function init() { window.addEventListener('beforeunload', function (e) { e.preventDefault(); }); }"
+      + " document.getElementById('f').addEventListener('input', function () { if (!armed) { armed = true; init(); } }); })();";
+    const run = (js) => check('no-beforeunload-always-attached', page(`<form id="f"></form>${script(js)}`));
+    expect((await run(`${onEdit}\n${other}`)).status).toBe('passed');
+    // The same init registered as the ready handler of its own module, or declared in an outer scope, is still flagged.
+    const onReady = "(function () { function init() { window.addEventListener('beforeunload', warn); } document.addEventListener('DOMContentLoaded', init); })();";
+    expect((await run(`${onReady}\n${other}`)).nodes.map((n) => n.location)).toEqual(['index.html:2:34']);
+    const outer = "function init() { window.addEventListener('beforeunload', warn); }\n(function () { window.addEventListener('load', init); })();";
+    expect((await run(outer)).nodes.map((n) => n.location)).toEqual(['index.html:2:19']);
+  });
+
   it('passes guards armed from an event attribute, and flags the ones armed on every load', async () => {
     const onEdit = await check('no-beforeunload-always-attached', page(
       '<textarea oninput="window.onbeforeunload = confirmLeave"></textarea>'

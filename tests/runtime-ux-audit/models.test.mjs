@@ -392,6 +392,66 @@ function onScroll() {}
   });
 });
 
+describe('js model: handler names resolve by scope', () => {
+  const src = `(function () {
+  function init() { one(); }
+  document.addEventListener('DOMContentLoaded', init);
+})();
+(function () {
+  function init() { two(); }
+  window.addEventListener('load', init);
+  el.addEventListener('click', later);
+  function later() { three(); }
+})();
+function shared() { four(); }
+function cb() { five(); }
+var late = function () { six(); };
+(function (cb) {
+  el.addEventListener('focus', cb);
+  el.addEventListener('blur', shared);
+  el.addEventListener('keyup', late.bind(this));
+  { const inner = () => { seven(); }; el.addEventListener('input', inner); }
+  el.addEventListener('change', inner);
+  try { go(); } catch (shared) { el.addEventListener('error', shared); }
+  if (x) { function hoisted() { eight(); } }
+  el.addEventListener('paste', hoisted);
+})(x);
+function wrap(shared, { late }) { el.addEventListener('scroll', shared); el.addEventListener('resize', late); }
+const named = function self() { el.addEventListener('wheel', self); };
+for (const cb of list) el.addEventListener('copy', cb);
+`;
+
+  it('picks the declaration the reference can see, and nothing when a binding shadows it', async () => {
+    const { js } = await contextFor({ 'index.html': '<script src="a.js"></script>', 'a.js': src });
+    const firstCall = (l) => (l.handler ? /\b(\w+)\(\)/.exec(js.sourceOf(l.script, l.handler.body))?.[1] ?? 'self' : null);
+    expect(Object.fromEntries(js.listeners.map((l) => [l.event, firstCall(l)]))).toEqual({
+      // Two modules, one name: each listener gets the init of its own function.
+      domcontentloaded: 'one', load: 'two',
+      // Hoisted in the same function, declared in an outer scope, var function through bind.
+      click: 'three', blur: 'four', keyup: 'six',
+      // Block scope: visible inside the block only. A function declared in a block is hoisted.
+      input: 'seven', change: null, paste: 'eight',
+      // Parameters, destructured parameters, catch and loop bindings shadow outer functions.
+      focus: null, error: null, scroll: null, resize: null, copy: null,
+      // A named function expression sees itself.
+      wheel: 'self',
+    });
+  });
+
+  it('resolveFunction uses the position of the node, or the top of the script without one', async () => {
+    const { js } = await contextFor({ 'index.html': '<script src="a.js"></script>', 'a.js': src });
+    for (const l of js.listeners) {
+      const arg = l.node.arguments[1];
+      if (arg.type === 'Identifier') expect(js.resolveFunction(l.script, arg), l.event).toBe(l.handler);
+    }
+    const script = js.scripts[0];
+    const top = (name) => js.resolveFunction(script, { type: 'Identifier', name });
+    expect(top('shared').id.name).toBe('shared');
+    expect(top('late').type).toBe('FunctionExpression');
+    expect([top('init'), top('later'), top('inner'), top('self'), top('nope')]).toEqual([null, null, null, null, null]);
+  });
+});
+
 describe('js model: structure', () => {
   const src = `(function () { setTimeout(a, 0); window.document.startViewTransition(); })();
 !function(){ x(); }();

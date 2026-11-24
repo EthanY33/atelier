@@ -195,6 +195,38 @@ function parseListenerOptions(node) {
 
 const collapse = (s) => String(s).replace(/\s+/g, ' ').trim();
 
+// Scopes for name lookup: var scopes hold var, function and parameter
+// bindings; block scopes also hold let, const, class and catch bindings.
+const BLOCK_SCOPE_TYPES = new Set(['BlockStatement', 'ForStatement', 'ForInStatement', 'ForOfStatement', 'SwitchStatement', 'CatchClause']);
+const isVarScope = (n) => n.type === 'Program' || n.type === 'StaticBlock' || FUNCTION_TYPES.has(n.type);
+
+/** Names a binding pattern declares: identifiers, destructuring, defaults and rest. */
+function bindingNames(pattern) {
+  const out = [];
+  const stack = [pattern];
+  while (stack.length) {
+    const p = stack.pop();
+    if (!p) continue;
+    if (p.type === 'Identifier') out.push(p.name);
+    else if (p.type === 'ObjectPattern') for (const prop of p.properties) stack.push(prop.type === 'RestElement' ? prop.argument : prop.value);
+    else if (p.type === 'ArrayPattern') for (const el of p.elements) stack.push(el);
+    else if (p.type === 'AssignmentPattern') stack.push(p.left);
+    else if (p.type === 'RestElement') stack.push(p.argument);
+  }
+  return out;
+}
+
+/**
+ * Record a binding in a scope: `fn` is the function it names, or null for any
+ * other binding. The first function a scope gives a name wins; other bindings
+ * only hide same-named functions of outer scopes.
+ */
+function declare(scope, name, fn) {
+  if (!scope) return;
+  if (!scope.names) scope.names = new Map();
+  if (fn ? !scope.names.get(name) : !scope.names.has(name)) scope.names.set(name, fn);
+}
+
 /**
  * Build a JsModel from collector script records.
  * @param {Array<object>} scripts - ScriptInfo records (ast may be null)
@@ -206,7 +238,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
   const assignments = [];
   const imports = [];
   const literalIndex = new Map();
-  const fnIndex = new Map(); // script -> Map(name -> fn node)
+  const scopeIndex = new Map(); // script -> scope records in source order; the first is the Program
   const initIndex = new Map(); // script -> Map(name -> init node)
   const listenerByFn = new Map();
   // Programs of event attributes. Their code is the body of the attribute's
@@ -215,11 +247,40 @@ export function buildJsModel(scripts, { complete = true } = {}) {
 
   const sourceOf = (script, node) => (node && script?.source ? script.source.slice(node.start, node.end) : '');
 
+  /**
+   * The function `name` refers to at source offset `pos`: the nearest scope
+   * around `pos` that declares the name decides, and the result is null when
+   * that binding is not a function (a parameter, say) or no scope declares
+   * it. Without an offset the lookup starts at the top of the script.
+   */
+  const resolveName = (script, name, pos) => {
+    const scopes = scopeIndex.get(script);
+    if (!scopes?.length) return null;
+    let scope = scopes[0];
+    if (typeof pos === 'number') {
+      // Last scope that starts at or before pos: the innermost scope around
+      // pos, or a scope nested in it that has already ended.
+      let lo = 0;
+      let hi = scopes.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (scopes[mid].start <= pos) lo = mid;
+        else hi = mid - 1;
+      }
+      scope = scopes[lo];
+      while (scope.parent && !(scope.start <= pos && pos < scope.end)) scope = scope.parent;
+    }
+    for (; scope; scope = scope.parent) {
+      if (scope.names?.has(name)) return scope.names.get(name);
+    }
+    return null;
+  };
+
   const resolveFunctionIn = (script, node, depth = 0) => {
     const n = unwrapChain(node);
     if (!n || depth > 3) return null;
     if (FUNCTION_TYPES.has(n.type)) return n;
-    if (n.type === 'Identifier') return fnIndex.get(script)?.get(n.name) ?? null;
+    if (n.type === 'Identifier') return resolveName(script, n.name, n.start);
     if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && !n.callee.computed && n.callee.property.name === 'bind') {
       return resolveFunctionIn(script, n.callee.object, depth + 1);
     }
@@ -236,24 +297,49 @@ export function buildJsModel(scripts, { complete = true } = {}) {
     if (!script.ast) continue;
     const inHandler = script.kind === 'event-attr';
     if (inHandler) handlerPrograms.add(script.ast);
-    const fns = new Map();
     const inits = new Map();
-    fnIndex.set(script, fns);
     initIndex.set(script, inits);
-    // Pass 1: function names and initializers, so handlers resolve regardless of order.
+    const scopes = [];
+    scopeIndex.set(script, scopes);
+    // Innermost scope and innermost var scope around the children of the node at each depth.
+    const scopeAt = [];
+    const varScopeAt = [];
+    // Pass 1: scopes, function names and initializers, so handlers resolve regardless of order.
     traverse(script.ast, (node, ancestors) => {
-      if (FUNCTION_TYPES.has(node.type)) markIife(node, ancestors[ancestors.length - 1], ancestors[ancestors.length - 2]);
+      const depth = ancestors.length;
+      const parent = ancestors[depth - 1];
+      let scope = depth ? scopeAt[depth - 1] : null;
+      let varScope = depth ? varScopeAt[depth - 1] : null;
+      if (FUNCTION_TYPES.has(node.type)) markIife(node, parent, ancestors[depth - 2]);
       if (node.type === 'FunctionDeclaration' && node.id) {
-        if (!fns.has(node.id.name)) fns.set(node.id.name, node);
+        // Hoisted to the enclosing function, also from inside a block.
+        declare(varScope, node.id.name, node);
         if (!inits.has(node.id.name)) inits.set(node.id.name, node);
+      } else if (node.type === 'VariableDeclarator') {
+        const fn = node.id.type === 'Identifier' && node.init && FUNCTION_TYPES.has(node.init.type) ? node.init : null;
+        for (const name of bindingNames(node.id)) declare(parent?.kind === 'var' ? varScope : scope, name, fn);
+        if (node.id.type === 'Identifier' && node.init && !inits.has(node.id.name)) inits.set(node.id.name, node.init);
+      } else if (node.type === 'ClassDeclaration' && node.id) {
+        declare(scope, node.id.name, null);
       }
-      if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) {
-        if (!inits.has(node.id.name)) inits.set(node.id.name, node.init);
-        if (FUNCTION_TYPES.has(node.init.type) && !fns.has(node.id.name)) fns.set(node.id.name, node.init);
+      if (isVarScope(node) || BLOCK_SCOPE_TYPES.has(node.type)) {
+        scope = { start: node.start, end: node.end, parent: scope, names: null };
+        scopes.push(scope);
+        if (isVarScope(node)) varScope = scope;
+        if (FUNCTION_TYPES.has(node.type)) {
+          for (const param of node.params) for (const name of bindingNames(param)) declare(scope, name, null);
+          // A named function expression can refer to itself.
+          if (node.type === 'FunctionExpression' && node.id && !scope.names?.has(node.id.name)) declare(scope, node.id.name, node);
+        } else if (node.type === 'CatchClause') {
+          for (const name of bindingNames(node.param)) declare(scope, name, null);
+        }
       }
+      scopeAt[depth] = scope;
+      varScopeAt[depth] = varScope;
       if (node.type === 'Literal' && typeof node.value === 'string') push(literalIndex, node.value, { script, node });
       if (node.type === 'TemplateLiteral' && node.expressions.length === 0) push(literalIndex, node.quasis[0].value.cooked, { script, node });
     });
+    scopes.sort((a, b) => a.start - b.start);
 
     // Pass 2: calls, listeners, assignments, imports.
     traverse(script.ast, (node, live) => {
@@ -558,6 +644,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
     mentions: (re) => scripts.some((s) => { re.lastIndex = 0; return re.test(s.source ?? ''); }),
     sourceOf,
     walkFunction,
+    /** The function a handler expression is: a function node, f.bind(...), or a name looked up in the scopes around the node. */
     resolveFunction: (script, node) => resolveFunctionIn(script, node),
     /** Same-script initializer of a name: the var/let/const init node, or the FunctionDeclaration. First wins. */
     initializerOf: (script, name) => initIndex.get(script)?.get(String(name)) ?? null,
