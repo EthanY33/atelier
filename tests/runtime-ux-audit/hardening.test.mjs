@@ -20,6 +20,7 @@ import { createSuppressor } from '../../plugins/atelier/skills/runtime-ux-audit/
 import { code, inline } from '../../plugins/atelier/skills/runtime-ux-audit/lib/report-md.mjs';
 import { isInternalHost } from '../../plugins/atelier/skills/runtime-ux-audit/lib/url.mjs';
 import { launchUxChromium } from '../../plugins/atelier/skills/runtime-ux-audit/lib/browser.mjs';
+import { clickHandlerForcedLayout } from '../../plugins/atelier/skills/runtime-ux-audit/rules/inp/listeners.mjs';
 import { analyticsWithoutPrerenderGuard } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/analytics.mjs';
 import { noUnloadHandler } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/bfcache.mjs';
 import { speculationRulesCspGap } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/speculation.mjs';
@@ -548,6 +549,44 @@ describe('JS nesting depth', () => {
       'a.js': `ga('send', 'pageview');\n${chainOf(900)}`,
     });
     expect(runRule(analyticsWithoutPrerenderGuard, plain).nodes.map((n) => n.location)).toEqual(['a.js:1:1']);
+  });
+
+  const clickHandler = (links) => `btn.addEventListener('click', function () { box.style.width = '10px'; var h = box.offsetHeight; ${chainOf(links)} });`;
+  const walk = (js) => {
+    const seen = { visits: 0, longest: 0, calls: 0 };
+    js.walkFunction(js.listenersByEvent('click')[0].handler, (node, ancestors) => {
+      seen.visits += 1;
+      seen.longest = Math.max(seen.longest, ancestors.length);
+      if (node.type === 'CallExpression') seen.calls += 1;
+    });
+    return seen;
+  };
+
+  it('walks a handler body down to the same bound', () => {
+    // Unbounded, the walk copies the path to each of the 12,000 levels of this
+    // chain: work that grows with the square of the depth.
+    const { js } = model(clickHandler(6000));
+    const deep = walk(js);
+    expect(deep.longest).toBe(MAX_JS_DEPTH);
+    expect(deep.visits).toBeLessThan(2 * MAX_JS_DEPTH);
+    expect(js.complete).toBe(false);
+    // Below the bound every node is visited, with its whole path.
+    const shallow = model(clickHandler(900));
+    expect(walk(shallow.js)).toMatchObject({ calls: 900, longest: 3 + 1800 });
+    expect(shallow.js.complete).toBe(true);
+  });
+
+  it('still reports what a handler does above the bound', async () => {
+    const page = (links) => ({
+      'index.html': '<!doctype html><html><head></head><body><button id="btn">x</button><div id="box"></div><script src="a.js"></script></body></html>',
+      'a.js': clickHandler(links),
+    });
+    const { ms, value: res } = await timedAsync(async () => runRule(clickHandlerForcedLayout, await contextFor(page(20_000))));
+    expect(res.nodes.map((n) => [n.snippet, n.location])).toEqual([['box.offsetHeight', 'a.js:1:79']]);
+    expect(ms).toBeLessThan(30_000);
+    // A handler that only writes is not reported, deep chain or not.
+    const writeOnly = { ...page(0), 'a.js': `btn.addEventListener('click', function () { box.style.width = '10px'; ${chainOf(20_000)} });` };
+    expect(runRule(clickHandlerForcedLayout, await contextFor(writeOnly)).status).toBe('passed');
   });
 });
 

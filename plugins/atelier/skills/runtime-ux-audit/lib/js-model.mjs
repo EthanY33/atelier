@@ -551,6 +551,10 @@ export function buildJsModel(scripts, { complete = true } = {}) {
     const bodyRoots = fnNode.type === 'Program' ? fnNode.body : [fnNode.body];
     for (const rootNode of bodyRoots) {
       traverse(rootNode, (node, live) => {
+        // Each visit gets a copy of its path, so the walk stops where the
+        // model does. Nodes past this point are not in the model either,
+        // and complete is already false.
+        if (live.length >= MAX_JS_DEPTH) return false;
         const ancestorsInFn = Object.freeze([fnNode, ...live]);
         const res = visit(node, ancestorsInFn);
         if (res === false) return false;
