@@ -63,7 +63,7 @@ npm run smoke:plugin
 
 ## 5. Merge to main
 
-Open a pull request from `release/X.Y.Z` to `main` and wait for every CI job: tests on Ubuntu, macOS and Windows with Node 22 and 24, schema and manifest validation (including `claude plugin validate`), the installed-plugin smoke test on all three OS, and the GitHub Action self-test. Then merge.
+Open a pull request from `release/X.Y.Z` to `main` and wait for every CI job (the release workflow refuses to publish otherwise): tests on Ubuntu, macOS and Windows with Node 22 and 24, schema and manifest validation (including `claude plugin validate`), the installed-plugin smoke test on all three OS, and the GitHub Action self-test. Then merge.
 
 ## 6. Tag
 
@@ -80,9 +80,10 @@ git push origin vX.Y.Z
 Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`:
 
 1. `npm run check:versions -- --tag vX.Y.Z` fails the run unless the tag matches every version string.
-2. `scripts/changelog-section.mjs` extracts the CHANGELOG section as the release notes.
-3. `gh release create` publishes the release as "atelier vX.Y.Z", unless one already exists.
-4. For a stable tag (no `-` in the name) that is the newest release of its major version, the workflow force-moves the major tag (`v1`) to the release commit. A prerelease, or a patch for an older minor, leaves `v1` where it is.
+2. `scripts/release-gate.mjs` fails the run unless the tagged commit is an ancestor of `origin/main` and every check run on that commit (CI) has completed successfully. A tag on a release branch, or on a main commit whose CI is red or still running, publishes nothing. Wait for CI, then tag.
+3. `scripts/changelog-section.mjs` extracts the CHANGELOG section as the release notes.
+4. `gh release create` publishes the release as "atelier vX.Y.Z", unless one already exists. A prerelease tag (a `-` in the name) is published with `--prerelease`, and a stable tag that is not the newest stable tag with `--latest=false`, so neither takes the Latest label (`scripts/release-flags.mjs`).
+5. For a stable tag (no `-` in the name) that is the newest release of its major version, the workflow force-moves the major tag (`v1`) to the release commit. A prerelease, or a patch for an older minor, leaves `v1` where it is.
 
 If the run fails before the release is created, fix the cause on `main`, then delete the tag and tag again:
 
@@ -93,7 +94,7 @@ git tag -d vX.Y.Z
 
 ### Moving v1 by hand
 
-Only needed when step 4 of the workflow failed or `v1` must be repointed:
+Only needed when step 5 of the workflow failed or `v1` must be repointed:
 
 ```bash
 git fetch --tags origin
