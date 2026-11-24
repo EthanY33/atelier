@@ -81,7 +81,7 @@ export function findOnPath(name, { env = process.env, platform = process.platfor
     // Windows drops every double quote in a PATH entry ("C:\Program Files\x").
     dir = win ? dir.replaceAll('"', '').trim() : dir.trim().replace(/^"(.*)"$/, '$1');
     if (!dir) continue;
-    const hit = first(join(dir, name));
+    const hit = first(join(resolve(dir), name));
     if (hit) return hit;
   }
   return null;

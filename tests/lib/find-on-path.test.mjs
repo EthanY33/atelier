@@ -153,6 +153,16 @@ describe('findOnPath edge cases', () => {
     expect(findOnPath('node', { env: { PATH: '' } })).toBeNull();
   });
 
+  it('returns an absolute path for a relative PATH entry', () => {
+    const rel = relative(process.cwd(), join(tmp, 'bin'));
+    // Another drive on Windows has no relative form; nothing to prove there.
+    if (isAbsolute(rel)) return;
+    touch(join(tmp, 'bin', isWin ? 'reltool.exe' : 'reltool'));
+    const hit = findOnPath('reltool', { env: { PATH: rel } });
+    expect(hit).not.toBeNull();
+    expect(isAbsolute(hit)).toBe(true);
+  });
+
   it('finds the real node binary on the host PATH', () => {
     const node = findOnPath('node');
     expect(node).not.toBeNull();
