@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { binPath, isWin, makeTmp, pluginRoot, runNode } from './helpers.mjs';
+import { binPath, isWin, makeTmp, pluginRoot, runNode, touch } from './helpers.mjs';
 
 const pkg = JSON.parse(readFileSync(join(pluginRoot, 'package.json'), 'utf8'));
 const manifest = JSON.parse(readFileSync(join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'));
@@ -189,9 +189,30 @@ describe('atelier skill forwarding', () => {
 
 describe.skipIf(!isWin)('atelier.cmd shim', () => {
   const cmdPath = join(pluginRoot, 'bin', 'atelier.cmd');
-  const viaCmd = (args) => spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${cmdPath}" ${args}`], {
+  // cmd /s /c strips the first and the last quote of the command line, so the
+  // whole line gets its own pair around the quoted path.
+  const viaCmd = (args, shim = cmdPath) => spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${shim}" ${args}"`], {
     cwd: tmp, encoding: 'utf8', windowsVerbatimArguments: true, windowsHide: true,
   });
+
+  /**
+   * A copy of the shim under a directory with a space in its name, beside a
+   * stub `atelier` that prints its arguments as JSON and exits 3. Returns the
+   * bin directory.
+   */
+  function stubInstall() {
+    const bin = join(tmp, 'sp ace', 'bin');
+    touch(join(bin, 'atelier'), 'console.log(JSON.stringify(process.argv.slice(2)));\nprocess.exitCode = 3;\n');
+    copyFileSync(cmdPath, join(bin, 'atelier.cmd'));
+    return bin;
+  }
+
+  /** The arguments the stub received, after checking it ran cleanly. */
+  function argvOf(r) {
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(3);
+    return JSON.parse(r.stdout);
+  }
 
   it('runs the bin and passes its output through', () => {
     const r = viaCmd('--version');
@@ -201,5 +222,13 @@ describe.skipIf(!isWin)('atelier.cmd shim', () => {
 
   it('propagates the exit code', () => {
     expect(viaCmd('nope').status).toBe(2);
+  });
+
+  // Regression: viaCmd passed `"<path>" <args>` to cmd /s /c, which strips
+  // the first and last quote, so a path with a space was cut at the space
+  // and these tests failed from a checkout such as C:\Users\Jane Doe\atelier.
+  it('runs from a path with a space and passes quoted arguments unchanged', () => {
+    const r = viaCmd('og --title "a b" --x "50% & more" "p|q" "c^d" "wow!" "<x>" "a&b" "say \\"hi\\""', join(stubInstall(), 'atelier.cmd'));
+    expect(argvOf(r)).toEqual(['og', '--title', 'a b', '--x', '50% & more', 'p|q', 'c^d', 'wow!', '<x>', 'a&b', 'say "hi"']);
   });
 });
