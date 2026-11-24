@@ -1,6 +1,6 @@
 # atelier
 
-Public Claude Code plugin, MIT, version 1.0. Eight design-automation skills share one brand file, `.atelier/brand.json`. Users receive only `plugins/atelier/`.
+Public Claude Code plugin, MIT, version 1.1. Eight design-automation skills share one brand file, `.atelier/brand.json`. Users receive only `plugins/atelier/`.
 
 ## Commands
 

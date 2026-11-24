@@ -10,7 +10,7 @@ Follow the [semver policy](api.md#semver-policy). Anything that breaks a covered
 
 ## 2. Bump the versions
 
-Work on a branch named `release/X.Y.Z`. Four places carry the version:
+Work on a branch named `release/X.Y.Z`. Six places carry the version:
 
 | File | How |
 |---|---|
@@ -18,6 +18,8 @@ Work on a branch named `release/X.Y.Z`. Four places carry the version:
 | `plugins/atelier/package.json` (and its `package-lock.json`) | `npm version X.Y.Z --no-git-tag-version --prefix plugins/atelier` |
 | `plugins/atelier/.claude-plugin/plugin.json` | edit `"version"` |
 | `README.md` version badge | edit `badge/version-X.Y.Z-e07a5f.svg`; in a prerelease badge, double each hyphen (`1.1.0--rc.1`) |
+| `docs/getting-started.md` | replace every `1.x.y` pin (`atelier 1.x.y doctor`, `--branch v1.x.y`, `atelier@v1.x.y`); `check:versions` fails on a stale one |
+| `CLAUDE.md` line 3 | edit `version X.Y` (major and minor only) |
 
 `--no-git-tag-version` keeps npm from committing or tagging. Do not add a `version` to the plugin entry in `.claude-plugin/marketplace.json`: Claude Code reads it from `plugin.json`, and `check:versions` rejects a second copy.
 
