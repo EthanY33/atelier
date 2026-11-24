@@ -62,7 +62,7 @@ Importing a skill never starts its CLI, including under `node -e`.
 | `atelier --version` | Print the plugin version | 0 |
 | `atelier doctor [--no-browser] [--json]` | Check Node, dependencies, sharp, Chromium, ffmpeg and `./.atelier/brand.json`, with a fix for each problem | 0 ready (warnings allowed), 1 a check failed, 2 usage error |
 | `atelier demo [-o, --out <dir>]` | Run every skill on the bundled fixtures into `<dir>` (default `./atelier-demo`) | 0, or 2 on a usage error or failure |
-| `atelier <alias> [args...]` | Run a skill's CLI | the skill's code; 2 for an unknown command |
+| `atelier <alias> [args...]` | Run a skill's CLI | the skill's code; 2 for an unknown command or when the skill process is ended by a signal (stderr names it). SIGINT, SIGTERM and SIGHUP sent to the wrapper are relayed to the skill process |
 
 Aliases: `brand` (brand-memory), `tokens` (design-token-sync), `og` (og-card-generator), `images` (responsive-image-pipeline), `assets` (brand-asset-pipeline), `a11y` (accessibility-design-audit), `video` (html-to-video), `ux` (runtime-ux-audit). The full skill name works too: `atelier runtime-ux-audit ...`.
 

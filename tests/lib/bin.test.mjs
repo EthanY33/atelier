@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -37,6 +37,11 @@ const fs = require('node:fs');
 fs.appendFileSync(process.env.ATELIER_SPY_LOG, JSON.stringify(process.argv) + '\\n');
 if (/[\\\\/]skills[\\\\/][^\\\\/]+[\\\\/]index\\.mjs$/.test(process.argv[1] || '')) {
   if (process.env.ATELIER_SPY_MODE === 'kill') process.kill(process.pid, 'SIGKILL');
+  if (process.env.ATELIER_SPY_MODE === 'wait') {
+    fs.writeFileSync(process.env.ATELIER_SPY_PID, String(process.pid));
+    setInterval(() => {}, 1000);
+    return;
+  }
   process.exit(7);
 }
 `);
@@ -169,10 +174,37 @@ describe('atelier skill forwarding', () => {
     expect(child.slice(1)).toEqual([join(pluginRoot, 'skills', 'brand-memory', 'index.mjs'), 'get', 'x']);
   });
 
-  it('exits 1 when the skill process is killed by a signal', () => {
+  // The signal path only exists on POSIX; on Windows a self-kill is a plain exit code.
+  it.skipIf(isWin)('exits 2 and names the signal when the skill process is killed by one', () => {
     const { env } = spyEnv();
     const r = atelier(['tokens'], { env: { ...env, ATELIER_SPY_MODE: 'kill' } });
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/atelier: design-token-sync was terminated by SIGKILL/);
+  });
+
+  it.skipIf(isWin)('relays SIGTERM sent to the wrapper to the skill process', async () => {
+    const { env } = spyEnv();
+    const pidFile = join(tmp, 'skill.pid');
+    const child = spawn(process.execPath, [binPath, 'tokens'], {
+      cwd: tmp,
+      env: { ...env, ATELIER_SPY_MODE: 'wait', ATELIER_SPY_PID: pidFile },
+      stdio: 'ignore',
+    });
+    const closed = new Promise((res) => child.on('close', (code, signal) => res({ code, signal })));
+    let skillPid;
+    for (let i = 0; i < 100 && !skillPid; i++) {
+      if (existsSync(pidFile)) skillPid = Number(readFileSync(pidFile, 'utf8'));
+      else await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(skillPid).toBeGreaterThan(0);
+    child.kill('SIGTERM');
+    const end = await closed;
+    expect(end.code).toBe(2);
+    let alive = true;
+    for (let i = 0; i < 20 && alive; i++) {
+      try { process.kill(skillPid, 0); await new Promise((r) => setTimeout(r, 50)); } catch { alive = false; }
+    }
+    expect(alive).toBe(false);
   });
 
   it('atelier tokens --help prints the skill usage, the same as running the skill directly', () => {
