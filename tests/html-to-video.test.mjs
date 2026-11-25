@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { findOnPath as legacyFindOnPath, recordHtml, runCli } from '../plugins/atelier/skills/html-to-video/index.mjs';
+import { localFileScope, localFileVerdict, restrictLocalFiles } from '../plugins/atelier/skills/html-to-video/local-files.mjs';
 import { findOnPath, launchChromium, PreflightError } from '../plugins/atelier/lib/preflight.mjs';
 
 // ---------------------------------------------------------------------------
@@ -204,6 +205,7 @@ const SIMPLE_HTML = `<!DOCTYPE html>
 </head><body><h1>TideWane</h1></body></html>`;
 
 const RED_HTML = '<!DOCTYPE html><html><body style="margin:0;background:rgb(255,0,0)"></body></html>';
+const BLUE_HTML = '<!DOCTYPE html><html><body style="margin:0;background:rgb(0,0,255)"></body></html>';
 
 // Five 32px stripes that each switch from red to blue at t = 1s, driven by a
 // different timing mechanism.
@@ -253,6 +255,9 @@ describe('recordHtml option validation', () => {
     [{ format: 'webm', outPath: 'clip.MP4' }, /does not match the output extension/],
     [{ audioSource: 'track.wav' }, /audioSource must be a function/],
     [{ signal: 'stop' }, /signal must be an AbortSignal/],
+    [{ root: 5 }, /root must be a directory path, got 5/],
+    [{ root: ' ' }, /root must be a directory path/],
+    [{ onWarning: 'loud' }, /onWarning must be a function/],
     [{ outPath: '' }, /outPath is required/],
     [{ url: '' }, /url is required/],
     [{ url: 'localhost:5173/trailer.html' }, /has no scheme; did you mean http:\/\/localhost:5173/],
@@ -283,6 +288,17 @@ describe('recordHtml option validation', () => {
     const missing = join(tmp, 'nope.html');
     await expect(recordHtml({ url: missing, outPath: join(tmp, 'o.mp4') })).rejects.toThrow(`HTML file not found: ${missing}`);
     await expect(recordHtml({ url: pathToFileURL(missing).href, outPath: join(tmp, 'o.mp4') })).rejects.toThrow('HTML file not found');
+  });
+
+  it('rejects a root that does not exist or does not hold the page', async () => {
+    mkdirSync(join(tmp, 'site'));
+    mkdirSync(join(tmp, 'elsewhere'));
+    const page = join(tmp, 'site', 'page.html');
+    writeFileSync(page, SIMPLE_HTML, 'utf8');
+    const outPath = join(tmp, 'out', 'clip.mp4');
+    await expect(recordHtml({ url: page, outPath, root: join(tmp, 'missing') })).rejects.toThrow(`root directory not found: ${join(tmp, 'missing')}`);
+    await expect(recordHtml({ url: page, outPath, root: join(tmp, 'elsewhere') })).rejects.toThrow(/is outside the root directory .*; pass --root <dir>/);
+    expect(existsSync(join(tmp, 'out'))).toBe(false);
   });
 
   it('checks for ffmpeg before launching a browser or creating anything', async () => {
@@ -318,6 +334,181 @@ describe('recordHtml option validation', () => {
 
   it('still exports findOnPath for older callers', () => {
     expect(legacyFindOnPath).toBe(findOnPath);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Local file gate (shared with accessibility-design-audit): no browser needed
+// ---------------------------------------------------------------------------
+
+describe('local file gate', () => {
+  /** <tmp>/site/index.html plus the files the verdicts below ask for. */
+  function makeTree() {
+    const site = join(tmp, 'site');
+    for (const dir of ['site/css', 'site/.well-known', 'site/.git', 'site/css/.cache', 'elsewhere']) mkdirSync(join(tmp, dir), { recursive: true });
+    const files = ['site/index.html', 'site/inner.html', 'site/css/a.css', 'site/.env', 'site/.git/config', 'site/css/.cache/b.css', 'site/.well-known/security.txt', 'elsewhere/secret.html'];
+    for (const file of files) writeFileSync(join(tmp, file), 'x', 'utf8');
+    return { site, page: join(site, 'index.html'), url: (rel) => new URL(rel, pathToFileURL(join(site, 'index.html'))).href };
+  }
+
+  it('applies to file: pages only, and scopes one to its own folder or to root', () => {
+    const { site, page } = makeTree();
+    for (const url of ['https://example.com/', 'http://localhost:5173/x', 'data:text/html,<p>x</p>', 'about:blank']) {
+      expect(localFileScope(url)).toBeNull();
+    }
+    const own = localFileScope(pathToFileURL(page).href);
+    expect(own).toEqual({ root: realpathSync.native(site), lexicalRoot: site, doc: realpathSync.native(page) });
+    const wide = localFileScope(pathToFileURL(page).href, tmp);
+    expect(wide.root).toBe(realpathSync.native(tmp));
+
+    const scopeError = (url, root) => {
+      try {
+        localFileScope(url, root);
+      } catch (err) {
+        return err;
+      }
+      return null;
+    };
+    expect(scopeError(pathToFileURL(page).href, join(tmp, 'elsewhere'))).toMatchObject({ code: 'OUTSIDE_ROOT' });
+    expect(scopeError(pathToFileURL(page).href, join(tmp, 'missing'))).toMatchObject({ code: 'ROOT_NOT_FOUND' });
+    expect(scopeError(pathToFileURL(page).href, page)).toMatchObject({ code: 'ROOT_NOT_FOUND' });
+    expect(scopeError(pathToFileURL(join(site, 'nope.html')).href)).toMatchObject({ code: 'PAGE_NOT_FOUND' });
+    expect(scopeError(`${pathToFileURL(site).href}/`)).toMatchObject({ code: 'PAGE_IS_DIRECTORY' });
+    expect(scopeError('file:///has%2Fencoded%2Fslash.html')).toMatchObject({ code: 'PAGE_NOT_FOUND' });
+  });
+
+  it('allows regular files under the root and refuses everything else', () => {
+    const { page, url } = makeTree();
+    const scope = localFileScope(pathToFileURL(page).href);
+    const verdicts = Object.fromEntries([
+      'index.html', 'inner.html', 'inner.html?v=2#top', 'css/a.css', '.well-known/security.txt',
+      'missing.png', '../elsewhere/missing.png', '../elsewhere/secret.html.',
+      '../elsewhere/secret.html', '%2e%2e/elsewhere/secret.html', '.env', '.git/config', 'css/.cache/b.css', 'css/', './',
+    ].map((rel) => [rel, localFileVerdict(scope, url(rel))]));
+    expect(verdicts).toEqual({
+      'index.html': 'allow',
+      'inner.html': 'allow',
+      'inner.html?v=2#top': 'allow',
+      'css/a.css': 'allow',
+      '.well-known/security.txt': 'allow',
+      'missing.png': 'missing',
+      '../elsewhere/missing.png': 'missing',
+      // Windows would open this as secret.html; a path Node cannot resolve is never loaded.
+      '../elsewhere/secret.html.': 'missing',
+      '../elsewhere/secret.html': 'refuse',
+      '%2e%2e/elsewhere/secret.html': 'refuse',
+      '.env': 'refuse',
+      '.git/config': 'refuse',
+      'css/.cache/b.css': 'refuse',
+      'css/': 'refuse',
+      './': 'refuse',
+    });
+    expect(localFileVerdict(scope, 'file:///has%2Fencoded%2Fslash.html')).toBe('refuse');
+    expect(localFileVerdict(scope, 'https://example.com/x.css')).toBe('refuse');
+  });
+
+  it('refuses a file: URL on another host without contacting it', () => {
+    const { page } = makeTree();
+    const scope = localFileScope(pathToFileURL(page).href);
+    // 192.0.2.1 is TEST-NET-1: opening it over SMB would wait for a network timeout.
+    const started = Date.now();
+    expect(localFileVerdict(scope, 'file://192.0.2.1/share/secret.txt')).toBe('refuse');
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it('follows links: one that leads out of the root is refused like its destination', (ctx) => {
+    const { site, page, url } = makeTree();
+    try {
+      symlinkSync(join(tmp, 'elsewhere'), join(site, 'shared'), process.platform === 'win32' ? 'junction' : 'dir');
+      symlinkSync(join(site, '.git'), join(site, 'vcs'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      ctx.skip();
+    }
+    const scope = localFileScope(pathToFileURL(page).href);
+    expect(localFileVerdict(scope, url('shared/secret.html'))).toBe('refuse');
+    expect(localFileVerdict(scope, url('vcs/config'))).toBe('refuse');
+    // The same folders are fine once the root holds them.
+    expect(localFileVerdict(localFileScope(pathToFileURL(page).href, tmp), url('shared/secret.html'))).toBe('allow');
+  });
+
+  it('a page that is itself a link is judged by where it leads', (ctx) => {
+    const { site, page, url } = makeTree();
+    try {
+      symlinkSync(join(tmp, 'elsewhere', 'secret.html'), join(site, 'out.html'), 'file');
+      symlinkSync(join(site, '.env'), join(site, 'env.html'), 'file');
+      symlinkSync(join(site, 'inner.html'), join(site, 'alias.html'), 'file');
+    } catch {
+      ctx.skip(); // file links need a privilege on Windows
+    }
+    const pageUrl = (name) => pathToFileURL(join(site, name)).href;
+    expect(() => localFileScope(pageUrl('out.html'))).toThrow(/is outside the root directory/);
+    expect(() => localFileScope(pageUrl('env.html'))).toThrow(/is a link to .*\.env, a dot-named file or folder/);
+    expect(localFileScope(pageUrl('alias.html')).doc).toBe(realpathSync.native(join(site, 'inner.html')));
+    // The same links, asked for by a page.
+    const scope = localFileScope(pathToFileURL(page).href);
+    expect(localFileVerdict(scope, url('out.html'))).toBe('refuse');
+    expect(localFileVerdict(scope, url('env.html'))).toBe('refuse');
+    expect(localFileVerdict(scope, url('alias.html'))).toBe('allow');
+  });
+
+  it('always allows the page itself, even in a dot-named folder under a wider root', () => {
+    mkdirSync(join(tmp, '.preview'));
+    const page = join(tmp, '.preview', 'index.html');
+    writeFileSync(page, 'x', 'utf8');
+    writeFileSync(join(tmp, '.preview', 'other.html'), 'x', 'utf8');
+    const scope = localFileScope(pathToFileURL(page).href, tmp);
+    expect(localFileVerdict(scope, pathToFileURL(page).href)).toBe('allow');
+    expect(localFileVerdict(scope, pathToFileURL(join(tmp, '.preview', 'other.html')).href)).toBe('refuse');
+    // With the default root (the page's own folder) the neighbour loads.
+    expect(localFileVerdict(localFileScope(pathToFileURL(page).href), pathToFileURL(join(tmp, '.preview', 'other.html')).href)).toBe('allow');
+  });
+
+  it('reports each blocked file once, stops after five, and survives a throwing warning sink', async () => {
+    const { page, url } = makeTree();
+    const scope = localFileScope(pathToFileURL(page).href);
+    // A context stand-in: route() hands back the handler so requests can be replayed.
+    const routed = async (warn) => {
+      let handler;
+      await restrictLocalFiles({ route: async (pattern, fn) => { handler = fn; expect(pattern.test('file:///x')).toBe(true); expect(pattern.test('https://x/')).toBe(false); } }, scope, warn);
+      return async (requestUrl) => {
+        let outcome;
+        await handler({
+          request: () => ({ url: () => requestUrl }),
+          continue: async () => { outcome = 'continue'; },
+          abort: async (reason) => { outcome = `abort:${reason}`; },
+        });
+        return outcome;
+      };
+    };
+
+    const warnings = [];
+    const request = await routed((m) => warnings.push(m));
+    expect(await request(url('inner.html'))).toBe('continue');
+    expect(await request(url('missing.png'))).toBe('abort:blockedbyclient');
+    expect(warnings).toEqual([]);
+    expect(await request(url('.env?a=1'))).toBe('abort:blockedbyclient');
+    expect(await request(url('.env?a=2#frag'))).toBe('abort:blockedbyclient');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toBe(`blocked local file ${url('.env')}: a local page only loads files under ${scope.root}, dot-named ones excluded (pass --root <dir>, or the root option, to allow another folder)`);
+    expect(await request(url('../elsewhere/secret.html'))).toBe('abort:blockedbyclient');
+    expect(warnings).toHaveLength(2);
+    for (let i = 0; i < 8; i++) {
+      writeFileSync(join(tmp, 'elsewhere', `f${i}.txt`), 'x', 'utf8');
+      await request(url(`../elsewhere/f${i}.txt`));
+    }
+    expect(warnings).toHaveLength(6);
+    expect(warnings[5]).toBe('more local files were blocked; they are not listed');
+
+    // The page chooses the URL, so a very long one is cut in the message.
+    const long = [];
+    const longRequest = await routed((m) => long.push(m));
+    expect(await longRequest(`file://192.0.2.1/share/${'a'.repeat(2000)}`)).toBe('abort:blockedbyclient');
+    expect(long).toHaveLength(1);
+    expect(long[0]).toContain('aaa...: a local page only loads files under');
+    expect(long[0].length).toBeLessThan(400 + scope.root.length + 200);
+
+    const quiet = await routed(() => { throw new Error('sink failed'); });
+    expect(await quiet(url('.env'))).toBe('abort:blockedbyclient');
   });
 });
 
@@ -631,6 +822,63 @@ describe.skipIf(!hasFfmpeg)('recordHtml', () => {
     expect(readdirSync(tmp).sort()).toEqual(['a & b', 'page.html']);
   });
 
+  // A red 64x48 page with two frames: the left half shows a blue page from
+  // outside the page folder, the right half a blue page from inside it.
+  function writeFramingSite(outsideSrc) {
+    const site = join(tmp, 'site');
+    mkdirSync(site);
+    mkdirSync(join(tmp, 'elsewhere'));
+    writeFileSync(join(tmp, 'elsewhere', 'secret.html'), BLUE_HTML, 'utf8');
+    writeFileSync(join(site, 'inner.html'), BLUE_HTML, 'utf8');
+    const frame = (src, left) => `<iframe src="${src}" style="position:absolute;left:${left}px;top:0;width:32px;height:48px;border:0"></iframe>`;
+    const page = join(site, 'index.html');
+    writeFileSync(page, `<!DOCTYPE html><html><body style="margin:0;background:rgb(255,0,0)">${frame(outsideSrc, 0)}${frame('inner.html', 32)}</body></html>`, 'utf8');
+    return page;
+  }
+  const small = { duration: 0.1, width: 64, height: 48, fps: 10 };
+
+  it('a local page cannot show a file from outside its folder; one inside still renders', async () => {
+    const page = writeFramingSite(pathToFileURL(join(tmp, 'elsewhere', 'secret.html')).href);
+    const outPath = join(tmp, 'gated.mp4');
+    const warnings = [];
+    await recordHtml({ url: page, ...small, outPath, poster: true, browser, onWarning: (m) => warnings.push(m) });
+    for (const file of [outPath, join(tmp, 'gated-poster.jpg')]) {
+      const frames = decodeFrames(file, 64, 48);
+      expect(isBlue(frames.px(0, 16, 24)), `outside frame in ${file}: ${frames.px(0, 16, 24)}`).toBe(false);
+      expect(isBlue(frames.px(0, 48, 24)), `inside frame in ${file}: ${frames.px(0, 48, 24)}`).toBe(true);
+    }
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/^blocked local file file:\/\/\/\S+\/elsewhere\/secret\.html: /);
+    expect(warnings[0]).toContain('--root');
+  });
+
+  it('root widens the folder a local page may load from', async () => {
+    const page = writeFramingSite('../elsewhere/secret.html');
+    const outPath = join(tmp, 'widened.mp4');
+    const warnings = [];
+    await recordHtml({ url: page, ...small, outPath, root: tmp, browser, onWarning: (m) => warnings.push(m) });
+    const frames = decodeFrames(outPath, 64, 48);
+    expect(isBlue(frames.px(0, 16, 24))).toBe(true);
+    expect(isBlue(frames.px(0, 48, 24))).toBe(true);
+    expect(warnings).toEqual([]);
+  });
+
+  it('a local page that navigates itself to a file outside its folder is stopped', async () => {
+    mkdirSync(join(tmp, 'site'));
+    mkdirSync(join(tmp, 'elsewhere'));
+    writeFileSync(join(tmp, 'elsewhere', 'secret.html'), BLUE_HTML, 'utf8');
+    const page = join(tmp, 'site', 'index.html');
+    writeFileSync(page, `<!DOCTYPE html><html><body style="margin:0;background:rgb(255,0,0)"><script>setTimeout(() => { location.href = '../elsewhere/secret.html'; }, 100);</script></body></html>`, 'utf8');
+    const outPath = join(tmp, 'self-nav.mp4');
+    const warnings = [];
+    await recordHtml({ url: page, duration: 0.5, width: 64, height: 48, fps: 10, outPath, browser, onWarning: (m) => warnings.push(m) });
+    const frames = decodeFrames(outPath, 64, 48);
+    expect(frames.count).toBe(5);
+    expect(isRed(frames.px(0, 32, 24))).toBe(true);
+    for (let f = 0; f < 5; f++) expect(isBlue(frames.px(f, 32, 24)), `frame ${f}: ${frames.px(f, 32, 24)}`).toBe(false);
+    expect(warnings).toHaveLength(1);
+  });
+
   it('waits for the load event before the first frame', async () => {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC', 'base64');
     const server = createServer((req, res) => {
@@ -728,6 +976,7 @@ describe('html-to-video CLI', () => {
     [['a.html', 'b.mp4', '--width', '12.5'], /width must be an integer/],
     [['a.html', 'b.mp4', '--timeout', 'soon'], /--timeout must be a number, got "soon"/],
     [['a.html', 'b.mp4', '--timeout', '0'], /timeoutMs must be a positive number, got 0/],
+    [['a.html', 'b.mp4', '--root', ''], /root must be a directory path, got ""/],
   ])('usage error %j prints usage to stderr and exits 2', async (argv, message) => {
     const { out, io } = capture();
     expect(await runCli(argv, io)).toBe(2);
@@ -746,6 +995,32 @@ describe('html-to-video CLI', () => {
     const c2 = capture();
     expect(await runCli([page, join(tmp, 'o.mp4'), '--audio', join(tmp, 'none.wav')], c2.io)).toBe(2);
     expect(c2.out.stderr).toMatch(/^atelier: Audio file not found: /);
+
+    const c3 = capture();
+    expect(await runCli([page, join(tmp, 'o.mp4'), '--root', join(tmp, 'missing')], c3.io)).toBe(2);
+    expect(c3.out.stderr).toBe(`atelier: root directory not found: ${join(tmp, 'missing')}\n`);
+  });
+
+  it.skipIf(!hasFfmpeg)('a blocked local file is a warning line on stderr; --root allows its folder', async () => {
+    mkdirSync(join(tmp, 'site'));
+    mkdirSync(join(tmp, 'shared'));
+    writeFileSync(join(tmp, 'shared', 'panel.html'), BLUE_HTML, 'utf8');
+    const page = join(tmp, 'site', 'page.html');
+    writeFileSync(page, '<!DOCTYPE html><html><body style="margin:0;background:rgb(255,0,0)"><iframe src="../shared/panel.html" style="position:absolute;left:0;top:0;width:64px;height:48px;border:0"></iframe></body></html>', 'utf8');
+    const size = ['0.1', '--fps', '10', '--width', '64', '--height', '48'];
+
+    const blocked = capture();
+    const blockedOut = join(tmp, 'blocked.mp4');
+    expect(await runCli([page, blockedOut, ...size], blocked.io), blocked.out.stderr).toBe(0);
+    expect(blocked.out.stderr).toMatch(/^atelier: warning: blocked local file file:\/\/\/\S+\/shared\/panel\.html: .*--root <dir>.*\n$/);
+    expect(blocked.out.stdout).toBe(`Video written to: ${blockedOut}\n`);
+    expect(isBlue(decodeFrames(blockedOut, 64, 48).px(0, 32, 24))).toBe(false);
+
+    const allowed = capture();
+    const allowedOut = join(tmp, 'allowed.mp4');
+    expect(await runCli([page, allowedOut, ...size, '--root', tmp], allowed.io), allowed.out.stderr).toBe(0);
+    expect(allowed.out.stderr).toBe('');
+    expect(isBlue(decodeFrames(allowedOut, 64, 48).px(0, 32, 24))).toBe(true);
   });
 
   it.skipIf(!hasProbe)('records with --fps/--width/--height/--poster/--audio', async () => {

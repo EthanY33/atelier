@@ -22,6 +22,9 @@
  *   - SVG SMIL animations are paused and seeked with setCurrentTime().
  * <video>/<audio> playback, Web Workers, cross-origin iframes' CSS animations
  * and document.timeline.currentTime are not driven by this clock.
+ *
+ * A page opened from disk only loads files under its own folder, or under
+ * `root` (see local-files.mjs), so it cannot put another local file on screen.
  */
 import { copyFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,6 +34,7 @@ import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { ensureFfmpeg, formatError, launchChromium } from '../../lib/preflight.mjs';
 import { isMain } from '../../lib/cli.mjs';
+import { localFileScope, restrictLocalFiles } from './local-files.mjs';
 
 // Kept for callers of the v0.2 API, which exported its own PATH walker.
 export { findOnPath } from '../../lib/preflight.mjs';
@@ -163,6 +167,8 @@ function normalizeOptions({
   signal,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   allowHttpError = false,
+  root,
+  onWarning,
 } = {}) {
   if (typeof outPath !== 'string' || outPath.trim() === '') {
     throw new TypeError('outPath is required: the .mp4 or .webm file to write');
@@ -182,12 +188,20 @@ function normalizeOptions({
   if (signal != null && (typeof signal !== 'object' || typeof signal.aborted !== 'boolean')) {
     throw new TypeError('signal must be an AbortSignal');
   }
+  if (root != null && (typeof root !== 'string' || root.trim() === '')) {
+    throw new TypeError(`root must be a directory path, got ${show(root)}`);
+  }
+  if (onWarning != null && typeof onWarning !== 'function') {
+    throw new TypeError('onWarning must be a function (message) => void');
+  }
   const resolvedFormat = resolveFormat(format, outPath);
   const absOut = resolve(outPath);
   if (/[\\/]$/.test(outPath) || isDirectory(absOut)) {
     throw new TypeError(`outPath must be a file path, not a directory: ${outPath}`);
   }
   const pageUrl = toPageUrl(url);
+  // Null unless the page is a local file; throws when root does not hold it.
+  const fileScope = localFileScope(pageUrl, root ?? undefined);
   // libx264 with yuv420p needs even dimensions, so MP4 rounds odd sizes up by
   // one pixel. The page is laid out at the rounded size (no padding bars).
   const even = (n) => (resolvedFormat === 'mp4' && n % 2 === 1 ? n + 1 : n);
@@ -206,6 +220,8 @@ function normalizeOptions({
     signal: signal ?? undefined,
     timeoutMs,
     allowHttpError: Boolean(allowHttpError),
+    fileScope,
+    warn: onWarning ?? ((message) => process.stderr.write(`atelier: warning: ${message}\n`)),
   };
 }
 
@@ -392,9 +408,10 @@ async function stepAllFrames(page, t) {
  * misses its load event within timeoutMs, or that answers HTTP 4xx/5xx
  * (unless allowHttpError) is an error.
  */
-async function openPage(browser, { pageUrl, width, height, timeoutMs, allowHttpError }) {
+async function openPage(browser, { pageUrl, width, height, timeoutMs, allowHttpError, fileScope, warn }) {
   const context = await browser.newContext({ viewport: { width, height } });
   try {
+    if (fileScope) await restrictLocalFiles(context, fileScope, warn);
     const page = await context.newPage();
     let cdp;
     try {
@@ -499,6 +516,8 @@ async function captureFrames(page, { fps, totalFrames, signal }, frameDir, padWi
  *   signal?: AbortSignal,
  *   timeoutMs?: number,
  *   allowHttpError?: boolean,
+ *   root?: string,
+ *   onWarning?: (message: string) => void,
  * }} opts
  * @param opts.url - http(s)/file/data URL, or a path to a local HTML file. A page that
  *   answers HTTP 4xx/5xx is an error unless `allowHttpError` is set.
@@ -517,6 +536,10 @@ async function captureFrames(page, { fps, totalFrames, signal }, frameDir, padWi
  *   frames and rejects with the abort reason. outPath is left untouched.
  * @param opts.timeoutMs - how long to wait for navigation and the load event (default 30000).
  * @param opts.allowHttpError - record the page even when it answers HTTP 4xx/5xx.
+ * @param opts.root - local pages only: the folder whose files the page may load (default:
+ *   the HTML file's folder). Files outside it, and dot-named files and folders, do not load.
+ * @param opts.onWarning - receives one message per local file that was blocked (default:
+ *   printed to stderr).
  * @returns {Promise<string>} resolves with outPath
  */
 export async function recordHtml(opts) {
@@ -625,6 +648,8 @@ Options:
       --poster         also write <name>-poster.jpg from the first frame
       --audio <file>   mux this audio file (WAV recommended) into the video
       --timeout <ms>   navigation and load event timeout (default ${DEFAULT_TIMEOUT_MS})
+      --root <dir>     local pages: the folder whose files the page may load
+                       (default: the HTML file's folder)
       --allow-http-error
                        record the page even when it answers HTTP 4xx or 5xx
   -h, --help           show this help
@@ -668,6 +693,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
         audio: { type: 'string' },
         timeout: { type: 'string' },
         'allow-http-error': { type: 'boolean' },
+        root: { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
     });
@@ -691,6 +717,8 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     if (values.poster) opts.poster = true;
     if (values.timeout !== undefined) opts.timeoutMs = parseNumberArg('timeout', values.timeout);
     if (values['allow-http-error']) opts.allowHttpError = true;
+    if (values.root !== undefined) opts.root = values.root;
+    opts.onWarning = (message) => stderr.write(`atelier: warning: ${message}\n`);
     audioPath = values.audio;
   } catch (err) {
     stderr.write(`atelier: ${err.message}\n\n${USAGE}\n`);

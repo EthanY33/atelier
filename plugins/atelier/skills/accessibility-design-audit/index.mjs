@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { isMain } from '../../lib/cli.mjs';
 import { PreflightError, formatError, launchChromium } from '../../lib/preflight.mjs';
+import { localFileScope, restrictLocalFiles } from '../html-to-video/local-files.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -73,6 +74,32 @@ function resolveTarget(input) {
   const looksLikeHost = /^[\w-]+(\.[\w-]+)+(:\d+)?(\/.*)?$/.test(input) && !/\.html?$/i.test(input);
   const hint = looksLikeHost ? `. For a website, pass a full URL such as https://${input}` : '';
   throw new AuditError(`no such file: ${abs}${hint}`, { code: 'INPUT_NOT_FOUND' });
+}
+
+// localFileScope's codes as AuditError codes. A file: URL that cannot be
+// opened stays NAVIGATION_FAILED, as when Chromium reported it.
+const SCOPE_ERROR_CODES = {
+  PAGE_NOT_FOUND: 'NAVIGATION_FAILED',
+  PAGE_IS_DIRECTORY: 'INPUT_IS_DIRECTORY',
+  ROOT_NOT_FOUND: 'INPUT_NOT_FOUND',
+  OUTSIDE_ROOT: 'OUTSIDE_ROOT',
+};
+
+/**
+ * The files a local page may load: those under `root`, by default the
+ * page's own folder (see ../html-to-video/local-files.mjs). Null for http(s)
+ * and data: pages, which Chromium keeps away from local files itself.
+ * @param {string} target - URL from resolveTarget
+ * @param {string} [root]
+ */
+function resolveFileScope(target, root) {
+  try {
+    return localFileScope(target, root);
+  } catch (err) {
+    const code = SCOPE_ERROR_CODES[err?.code];
+    if (!code) throw err;
+    throw new AuditError(err.message, { code, cause: err });
+  }
 }
 
 let knownTags;
@@ -316,7 +343,9 @@ export function buildMarkdownReport({ url, finalUrl, timestamp, violations, tags
  * Runs a WCAG 2.1 A and AA audit on a page using axe-core via Playwright.
  *
  * The page is audited after its load event, then up to `settleTimeoutMs` for
- * network idle and web fonts, then `waitFor` when given.
+ * network idle and web fonts, then `waitFor` when given. A page opened from
+ * disk only loads files under `root`, so the report cannot quote another
+ * local file.
  *
  * @param {object} opts
  * @param {string} opts.url - http(s), file or data URL, or a path to a local HTML file.
@@ -327,20 +356,32 @@ export function buildMarkdownReport({ url, finalUrl, timestamp, violations, tags
  * @param {number} [opts.settleTimeoutMs=10000] - Max wait for network idle and fonts (best effort).
  * @param {number} [opts.analyzeTimeoutMs=60000] - Max time for the axe run.
  * @param {boolean} [opts.allowHttpError=false] - Audit 4xx/5xx responses instead of throwing.
+ * @param {string} [opts.root] - Local pages only: the folder whose files the page may load
+ *   (default: the HTML file's folder). Dot-named files and folders never load.
+ * @param {(message: string) => void} [opts.onWarning] - Receives one message per local file
+ *   that was blocked (default: printed to stderr).
  * @param {import('playwright').Browser} [opts.browser] - Browser to reuse; left open.
  * @returns {Promise<{ violations: { critical: Array, serious: Array, moderate: Array, minor: Array, all: Array },
  *   reportPath: string, rawPath: string, url: string, tags: string[] }>}
  */
 export async function auditPage(opts = {}) {
-  const { url, outDir, waitFor, allowHttpError = false, browser: sharedBrowser } = opts;
+  const { url, outDir, waitFor, allowHttpError = false, root, onWarning, browser: sharedBrowser } = opts;
   if (typeof outDir !== 'string' || outDir === '') throw new TypeError('auditPage: outDir must be a non-empty string');
   if (waitFor !== undefined && (typeof waitFor !== 'string' || waitFor.trim() === '')) {
     throw new TypeError('auditPage: waitFor must be a non-empty CSS selector');
   }
+  if (root != null && (typeof root !== 'string' || root.trim() === '')) {
+    throw new TypeError('auditPage: root must be a non-empty string (a directory path)');
+  }
+  if (onWarning != null && typeof onWarning !== 'function') {
+    throw new TypeError('auditPage: onWarning must be a function (message) => void');
+  }
+  const warn = onWarning ?? ((message) => process.stderr.write(`atelier: warning: ${message}\n`));
   const timeoutMs = positiveMs(opts.timeoutMs, DEFAULTS.timeoutMs, 'timeoutMs');
   const settleTimeoutMs = positiveMs(opts.settleTimeoutMs, DEFAULTS.settleTimeoutMs, 'settleTimeoutMs');
   const analyzeTimeoutMs = positiveMs(opts.analyzeTimeoutMs, DEFAULTS.analyzeTimeoutMs, 'analyzeTimeoutMs');
   const target = resolveTarget(url);
+  const fileScope = resolveFileScope(target, root ?? undefined);
   const tags = normalizeTags(opts.tags);
   const AxeBuilder = await loadAxeBuilder();
 
@@ -350,6 +391,7 @@ export async function auditPage(opts = {}) {
   let finalUrl;
   try {
     context = await browser.newContext();
+    if (fileScope) await restrictLocalFiles(context, fileScope, warn);
     const page = await context.newPage();
     page.setDefaultTimeout(timeoutMs);
     await openPage(page, target, { timeoutMs, settleTimeoutMs, waitFor, allowHttpError: Boolean(allowHttpError) });
@@ -415,6 +457,8 @@ Options:
   --settle-timeout <ms>     max wait for network idle and fonts (default: ${DEFAULTS.settleTimeoutMs})
   --analyze-timeout <ms>    max time for the axe run (default: ${DEFAULTS.analyzeTimeoutMs})
   --allow-http-error        audit the page even when it answers HTTP 4xx or 5xx
+  --root <dir>              local pages: the folder whose files the page may load
+                            (default: the HTML file's folder)
   -h, --help                show this help
 
 Exit codes:
@@ -430,6 +474,7 @@ const CLI_OPTIONS = {
   'settle-timeout': { type: 'string' },
   'analyze-timeout': { type: 'string' },
   'allow-http-error': { type: 'boolean' },
+  root: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
 };
 
@@ -472,6 +517,8 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     outDir: values.out ?? positionals[1] ?? 'a11y-report',
     waitFor: values['wait-for'],
     allowHttpError: Boolean(values['allow-http-error']),
+    root: values.root,
+    onWarning: (message) => stderr.write(`atelier: warning: ${message}\n`),
   };
   for (const [flag, key] of MS_FLAGS) {
     if (values[flag] === undefined) continue;
@@ -486,6 +533,7 @@ export async function runCli(argv = process.argv.slice(2), { stdout = process.st
     if (opts.tags.length === 0) return usageError('--tags needs at least one tag');
   }
   if (opts.waitFor !== undefined && opts.waitFor.trim() === '') return usageError('--wait-for needs a CSS selector');
+  if (opts.root !== undefined && opts.root.trim() === '') return usageError('--root needs a directory');
 
   try {
     const { violations, reportPath } = await auditPage(opts);
