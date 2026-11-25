@@ -18,6 +18,9 @@ inputs:
   brand:
     description: Path to a brand.json whose targets and motion sections set the budgets.
     default: ''
+  root:
+    description: Folder whose files a local page may load (for example the build folder when pages link ../ assets). Default is the HTML file's folder. Ignored for http(s) targets.
+    default: ''
   out:
     description: Directory for the reports.
     default: atelier-reports
@@ -66,6 +69,7 @@ runs:
         AUDITS: ${{ inputs.audits }}
         DYNAMIC: ${{ inputs.dynamic }}
         BRAND: ${{ inputs.brand }}
+        ROOT: ${{ inputs.root }}
         OUT: ${{ inputs.out }}
       run: |
         set -u
@@ -78,12 +82,15 @@ runs:
           case "$audit" in
             a11y)
               ran=$((ran + 1))
-              node "$cli" a11y "$TARGET" --out "$OUT/a11y" || status=$(( $? > status ? $? : status )) ;;
+              args=("$TARGET" --out "$OUT/a11y")
+              [ -n "$ROOT" ] && args+=(--root "$ROOT")
+              node "$cli" a11y "${args[@]}" || status=$(( $? > status ? $? : status )) ;;
             ux)
               ran=$((ran + 1))
               args=("$TARGET" --out "$OUT/ux")
               [ "$DYNAMIC" = "true" ] && args+=(--dynamic)
               [ -n "$BRAND" ] && args+=(--brand "$BRAND")
+              [ -n "$ROOT" ] && args+=(--root "$ROOT")
               node "$cli" ux "${args[@]}" || status=$(( $? > status ? $? : status )) ;;
             "") ;;
             *) echo "Unknown audit: $audit (expected a11y or ux)"; exit 2 ;;

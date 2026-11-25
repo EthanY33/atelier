@@ -167,6 +167,7 @@ jobs:
 | `audits` | `a11y,ux` | Which audits to run |
 | `dynamic` | `false` | `true` adds runtime-ux-audit's Chromium pass (INP estimate, bfcache, focus, tap targets) |
 | `brand` | none | Path to a brand.json whose `targets`, `motion` and `surfaces` set the budgets |
+| `root` | the HTML file's folder | Folder whose files a local page may load. Set it to the build folder when pages load `../` assets, or the audits skip those files. Ignored for http(s) targets |
 | `out` | `atelier-reports` | Report directory; the `report-dir` output points to it |
 
 The action uses the job's Node when it is 22 or newer and installs Node 22 otherwise, installs the plugin's dependencies and Chromium, then writes `<out>/a11y/` and `<out>/ux/` and appends both reports to the job summary. The step fails with the highest exit code of the audits it ran. It is tested on `ubuntu-latest`.

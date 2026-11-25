@@ -64,12 +64,12 @@ describe.skipIf(!hasBash)('action.yml Run audits step', () => {
   // Stub CLI: report which audit it was asked for and succeed.
   writeFileSync(
     join(actionPath, 'plugins', 'atelier', 'bin', 'atelier'),
-    "console.log('ran ' + process.argv[2]);\nprocess.exit(0);\n",
+    "console.log('ran ' + process.argv.slice(2).join(' '));\nprocess.exit(0);\n",
   );
   writeFileSync(join(tmp, 'summary.md'), '');
   afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
-  const run = (audits) =>
+  const run = (audits, root = '') =>
     spawnSync('bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', script], {
       cwd: tmp,
       encoding: 'utf8',
@@ -81,6 +81,7 @@ describe.skipIf(!hasBash)('action.yml Run audits step', () => {
         AUDITS: audits,
         DYNAMIC: 'false',
         BRAND: '',
+        ROOT: root,
         OUT: 'out',
       },
     });
@@ -117,6 +118,16 @@ describe.skipIf(!hasBash)('action.yml Run audits step', () => {
       expect(r.stdout).toContain('ran a11y');
       expect(r.stdout).toContain('ran ux');
     }
+  });
+
+  it('passes --root to both audits only when ROOT is set', () => {
+    const withRoot = run('a11y,ux', 'dist');
+    expect(withRoot.status).toBe(0);
+    expect(withRoot.stdout).toContain('ran a11y page.html --out out/a11y --root dist');
+    expect(withRoot.stdout).toMatch(/ran ux page\.html --out out\/ux .*--root dist/);
+    const without = run('a11y,ux');
+    expect(without.status).toBe(0);
+    expect(without.stdout).not.toContain('--root');
   });
 
   it('still exits 2 when the input is only newlines', () => {

@@ -134,6 +134,7 @@ Both audits exit `1` on critical or serious findings, `0` when clean, and `2` wh
     audits: a11y,ux                     # default
     dynamic: false                      # true adds the Chromium pass
     brand: .atelier/brand.json          # optional budgets
+    root: dist                          # optional; set when pages load ../ assets
 ```
 
 Both reports are appended to the job summary and written to `atelier-reports/`. The action uses the job's Node when it is 22 or newer and installs Node 22 otherwise. Outside GitHub, the same checks run with `atelier a11y <target>` and `atelier ux <target>`.
