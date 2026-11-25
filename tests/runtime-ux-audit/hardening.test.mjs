@@ -21,6 +21,7 @@ import { code, inline } from '../../plugins/atelier/skills/runtime-ux-audit/lib/
 import { isInternalHost } from '../../plugins/atelier/skills/runtime-ux-audit/lib/url.mjs';
 import { launchUxChromium } from '../../plugins/atelier/skills/runtime-ux-audit/lib/browser.mjs';
 import { clickHandlerForcedLayout } from '../../plugins/atelier/skills/runtime-ux-audit/rules/inp/listeners.mjs';
+import { webkitOverflowScrollingTouch } from '../../plugins/atelier/skills/runtime-ux-audit/rules/mobile/css.mjs';
 import { analyticsWithoutPrerenderGuard } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/analytics.mjs';
 import { noUnloadHandler } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/bfcache.mjs';
 import { speculationRulesCspGap, speculationRulesImmediateAbuse } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/speculation.mjs';
@@ -294,6 +295,38 @@ describe('suppression lookups', () => {
       const { value } = await run(SPEC_RULE);
       expect(value.status).toBe('passed');
       expect(value.suppressed).toBe(300);
+    });
+  });
+
+  describe('a marked comment above many findings', () => {
+    const ids = 'no-such-rule '.repeat(50000);
+    const cssPage = (mark) => `<!doctype html><html><head><style>/* atelier-ignore ${mark}*/ a{${'-webkit-overflow-scrolling:touch;'.repeat(1000)}}</style></head><body><a href="/x">x</a></body></html>`;
+    const jsPage = (mark) => `<!doctype html><html><head><script>/* atelier-ignore ${mark}*/ ${"addEventListener('unload',f);".repeat(1000)}</script></head><body></body></html>`;
+    const run = async (rule, html, areas) => timedAsync(async () => runRule(rule, await contextFor({ 'index.html': html }, { areas })));
+
+    it('parses a 635 KB CSS marker once, not once per finding', async () => {
+      const { ms, value } = await run(webkitOverflowScrollingTouch, cssPage(ids), ['mobile']);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('failed');
+      expect(value.suppressed).toBe(0);
+    });
+
+    it('parses a 635 KB JS marker once, not once per finding', async () => {
+      const { ms, value } = await run(noUnloadHandler, jsPage(ids), ['transitions']);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('failed');
+      expect(value.suppressed).toBe(0);
+    });
+
+    it('still suppresses every finding when the marker names the rule', async () => {
+      const css = await run(webkitOverflowScrollingTouch, cssPage('webkit-overflow-scrolling-touch'), ['mobile']);
+      expect(css.value.status).toBe('passed');
+      expect(css.value.suppressed).toBe(1000);
+      const js = await run(noUnloadHandler, jsPage('no-unload-handler'), ['transitions']);
+      expect(js.value.status).toBe('passed');
+      expect(js.value.suppressed).toBe(1000);
     });
   });
 
