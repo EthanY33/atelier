@@ -229,7 +229,23 @@ export const speculationRulesImmediateAbuse = {
       if (abs === null && !free) spendMatchBudget(budget, FAILED_RESOLVE_STEPS);
       return abs;
     };
-    const links = () => (cachedLinks ??= documentLinks(ctx, docUrl, resolve));
+    // The link list is built once. Once resolving its URLs runs out of budget,
+    // or the base is over MAX_BASE_LENGTH, it can never be built (the budget
+    // does not come back), so remember that: otherwise every later document
+    // rule walks every <a> and <area> before the first href again, and 4000
+    // rules over 100,000 <a> without href took 81 s.
+    let linksSpent = false;
+    const links = () => {
+      if (cachedLinks) return cachedLinks;
+      if (linksSpent) throw MATCH_BUDGET;
+      try {
+        cachedLinks = documentLinks(ctx, docUrl, resolve);
+      } catch (e) {
+        if (e === MATCH_BUDGET) linksSpent = true;
+        throw e;
+      }
+      return cachedLinks;
+    };
     const out = [];
     for (const entry of entries) {
       // One NodeRef per script element and one finding per message. The runner

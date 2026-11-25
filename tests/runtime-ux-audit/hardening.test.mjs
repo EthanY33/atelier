@@ -791,6 +791,27 @@ describe('speculation href_matches patterns', () => {
       expect(value.nodesTruncated).toBe(1950);
       expect(value.nodes.every((n) => n.selector.length <= MAX_PATH_TEXT + 512 * 22)).toBe(true);
     });
+
+    it('does not walk the links again for each document rule once the budget is spent', async () => {
+      // The list rule takes every free resolution and the selector parses
+      // spend the rest, so the link list fails at its only href, after 100,000
+      // <a> without one.
+      const sel = `${':is('.repeat(200)}a${')'.repeat(200)}`;
+      const prefetch = [
+        { urls: Array.from({ length: 20_001 }, () => 'a') },
+        { where: { selector_matches: Array.from({ length: 100 }, () => sel) }, eagerness: 'immediate' },
+        ...Array.from({ length: 4000 }, () => immediateDoc),
+      ];
+      const { ms, value } = await runPage(`<!doctype html><html><head>${rulesTag({ prefetch })}</head><body>${'<a>'.repeat(100_000)}<a href="/p/0">x</a></body></html>`);
+      incompleteFast(value, ms);
+    });
+
+    it('does not walk the links again for each document rule under a base over 8192 characters', async () => {
+      const prefetch = Array.from({ length: 2000 }, () => immediateDoc);
+      const base = `<base href="https://a.example/${'d'.repeat(8200)}/">`;
+      const { ms, value } = await runPage(`<!doctype html><html><head>${base}${rulesTag({ prefetch })}</head><body>${'<a>'.repeat(100_000)}<a href="/p/0">x</a></body></html>`);
+      incompleteFast(value, ms);
+    });
   });
 });
 
