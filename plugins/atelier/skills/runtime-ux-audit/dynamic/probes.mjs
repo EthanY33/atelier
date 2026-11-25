@@ -362,6 +362,11 @@ async function probeDialog(page, trigger) {
     entry.activeAfterClose = str(state?.active);
     entry.restoredToTrigger = state?.restored === true;
   }
+  // The page can navigate while its dialog is open or closing (a refused
+  // navigation leaves Chromium's error page). A new document has a fresh
+  // probe object, so what was read there says nothing about this dialog.
+  const sameDoc = await page.evaluate((p) => !!window.__atelierProbe && window.__atelierProbe.triggerPath === p, trigger).catch(() => false);
+  if (!sameDoc) throw new Error('the page navigated while the dialog probe ran, so the result for this trigger was dropped');
   return entry;
 }
 

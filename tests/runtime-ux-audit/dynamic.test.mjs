@@ -918,6 +918,23 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
     });
   }, 120_000);
 
+  it('drops a dialog result read after the page left for another origin', async () => {
+    const hits = [];
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><meta name="viewport" content="width=device-width"><p>audited</p>'
+        + '<button id="open" type="button" aria-haspopup="dialog">Open</button><dialog id="d" aria-label="Notice"><p>Leaving</p></dialog>'
+        + '<script>const d = document.getElementById("d"); document.getElementById("open").addEventListener("click", () => d.showModal());'
+        + `d.addEventListener('close', () => { location.href = '${other}/after-close'; });</script>`);
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base, { maxTaps: 0 }));
+      expect(hits).toEqual([]);
+      // Focus went back to the trigger before the page left; nothing read on Chromium's error page may say otherwise.
+      expect((out.dialogs ?? []).filter((d) => d.closed && !d.restoredToTrigger)).toEqual([]);
+      expect(out.errors.map((e) => e.message)).toContain(refusedFor(other));
+    }));
+  }, 120_000);
+
   it('reports an HTTP error answered to Chromium only as a probe error, with no finding about the error page', async () => {
     // The static fetch gets the page; Chromium gets a 503 (a bot check or a flaky origin).
     await withServer((req, res) => {
