@@ -149,7 +149,7 @@ Both reports are appended to the job summary and written to `atelier-reports/`. 
 | `/atelier-doctor` | Check the environment and offer the fix for anything missing |
 | `/atelier-demo` | Run every skill on bundled fixtures into `./atelier-demo` |
 
-Inside a Claude Code session the plugin's `bin/` is on the PATH, so `atelier doctor`, `atelier demo` and `atelier <skill> --help` work directly. In Windows PowerShell, run `node <plugin>inatelier ...` for an argument that contains `|`, `<` or `>` (see docs/api.md).
+Inside a Claude Code session the plugin's `bin/` is on the PATH, so `atelier doctor`, `atelier demo` and `atelier <skill> --help` work directly. In Windows PowerShell, run `node <plugin>\bin\atelier ...` for an argument that contains `|`, `<` or `>` (see docs/api.md).
 
 ## Proven on a real site
 
