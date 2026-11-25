@@ -9,6 +9,34 @@ import { HELP, MATCH_BUDGET, compileHrefPattern, hrefMatchBudget, spendMatchBudg
 const LIMITS = Object.freeze({ prerender: 10, prefetch: 50 });
 const LINK_SCHEME_RE = /^(https?|file):/i;
 const MAX_PREDICATE_DEPTH = 32;
+// A longer selector_matches selector makes the rule incomplete: parsing and
+// matching cost grows with its length and nesting.
+const MAX_SELECTOR_LENGTH = 1024;
+
+// One match set per selector text and run, so a selector repeated across rules
+// is charged once. Keyed by the run's budget object.
+const selectorSets = new WeakMap();
+// Total length of every attribute value of a page, summed once per HtmlModel.
+const attrCharsOf = new WeakMap();
+
+function attrChars(html) {
+  let n = attrCharsOf.get(html);
+  if (n === undefined) {
+    n = 0;
+    for (const el of html.elements) for (const a of el.attrs ?? []) n += a.value.length;
+    attrCharsOf.set(html, n);
+  }
+  return n;
+}
+
+/** Steps one querySelectorAll pass over the page is charged: per element by combinators, simple selectors and lists, plus attribute value text once per attribute selector. */
+function selectorPassCost(html, selector) {
+  const combinators = selector.match(/[\s>+~]+/g)?.length ?? 0;
+  const simple = selector.match(/[.#[:]/g)?.length ?? 0;
+  const lists = selector.match(/[,(]/g)?.length ?? 0;
+  const attrs = selector.match(/\[/g)?.length ?? 0;
+  return html.elements.length * (16 + 24 * combinators + 2 * simple + 16 * lists) + attrs * attrChars(html);
+}
 
 /** Absolute URL of the audited document (no hash), comparable with ctx.page.resolve() output. */
 function documentUrl(ctx) {
@@ -38,9 +66,12 @@ function documentLinks(ctx, docUrl) {
  * Compile a document-rule predicate into a link filter. Supported:
  * href_matches (string or array, with optional relative_to),
  * selector_matches, and, or, not. Anything else: null (the rule is skipped).
- * Every href_matches pattern and every selector_matches pass draws on the one
- * budget (see hrefMatchBudget), and the filter throws MATCH_BUDGET once it is
- * spent. A selector's match set is built once, on first use.
+ * Every href_matches pattern, every selector_matches parse and pass and every
+ * predicate node evaluated draws on the one budget (see hrefMatchBudget), and
+ * the filter throws MATCH_BUDGET once it is spent. Compiling throws it too, for
+ * a selector over MAX_SELECTOR_LENGTH or a parse that exceeds the budget, so
+ * callers compile inside the same try as the matching. A selector's match set
+ * is built once per run, on first use, and shared by every rule that repeats it.
  */
 function compilePredicate(pred, ctx, budget, depth = 0) {
   if (depth > MAX_PREDICATE_DEPTH || !pred || typeof pred !== 'object' || Array.isArray(pred)) return null;
@@ -60,30 +91,37 @@ function compilePredicate(pred, ctx, budget, depth = 0) {
     }
     case 'selector_matches': {
       if (!list.length || list.some((s) => typeof s !== 'string')) return null;
+      if (list.some((s) => s.length > MAX_SELECTOR_LENGTH)) throw MATCH_BUDGET;
+      // Parsing happens in the probe check below and in every pass.
+      for (const s of list) spendMatchBudget(budget, 1024 + s.length * (16 + (s.match(/\(/g)?.length ?? 0)));
       const probe = ctx.html.elements[0];
       if (probe && list.some((s) => ctx.html.matches(probe, s) === null)) return null;
-      const sets = [];
+      let sets = selectorSets.get(budget);
+      if (!sets) selectorSets.set(budget, (sets = new Map()));
       const setOf = (i) => {
-        if (!sets[i]) {
-          const selector = list[i];
-          const compounds = 1 + (selector.match(/[\s>+~,]/g)?.length ?? 0);
-          spendMatchBudget(budget, ctx.html.elements.length * (16 + 4 * compounds));
-          sets[i] = new Set(ctx.html.querySelectorAll(selector));
+        const selector = list[i];
+        let set = sets.get(selector);
+        if (!set) {
+          spendMatchBudget(budget, selectorPassCost(ctx.html, selector));
+          set = new Set(ctx.html.querySelectorAll(selector));
+          sets.set(selector, set);
         }
-        return sets[i];
+        return set;
       };
-      return (link) => list.some((_, i) => setOf(i).has(link.el));
+      return (link) => list.some((_, i) => { spendMatchBudget(budget, 1); return setOf(i).has(link.el); });
     }
     case 'and':
     case 'or': {
       if (!Array.isArray(value)) return null;
       const parts = value.map((p) => compilePredicate(p, ctx, budget, depth + 1));
       if (parts.some((p) => p === null)) return null;
-      return key === 'and' ? (link) => parts.every((p) => p(link)) : (link) => parts.some((p) => p(link));
+      // One step per node evaluated, so a predicate of many empty nodes costs too.
+      const part = (p, link) => { spendMatchBudget(budget, 1); return p(link); };
+      return key === 'and' ? (link) => parts.every((p) => part(p, link)) : (link) => parts.some((p) => part(p, link));
     }
     case 'not': {
       const inner = compilePredicate(value, ctx, budget, depth + 1);
-      return inner ? (link) => !inner(link) : null;
+      return inner ? (link) => { spendMatchBudget(budget, 1); return !inner(link); } : null;
     }
     default:
       return null;
@@ -96,7 +134,7 @@ function compilePredicate(pred, ctx, budget, depth = 0) {
  * immediate rules are reported, so the others are not matched and spend none
  * of the budget. The document branch also takes a fixed number of steps from
  * the budget per link visited. count is null when the budget ran out before
- * every link was matched.
+ * every link was matched, including while compiling the predicate.
  * @returns {{ count: number|null, source: 'list'|'document' }|null}
  */
 function candidatesOf(r, ctx, docUrl, links, budget) {
@@ -119,9 +157,9 @@ function candidatesOf(r, ctx, docUrl, links, budget) {
   }
   if (source === 'document') {
     if (hasUrls) return null;
-    const pred = hasWhere ? compilePredicate(r.where, ctx, budget) : () => true;
-    if (!pred) return null;
     try {
+      const pred = hasWhere ? compilePredicate(r.where, ctx, budget) : () => true;
+      if (!pred) return null;
       const set = new Set(links().filter((l) => { spendMatchBudget(budget, 8); return pred(l); }).map((l) => l.url));
       return { count: set.size, source };
     } catch (e) {

@@ -505,6 +505,75 @@ describe('speculation href_matches patterns', () => {
     expect(value.errors).toEqual([]);
   });
 
+  /** Run the immediate-abuse rule over a page and time it. */
+  const runPage = async (html) => timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+  const expectIncomplete = (value, ms) => {
+    expect(ms).toBeLessThan(5000);
+    expect(value.status).toBe('incomplete');
+    expect(value.errors).toEqual([]);
+    expect(value.incomplete.map((n) => n.message)).toEqual([BUDGET_MESSAGE('prefetch')]);
+  };
+  const selectorPage = (selectors, body) => `<!doctype html><html><head>${rulesTag({ prefetch: [{ where: { selector_matches: selectors }, eagerness: 'immediate' }] })}</head><body>${body}</body></html>`;
+
+  it('reports a long :is() chain over thousands of links as incomplete', async () => {
+    const { ms, value } = await runPage(selectorPage(`a${':is(a)'.repeat(2000)}`, anchors(5000, (i) => `/p/${i}`)));
+    expectIncomplete(value, ms);
+  });
+
+  it('charges parsing and nesting of selectors under the length cap', async () => {
+    const selectors = Array.from({ length: 10 }, (_, i) => `a${':is(a)'.repeat(167)}:is(b${i})`);
+    expect(selectors[0].length).toBeLessThanOrEqual(1024);
+    const { ms, value } = await runPage(selectorPage(selectors, anchors(5000, (i) => `/p/${i}`)));
+    expectIncomplete(value, ms);
+  });
+
+  it('charges attribute value text to attribute selectors', async () => {
+    const selectors = Array.from({ length: 200 }, (_, i) => `[class~=q${i}]`);
+    const links = Array.from({ length: 20 }, (_, i) => `<a class="${'x ' + 'y '.repeat(20000)}" href="/p/${i}">a</a>`).join('');
+    const { ms, value } = await runPage(selectorPage(selectors, links));
+    expectIncomplete(value, ms);
+  });
+
+  it('reports a very deeply nested selector as incomplete, not an error', async () => {
+    const { ms, value } = await runPage(selectorPage(`${':is('.repeat(3000)}a${')'.repeat(3000)}`, anchors(60, (i) => `/p/${i}`)));
+    expectIncomplete(value, ms);
+  });
+
+  it('charges sibling combinators by the work they do', async () => {
+    const selectors = Array.from({ length: 60 }, (_, i) => `b${i}${'~a'.repeat(509)}`);
+    const { ms, value } = await runPage(selectorPage(selectors, anchors(5000, (i) => `/p/${i}`)));
+    expectIncomplete(value, ms);
+  });
+
+  it('charges every node of a predicate of empty and/or/not nodes', async () => {
+    const where = { and: Array.from({ length: 20000 }, () => ({ and: [] })) };
+    const html = `<!doctype html><html><head>${rulesTag({ prefetch: [{ where, eagerness: 'immediate' }] })}</head><body>${anchors(20000, (i) => `/p/${i}`)}</body></html>`;
+    const { ms, value } = await runPage(html);
+    expectIncomplete(value, ms);
+  });
+
+  it('keeps counts for ordinary selectors on a page with a base href', async () => {
+    const json = {
+      prefetch: [
+        { where: { selector_matches: 'a[rel~="nofollow"]' }, eagerness: 'immediate' },
+        { where: { selector_matches: '.skip, .skip a' }, eagerness: 'immediate' },
+        { where: { selector_matches: 'nav > a:not(.skip)' }, eagerness: 'immediate' },
+      ],
+    };
+    const links = Array.from({ length: 300 }, (_, i) => `<a href="p/${i}"${i % 5 === 0 ? ' class="skip"' : ''}${i % 3 === 0 ? ' rel="nofollow noopener"' : ''}>a</a>`).join('');
+    const html = `<!doctype html><html><head><base href="/sub/dir/">${rulesTag(json)}</head><body><nav>${links}</nav></body></html>`;
+    const { ms, value } = await runPage(html);
+    expect(value.status).toBe('failed');
+    expect(value.nodes.map((n) => n.data)).toEqual([
+      { action: 'prefetch', candidates: 100, limit: 50, source: 'document' },
+      { action: 'prefetch', candidates: 240, limit: 50, source: 'document' },
+      { action: 'prefetch', candidates: 60, limit: 50, source: 'document' },
+    ]);
+    expect(value.incomplete).toEqual([]);
+    expect(value.errors).toEqual([]);
+    expect(ms).toBeLessThan(FAST_MS);
+  });
+
   it('leaves an ordinary page complete, with the same counts', async () => {
     const json = {
       prefetch: [
