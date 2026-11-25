@@ -75,6 +75,9 @@ function markedCommentsByEndLine(script) {
  * @returns {(ruleId: string, ref: object) => boolean}
  */
 export function createSuppressor() {
+  // Element -> its parsed data-atelier-ignore list. Parsed once per element:
+  // a long list above many findings would otherwise be split again for each.
+  const ignoreOf = new WeakMap();
   return (ruleId, ref) => {
     const meta = refMeta(ref);
     if (!meta) return false;
@@ -84,8 +87,9 @@ export function createSuppressor() {
     if (anchor && model && model.owns(anchor)) {
       for (const el of [anchor, ...model.ancestors(anchor)]) {
         if (!model.hasAttr(el, 'data-atelier-ignore')) continue;
-        const { all, ids } = parseIgnoreIds(model.attr(el, 'data-atelier-ignore'));
-        if (all || ids.has(ruleId)) return true;
+        let parsed = ignoreOf.get(el);
+        if (!parsed) ignoreOf.set(el, (parsed = parseIgnoreIds(model.attr(el, 'data-atelier-ignore'))));
+        if (parsed.all || parsed.ids.has(ruleId)) return true;
       }
     }
     // CSS: a comment right before the node or before any enclosing rule/at-rule.

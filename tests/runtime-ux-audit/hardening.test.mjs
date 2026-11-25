@@ -275,6 +275,28 @@ describe('suppression lookups', () => {
     expect(reads).toBeLessThanOrEqual(2 * n);
   });
 
+  describe('data-atelier-ignore above many findings', () => {
+    const SPEC_RULE = 'speculation-rules-immediate-abuse';
+    // Rule k lists 51 + k distinct urls, so each rule is its own finding message.
+    const prefetch = Array.from({ length: 300 }, (_, k) => ({ urls: Array.from({ length: 51 + k }, (__, j) => `/p/${j}`), eagerness: 'immediate' }));
+    const page = (ignore) => `<!doctype html><html><head></head><body><div data-atelier-ignore="${ignore}"><script type="speculationrules">${JSON.stringify({ prefetch })}</script></div></body></html>`;
+    const run = async (ignore) => timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': page(ignore) }, { areas: ['transitions'] })));
+
+    it('parses a 780 KB ignore list once per element, not once per finding', async () => {
+      const { ms, value } = await run('no-such-rule '.repeat(60000));
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('failed');
+      expect(value.suppressed).toBe(0);
+    });
+
+    it('still suppresses every finding when the list names the rule', async () => {
+      const { value } = await run(SPEC_RULE);
+      expect(value.status).toBe('passed');
+      expect(value.suppressed).toBe(300);
+    });
+  });
+
   it('still honors a marker on the same line or the line before', () => {
     const script = {
       comments: [
