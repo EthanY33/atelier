@@ -185,7 +185,8 @@ function parseListenerOptions(node) {
 const collapse = (s) => String(s).replace(/\s+/g, ' ').trim();
 
 // Scopes for name lookup: var scopes hold var, function and parameter
-// bindings; block scopes also hold let, const, class and catch bindings.
+// bindings; block scopes also hold let, const, class and catch bindings, and
+// the functions declared in the block.
 const BLOCK_SCOPE_TYPES = new Set(['BlockStatement', 'ForStatement', 'ForInStatement', 'ForOfStatement', 'SwitchStatement', 'CatchClause']);
 const isVarScope = (n) => n.type === 'Program' || n.type === 'StaticBlock' || FUNCTION_TYPES.has(n.type);
 
@@ -322,7 +323,8 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       let varScope = depth ? varScopeAt[depth - 1] : null;
       if (FUNCTION_TYPES.has(node.type)) markIife(node, parent, ancestors[depth - 2]);
       if (node.type === 'FunctionDeclaration' && node.id) {
-        // Hoisted to the enclosing function, also from inside a block.
+        // Bound in its own block, and hoisted to the enclosing function so code after the block still sees it.
+        if (scope !== varScope) declare(scope, node.id.name, node);
         declare(varScope, node.id.name, node);
         if (!inits.has(node.id.name)) inits.set(node.id.name, node);
       } else if (node.type === 'VariableDeclarator') {

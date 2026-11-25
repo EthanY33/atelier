@@ -442,6 +442,22 @@ function plain() { el.addEventListener('dragend', cb); }
     });
   });
 
+  it('binds a function declared in a block to that block, and still hoists it past the block', async () => {
+    const blockSrc = [
+      "{ function init() { one(); } el.addEventListener('focus', init); }",
+      "{ function init() { two(); } el.addEventListener('blur', init); }",
+      "el.addEventListener('click', init);",
+      "function wrap() { let cb = 1; { function cb() { three(); } el.addEventListener('keyup', cb); } el.addEventListener('keydown', cb); }",
+      "switch (k) { case 1: function pick() { four(); } el.addEventListener('change', pick); }",
+      "const named = function self() { function self() { five(); } el.addEventListener('wheel', self); };",
+    ].join('\n');
+    const { js } = await contextFor({ 'index.html': '<script src="a.js"></script>', 'a.js': blockSrc });
+    const firstCall = (l) => (l.handler ? /\b(\w+)\(\)/.exec(js.sourceOf(l.script, l.handler.body))?.[1] ?? 'self' : null);
+    expect(Object.fromEntries(js.listeners.map((l) => [l.event, firstCall(l)]))).toEqual({
+      focus: 'one', blur: 'two', click: 'one', keyup: 'three', keydown: null, change: 'four', wheel: 'five',
+    });
+  });
+
   it('resolveFunction uses the position of the node, or the top of the script without one', async () => {
     const { js } = await contextFor({ 'index.html': '<script src="a.js"></script>', 'a.js': src });
     for (const l of js.listeners) {

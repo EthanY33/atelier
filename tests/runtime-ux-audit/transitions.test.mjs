@@ -164,6 +164,24 @@ describe('no-beforeunload-always-attached', () => {
     expect((await run(outer)).nodes.map((n) => n.location)).toEqual(['index.html:2:19']);
   });
 
+  it('resolves a function declared in a block to its own block', async () => {
+    const run = (js) => check('no-beforeunload-always-attached', page(`<form id="f"></form>${script(js)}`));
+    const arm = "function init(){ window.addEventListener('beforeunload', w); }";
+    const idle = 'function init(){}';
+    // The armed init is only used on edit; the ready handler is another init in a sibling block.
+    const a = `{ ${arm} f.addEventListener('input', function(){ init(); }); }\n{ ${idle} document.addEventListener('DOMContentLoaded', init); }`;
+    expect((await run(a)).status).toBe('passed');
+    // The armed init is the ready handler of its own block.
+    const b = `{ ${idle} f.addEventListener('input', init); }\n{ ${arm} document.addEventListener('DOMContentLoaded', init); }`;
+    expect((await run(b)).nodes.map((n) => n.location)).toEqual(['index.html:3:20']);
+    // A block function next to an outer function of the same name.
+    const c = "'use strict'; function init(){ window.onbeforeunload = warn; }\n{ function init(){ ok(); } window.addEventListener('load', init); }";
+    expect((await run(c)).status).toBe('passed');
+    // A block function used after its block is still hoisted and still flagged.
+    const d = "{ function init(){ window.onbeforeunload = warn; } }\nwindow.addEventListener('load', init);";
+    expect((await run(d)).nodes.map((n) => n.location)).toEqual(['index.html:2:20']);
+  });
+
   it('passes guards armed from an event attribute, and flags the ones armed on every load', async () => {
     const onEdit = await check('no-beforeunload-always-attached', page(
       '<textarea oninput="window.onbeforeunload = confirmLeave"></textarea>'
