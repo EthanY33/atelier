@@ -19,7 +19,7 @@ node plugins/atelier/bin/atelier <doctor|demo|brand|tokens|og|images|assets|a11y
 
 ## Layout
 
-- `plugins/atelier/`: the installable unit and its own npm project (`package.json`, lockfile). Nothing outside it exists at runtime. `.claude-plugin/plugin.json` holds the version (never `marketplace.json`); `bin/atelier` is the CLI; `commands/*.md` the slash commands; `skills/<name>/{SKILL.md,index.mjs}` the 8 skills; `lib/` preflight, cli, io, doctor; `schemas/` brand and ux-audit; `examples/` and `scripts/run-demo.mjs` the demo.
+- `plugins/atelier/`: the installable unit and its own npm project (`package.json`, lockfile). Nothing outside it exists at runtime. `.claude-plugin/plugin.json` holds the version (never `marketplace.json`); `bin/atelier` is the CLI; `commands/*.md` the slash commands; `skills/<name>/{SKILL.md,index.mjs}` the 8 skills; `lib/` preflight, cli, io, doctor, relay; `schemas/` brand and ux-audit; `examples/` and `scripts/run-demo.mjs` the demo.
 - `tests/`: Vitest suites. Plugin deps are imported through `tests/helpers/plugin-deps.mjs`, never added to the root `package.json`.
 - `scripts/`: repo tooling. `action.yml`: composite GitHub Action. `.github/workflows/`: `ci`, `release`, `audit`.
 - `docs/`: `api.md` (the 1.0 semver contract), `architecture.md`, `getting-started.md`, `skill-reference.md`, `contributing.md`, `releasing.md`, `specs/`.
