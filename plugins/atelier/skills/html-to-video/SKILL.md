@@ -47,6 +47,8 @@ API name first, then the CLI form.
 - `audioSource(wavPath)` (`--audio <file>`): see Audio below.
 - `timeoutMs` (`--timeout <ms>`): how long to wait for navigation and the page's `load` event. Default 30000.
 - `allowHttpError` (`--allow-http-error`): record a page that answers HTTP 4xx or 5xx instead of failing. Without it such a page is a runtime error, so a mistyped dev-server URL does not turn into a clip of the error page.
+- `root` (`--root <dir>`): for a local page, the folder whose files the page may load. Default: the HTML file's folder. Files outside it, dot-named files and folders (`.env`, `.git/`) and `file:` URLs on another host do not load, and the first five are reported as `atelier: warning: blocked local file ...` on stderr (one more line says when others were blocked). Pass the site or build folder when the page uses `../` assets (it must contain the page), never a home folder: whatever the page frames from under it ends up in the video.
+- `onWarning` (API only): a function that receives those warnings instead of stderr.
 - `browser` (API only): a launched Playwright Chromium to reuse across calls. It is not closed; each call opens and closes its own context.
 - `signal` (API only): an `AbortSignal`. Aborting stops the capture or ffmpeg step, removes the temp files and rejects with the abort reason. The CLI does this on the first Ctrl+C.
 

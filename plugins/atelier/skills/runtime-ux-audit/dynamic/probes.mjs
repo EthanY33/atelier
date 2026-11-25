@@ -26,6 +26,7 @@ const TAP_TIMEOUT_MS = 1500;
 const CLICK_TIMEOUT_MS = 750;
 const DIALOG_OPEN_MS = 1000;
 const DIALOG_CLOSE_WAIT_MS = 300;
+const DIALOG_EXIT_MS = 700;
 const PAGESHOW_WAIT_MS = 5000;
 const NAVIGATION_SWAP_MS = 5000;
 
@@ -162,7 +163,8 @@ export async function doubleRaf(page) {
 
 /** Navigate to url, wait for load and two frames. */
 export async function freshLoad(page, url) {
-  await page.goto(url, { waitUntil: 'load' });
+  const res = await page.goto(url, { waitUntil: 'load' });
+  if (res && res.status() >= 400) throw new Error(`the page answered Chromium with HTTP ${res.status()}, so it was not probed`);
   await doubleRaf(page);
 }
 
@@ -227,7 +229,7 @@ async function resetAfterInteraction(page) {
  * @param {import('playwright').BrowserContext} context
  * @param {{ targetUrl: string, limits: object, errors: object[], display?: (u: string) => string, scrub?: (s: string) => string }} opts
  */
-export async function runInteractions(page, context, { targetUrl, limits, errors, display = (u) => u, scrub = (s) => s }) {
+export async function runInteractions(page, context, { targetUrl, limits, errors, display = (u) => u, scrub = (s) => s, onTarget = () => {} }) {
   const attempted = [];
   let snapshot = null;
   let cdp = null;
@@ -254,9 +256,13 @@ export async function runInteractions(page, context, { targetUrl, limits, errors
     // dominated by pending load work (measured 416 ms on a trivial page).
     await page.waitForTimeout(limits.settleMs);
     await doubleRaf(page);
-    await page.evaluate(() => {
+    onTarget();
+    const opened = await page.evaluate((origin) => {
+      if (location.origin !== origin) return false;
       window.__atelierUx.windowStart = performance.now();
-    });
+      return true;
+    }, new URL(targetUrl).origin);
+    if (!opened) throw new Error('the page left the audited origin before the interaction probe started, so it was not driven');
 
     let active = await activePath(page);
     for (let i = 0; i < limits.maxTabs; i++) {
@@ -266,10 +272,16 @@ export async function runInteractions(page, context, { targetUrl, limits, errors
       active = await activePath(page);
     }
 
-    const candidates = arr(await page.evaluate((max) => window.__atelierProbe.tapCandidates(max), limits.maxTaps))
-      .filter((t) => typeof t === 'string' && t !== '')
-      .slice(0, limits.maxTaps);
     let navigatedAway = false;
+    let candidates = [];
+    if (await sameDocument(page)) {
+      candidates = arr(await page.evaluate((max) => window.__atelierProbe.tapCandidates(max), limits.maxTaps))
+        .filter((t) => typeof t === 'string' && t !== '')
+        .slice(0, limits.maxTaps);
+    } else {
+      navigatedAway = true;
+      await leftPage('the Tab key');
+    }
     let last = null;
     for (const target of candidates) {
       snapshot = (await harvest(page)) ?? snapshot;
@@ -328,6 +340,10 @@ async function probeDialog(page, trigger) {
   await doubleRaf(page);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(DIALOG_CLOSE_WAIT_MS);
+  // An exit animation can outlast the wait; clicking close then would move focus itself.
+  await page
+    .waitForFunction(() => window.__atelierProbe.currentOpen() !== true, null, { timeout: DIALOG_EXIT_MS, polling: 50 })
+    .catch(() => {});
   let open = (await page.evaluate(() => window.__atelierProbe.currentOpen())) === true;
   let method = open ? null : 'escape';
   if (open) {
@@ -346,6 +362,11 @@ async function probeDialog(page, trigger) {
     entry.activeAfterClose = str(state?.active);
     entry.restoredToTrigger = state?.restored === true;
   }
+  // The page can navigate while its dialog is open or closing (a refused
+  // navigation leaves Chromium's error page). A new document has a fresh
+  // probe object, so what was read there says nothing about this dialog.
+  const sameDoc = await page.evaluate((p) => !!window.__atelierProbe && window.__atelierProbe.triggerPath === p, trigger).catch(() => false);
+  if (!sameDoc) throw new Error('the page navigated while the dialog probe ran, so the result for this trigger was dropped');
   return entry;
 }
 

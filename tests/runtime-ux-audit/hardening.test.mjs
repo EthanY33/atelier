@@ -3,6 +3,7 @@
  * pass, forge report content or reach private addresses, and the fixes must
  * not change results on ordinary input.
  */
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { FIXED_TS, contextFor, runRule, tempDir, writeFiles } from './helpers.mjs';
@@ -12,14 +13,21 @@ import { buildCssModel, normalizePrelude, parseCss } from '../../plugins/atelier
 import {
   findUnitValues, normalizeSelector, parseAnimationList, parseLength, parseTimeMs, stripCssComments,
 } from '../../plugins/atelier/skills/runtime-ux-audit/lib/css-values.mjs';
-import { buildHtmlModel, MAX_HTML_DEPTH } from '../../plugins/atelier/skills/runtime-ux-audit/lib/html-model.mjs';
+import { buildHtmlModel, MAX_HTML_DEPTH, MAX_PATH_TEXT } from '../../plugins/atelier/skills/runtime-ux-audit/lib/html-model.mjs';
+import { MAX_JS_DEPTH, buildJsModel, parseJs, pathOf } from '../../plugins/atelier/skills/runtime-ux-audit/lib/js-model.mjs';
 import { compileSelector, matchesSelector, selectAll } from '../../plugins/atelier/skills/runtime-ux-audit/lib/selector-match.mjs';
 import { REF_META } from '../../plugins/atelier/skills/runtime-ux-audit/lib/context.mjs';
 import { createSuppressor } from '../../plugins/atelier/skills/runtime-ux-audit/lib/suppress.mjs';
 import { code, inline } from '../../plugins/atelier/skills/runtime-ux-audit/lib/report-md.mjs';
 import { isInternalHost } from '../../plugins/atelier/skills/runtime-ux-audit/lib/url.mjs';
 import { launchUxChromium } from '../../plugins/atelier/skills/runtime-ux-audit/lib/browser.mjs';
-import { speculationRulesCspGap } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/speculation.mjs';
+import { clickHandlerForcedLayout } from '../../plugins/atelier/skills/runtime-ux-audit/rules/inp/listeners.mjs';
+import { webkitOverflowScrollingTouch } from '../../plugins/atelier/skills/runtime-ux-audit/rules/mobile/css.mjs';
+import { analyticsWithoutPrerenderGuard } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/analytics.mjs';
+import { noUnloadHandler } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/bfcache.mjs';
+import { speculationRulesCspGap, speculationRulesImmediateAbuse } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/speculation.mjs';
+import { MATCH_BUDGET, compileHrefPattern, hrefMatchBudget } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/shared.mjs';
+import { vtaDuplicateNames } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/view-transitions.mjs';
 
 /** Milliseconds fn takes, and its result. */
 function timed(fn) {
@@ -269,6 +277,60 @@ describe('suppression lookups', () => {
     expect(reads).toBeLessThanOrEqual(2 * n);
   });
 
+  describe('data-atelier-ignore above many findings', () => {
+    const SPEC_RULE = 'speculation-rules-immediate-abuse';
+    // Rule k lists 51 + k distinct urls, so each rule is its own finding message.
+    const prefetch = Array.from({ length: 300 }, (_, k) => ({ urls: Array.from({ length: 51 + k }, (__, j) => `/p/${j}`), eagerness: 'immediate' }));
+    const page = (ignore) => `<!doctype html><html><head></head><body><div data-atelier-ignore="${ignore}"><script type="speculationrules">${JSON.stringify({ prefetch })}</script></div></body></html>`;
+    const run = async (ignore) => timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': page(ignore) }, { areas: ['transitions'] })));
+
+    it('parses a 780 KB ignore list once per element, not once per finding', async () => {
+      const { ms, value } = await run('no-such-rule '.repeat(60000));
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('failed');
+      expect(value.suppressed).toBe(0);
+    });
+
+    it('still suppresses every finding when the list names the rule', async () => {
+      const { value } = await run(SPEC_RULE);
+      expect(value.status).toBe('passed');
+      expect(value.suppressed).toBe(300);
+    });
+  });
+
+  describe('a marked comment above many findings', () => {
+    const ids = 'no-such-rule '.repeat(50000);
+    const cssPage = (mark) => `<!doctype html><html><head><style>/* atelier-ignore ${mark}*/ a{${'-webkit-overflow-scrolling:touch;'.repeat(1000)}}</style></head><body><a href="/x">x</a></body></html>`;
+    const jsPage = (mark) => `<!doctype html><html><head><script>/* atelier-ignore ${mark}*/ ${"addEventListener('unload',f);".repeat(1000)}</script></head><body></body></html>`;
+    const run = async (rule, html, areas) => timedAsync(async () => runRule(rule, await contextFor({ 'index.html': html }, { areas })));
+
+    it('parses a 635 KB CSS marker once, not once per finding', async () => {
+      const { ms, value } = await run(webkitOverflowScrollingTouch, cssPage(ids), ['mobile']);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('failed');
+      expect(value.suppressed).toBe(0);
+    });
+
+    it('parses a 635 KB JS marker once, not once per finding', async () => {
+      const { ms, value } = await run(noUnloadHandler, jsPage(ids), ['transitions']);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('failed');
+      expect(value.suppressed).toBe(0);
+    });
+
+    it('still suppresses every finding when the marker names the rule', async () => {
+      const css = await run(webkitOverflowScrollingTouch, cssPage('webkit-overflow-scrolling-touch'), ['mobile']);
+      expect(css.value.status).toBe('passed');
+      expect(css.value.suppressed).toBe(1000);
+      const js = await run(noUnloadHandler, jsPage('no-unload-handler'), ['transitions']);
+      expect(js.value.status).toBe('passed');
+      expect(js.value.suppressed).toBe(1000);
+    });
+  });
+
   it('still honors a marker on the same line or the line before', () => {
     const script = {
       comments: [
@@ -295,6 +357,579 @@ describe('speculation-rules-csp-gap on hostile hash sources', () => {
     expect(value.nodes).toHaveLength(1);
     expect(ms).toBeLessThan(5000);
   });
+
+  describe('many policies times many scripts', () => {
+    const meta = (content) => `<meta http-equiv="Content-Security-Policy" content="${content}">`;
+    const run = async (html) => timedAsync(async () => runRule(speculationRulesCspGap, await contextFor({ 'index.html': html })));
+
+    it('reads a policy of 200,000 sources once, not once per script', async () => {
+      const policy = meta(`script-src ${"'x' ".repeat(200_000)}'nonce-n'`);
+      const scripts = '<script type="speculationrules" nonce="n">{}</script>'.repeat(600);
+      const { ms, value } = await run(`<!doctype html><html><head>${policy}${scripts}</head><body></body></html>`);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('passed');
+    });
+
+    it('hashes a 1 MB script once per algorithm, not once per policy', async () => {
+      const policies = meta("script-src 'sha256-x' 'sha384-x' 'sha512-x' 'nonce-n'").repeat(2000);
+      const script = `<script type="speculationrules" nonce="n">${JSON.stringify({ prefetch: [{ urls: ['/a'], pad: 'x'.repeat(1_000_000) }] })}</script>`;
+      const { ms, value } = await run(`<!doctype html><html><head>${policies}${script}</head><body></body></html>`);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('passed');
+    });
+
+    const EMPTY_SHA256 = "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU'";
+
+    it('checks copies of one script allowed by hash sources once, not once per copy', async () => {
+      const policies = meta(`script-src ${EMPTY_SHA256}`).repeat(13000);
+      const scripts = '<script type="speculationrules"></script>'.repeat(3000);
+      const { ms, value } = await run(`<!doctype html><html><head>${policies}${scripts}</head><body></body></html>`);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('passed');
+    });
+
+    it('checks one text under many nonces without walking every policy for each', async () => {
+      const policies = meta(`script-src ${EMPTY_SHA256}`).repeat(13000);
+      const scripts = Array.from({ length: 3000 }, (_, i) => `<script type="speculationrules" nonce="${i}"></script>`).join('');
+      const { ms, value } = await run(`<!doctype html><html><head>${policies}${scripts}</head><body></body></html>`);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('passed');
+    });
+
+    it('still finds a blocking policy past policies that allow by hash and by nonce in turn', async () => {
+      const text = '{}';
+      const sha = `'sha256-${createHash('sha256').update(text).digest('base64')}'`;
+      const policies = meta(`script-src ${sha}`) + meta("script-src 'nonce-n'") + meta(`script-src ${sha} 'nonce-n'`) + meta("default-src 'none'");
+      const scripts = `<script type="speculationrules" nonce="n">${text}</script>`.repeat(2)
+        + `<script type="speculationrules" nonce="m">${text}</script><script type="speculationrules" nonce="n">[]</script>`;
+      const { value } = await run(`<!doctype html><html><head>${policies}${scripts}</head><body></body></html>`);
+      expect(value.status).toBe('failed');
+      expect(value.nodes.map((n) => n.data.directive)).toEqual(['default-src', 'default-src', 'script-src', 'script-src']);
+      expect(value.nodes.map((n) => n.message.includes('meta CSP'))).toEqual([true, true, true, true]);
+    });
+
+    it('still reports the first policy that blocks each script', async () => {
+      const text = '{"prefetch":[{"urls":["/a"]}]}';
+      const sha = createHash('sha256').update(text).digest('base64');
+      const policies = meta("script-src 'unsafe-inline'") + meta(`script-src 'sha256-${sha}'`) + meta("default-src 'nonce-n'");
+      const scripts = `<script type="speculationrules" nonce="n">${text}</script><script type="speculationrules" nonce="m">${text}</script><script type="speculationrules" nonce="n">{}</script>`;
+      const { value } = await run(`<!doctype html><html><head>${policies}${scripts}</head><body></body></html>`);
+      expect(value.status).toBe('failed');
+      expect(value.nodes.map((n) => n.data.directive)).toEqual(['default-src', 'script-src']);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('speculation href_matches patterns', () => {
+  // Wall-clock backstop for the cases that spend the whole match budget.
+  // V8 coverage makes the matcher loop about 12 times slower (about 1 to 2 s
+  // plain, 6 to 14 s with coverage), so the bound only catches a runaway.
+  const BUDGET_BACKSTOP_MS = 60_000;
+  const resolve = (h) => (h.startsWith('/') ? `https://a.example${h}` : h);
+  // 1023 characters, the longest shape the matcher accepts: on a long run of
+  // "a" nearly every one of its states stays active.
+  const HOSTILE = `/${'*a'.repeat(510)}*z`;
+  const rulesTag = (json) => `<script type="speculationrules">${JSON.stringify(json)}</script>`;
+  const anchors = (n, href) => Array.from({ length: n }, (_, i) => `<a href="${href(i)}">a</a>`).join('');
+  const BUDGET_MESSAGE = (action) => `Too many links, selectors and patterns to count the URLs this immediate ${action} rule matches statically.`;
+
+  /** test() over every link: the answers, or MATCH_BUDGET when the step budget ran out first. */
+  const matchAll = (re, links) => {
+    try {
+      return links.map((l) => re.test(l));
+    } catch (e) {
+      if (e !== MATCH_BUDGET) throw e;
+      return MATCH_BUDGET;
+    }
+  };
+
+  it('matches a pattern with many wildcards against a long link in linear time', () => {
+    const re = compileHrefPattern(`/${'*a'.repeat(30)}*z`, resolve);
+    expect(re).not.toBeNull();
+    const link = `https://a.example/${'a'.repeat(2000)}`;
+    const { ms, value } = timed(() => re.test(link));
+    expect(ms).toBeLessThan(FAST_MS);
+    expect(value).toBe(false);
+    expect(re.test(`${link}z`)).toBe(true);
+  });
+
+  it('keeps ordinary wildcard and :name semantics', () => {
+    const re = compileHrefPattern('/docs/:id/*/end', resolve);
+    expect(re.test('https://a.example/docs/7/x/y/end')).toBe(true);
+    expect(re.test('https://a.example/docs/7/end')).toBe(false);
+    expect(re.test('https://a.example/docs//x/end')).toBe(false);
+    expect(re.test('https://a.example/docs/7/x/end/more')).toBe(false);
+  });
+
+  it('does not stall the static pass on a hostile rule', async () => {
+    const pattern = `/${'*a'.repeat(30)}*z`;
+    const html = `<!doctype html><html><head><script type="speculationrules">${JSON.stringify({ prefetch: [{ where: { href_matches: pattern }, eagerness: 'immediate' }] })}</script></head>`
+      + `<body><a href="/${'a'.repeat(2000)}">a</a></body></html>`;
+    const { ms } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html })));
+    expect(ms).toBeLessThan(FAST_MS);
+  });
+
+  it('throws MATCH_BUDGET for patterns over the length bound and stays fast against many links', () => {
+    const resolve = (h) => `https://a.example${h.startsWith('/') ? '' : '/'}${h}`;
+    const huge = `/${'*a'.repeat(50000)}*z`;
+    expect(huge.length).toBeGreaterThan(100000);
+    const { ms, value } = timed(() => { try { return compileHrefPattern(huge, resolve); } catch (e) { return e; } });
+    expect(value).toBe(MATCH_BUDGET);
+    expect(ms).toBeLessThan(FAST_MS);
+    const ok = compileHrefPattern(`/${'*a'.repeat(300)}*z`, resolve);
+    expect(ok).not.toBeNull();
+    const links = Array.from({ length: 2000 }, (_, i) => `https://a.example/${'a'.repeat(100)}${i}`);
+    const batch = timed(() => matchAll(ok, links));
+    expect(batch.ms).toBeLessThan(BUDGET_BACKSTOP_MS);
+  });
+
+  it('costs little per link for a maximum-length pattern and refuses a huge href', () => {
+    const resolve = (h) => `https://a.example${h.startsWith('/') ? '' : '/'}${h}`;
+    const pattern = `/${'*a'.repeat(510)}*z`;
+    expect(pattern.length).toBeLessThanOrEqual(1024);
+    const re = compileHrefPattern(pattern, resolve);
+    expect(re).not.toBeNull();
+    const links = Array.from({ length: 2000 }, (_, i) => `https://a.example/${'a'.repeat(100)}${i}`);
+    const batch = timed(() => matchAll(re, links));
+    expect(batch.ms).toBeLessThan(BUDGET_BACKSTOP_MS);
+    // A fresh matcher: the batch above may have spent the budget of re.
+    const huge = timed(() => matchAll(compileHrefPattern(pattern, resolve), [`https://a.example/${'a'.repeat(100_000)}`]));
+    expect(huge.ms).toBeLessThan(FAST_MS);
+    expect(huge.value).toBe(MATCH_BUDGET);
+  });
+
+  it('stops a maximum-length pattern over 200 links of 8000 characters at the step budget', () => {
+    expect(HOSTILE).toHaveLength(1023);
+    const links = Array.from({ length: 200 }, (_, i) => `https://a.example/${'a'.repeat(8000)}${i}`);
+    const re = compileHrefPattern(HOSTILE, resolve);
+    const { ms, value } = timed(() => matchAll(re, links));
+    expect(value).toBe(MATCH_BUDGET);
+    expect(ms).toBeLessThan(BUDGET_BACKSTOP_MS);
+    // A spent budget stays spent, also for a link that would cost nothing.
+    expect(matchAll(re, ['https://a.example/x'])).toBe(MATCH_BUDGET);
+  });
+
+  it('stops every matcher that shares a spent budget', () => {
+    const shared = hrefMatchBudget();
+    const hostile = compileHrefPattern(HOSTILE, resolve, shared);
+    const plain = compileHrefPattern('/x', resolve, shared);
+    expect(plain.test('https://a.example/x')).toBe(true);
+    expect(matchAll(hostile, Array.from({ length: 200 }, () => `https://a.example/${'a'.repeat(8000)}`))).toBe(MATCH_BUDGET);
+    expect(matchAll(plain, ['https://a.example/x'])).toBe(MATCH_BUDGET);
+    // A matcher with its own budget is not affected.
+    expect(compileHrefPattern('/x', resolve).test('https://a.example/x')).toBe(true);
+  });
+
+  it('gives the same answers when matchers share a budget and its state arrays', () => {
+    const urls = [
+      'https://a.example/a/x/b/1/c', 'https://a.example/a/b/1/c', `https://a.example/a/${'x/'.repeat(50)}b/7/zc`,
+      'https://a.example/a/x/b//c', 'https://a.example/', 'https://a.example/a/x/b/1/c/d', 'https://a.example/a/aaaa', 'https://b.example/a/x',
+    ];
+    // The answers of the matcher before it had a budget, one row per pattern.
+    const want = {
+      '/a/*/b/:id/*c': [true, false, true, false, false, false, false, false],
+      '/a/:x': [false, false, false, false, false, false, true, false],
+      '/*a*a*a*': [false, false, false, false, false, false, true, false],
+      '/*': [true, true, true, true, true, true, true, false],
+    };
+    const patterns = Object.keys(want);
+    for (const p of patterns) expect(urls.map((u) => compileHrefPattern(p, resolve).test(u)), p).toEqual(want[p]);
+    const shared = hrefMatchBudget();
+    const res = patterns.map((p) => compileHrefPattern(p, resolve, shared));
+    // Pattern by pattern, then link by link, so every matcher follows every other.
+    for (let round = 0; round < 2; round++) {
+      res.forEach((re, i) => expect(urls.map((u) => re.test(u)), `${patterns[i]}, round ${round}`).toEqual(want[patterns[i]]));
+      urls.forEach((u, j) => expect(res.map((re) => re.test(u)), `${u}, round ${round}`).toEqual(patterns.map((p) => want[p][j])));
+    }
+  });
+
+  it('reports the rule as incomplete instead of stalling on 1000 links of 2000 characters', async () => {
+    const html = `<!doctype html><html><head>${rulesTag({ prefetch: [{ where: { href_matches: HOSTILE }, eagerness: 'immediate' }] })}</head>`
+      + `<body>${anchors(1000, (i) => `/${'a'.repeat(2000)}${i}`)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(ms).toBeLessThan(BUDGET_BACKSTOP_MS);
+    expect(value.status).toBe('incomplete');
+    expect(value.nodes).toEqual([]);
+    expect(value.incomplete).toEqual([expect.objectContaining({ selector: 'head > script', message: BUDGET_MESSAGE('prefetch') })]);
+    expect(value.errors).toEqual([]);
+  });
+
+  it('spends one budget on every rule and pattern of a page, and still counts list rules', async () => {
+    // 16 rules of 4 patterns each, and every rule alone has more work than one
+    // budget: a budget per rule or per pattern would allow 16 to 64 times the work.
+    const patterns = Array.from({ length: 4 }, (_, i) => `/${'*a'.repeat(500)}*z${i}`);
+    const hostileRules = Array.from({ length: 8 }, () => ({ where: { href_matches: patterns }, eagerness: 'immediate' }));
+    const urls = Array.from({ length: 51 }, (_, i) => `/u/${i}`);
+    const json = {
+      prerender: hostileRules,
+      prefetch: [...hostileRules, { urls }, { where: { href_matches: patterns }, eagerness: 'moderate' }],
+    };
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body>${anchors(20, (i) => `/${'a'.repeat(2000)}${i}`)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(ms).toBeLessThan(BUDGET_BACKSTOP_MS);
+    // The list rule needs no matching, so it is still counted and reported.
+    expect(value.status).toBe('failed');
+    expect(value.nodes.map((n) => n.data)).toEqual([{ action: 'prefetch', candidates: 51, limit: 50, source: 'list' }]);
+    expect(value.incomplete.map((n) => n.message)).toEqual([BUDGET_MESSAGE('prefetch'), BUDGET_MESSAGE('prerender')]);
+  });
+
+  it('bounds a deep compound selector_matches over many nested links', async () => {
+    const selector = `.none ${'div '.repeat(200)}a`;
+    const json = { prefetch: [{ where: { selector_matches: selector }, eagerness: 'immediate' }] };
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body>${'<div>'.repeat(200)}${anchors(2000, (i) => `/p/${i}`)}${'</div>'.repeat(200)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(ms).toBeLessThan(BUDGET_BACKSTOP_MS);
+    expect(value.status).toBe('passed');
+    expect(value.errors).toEqual([]);
+  });
+
+  it('reports incomplete for thousands of selectors over thousands of links', async () => {
+    const selectors = Array.from({ length: 4000 }, (_, i) => `.c${i}`);
+    const json = { prefetch: [{ where: { selector_matches: selectors }, eagerness: 'immediate' }] };
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body>${anchors(10000, (i) => `/p/${i}`)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(ms).toBeLessThan(BUDGET_BACKSTOP_MS);
+    expect(value.status).toBe('incomplete');
+    expect(value.incomplete.map((n) => n.message)).toEqual([BUDGET_MESSAGE('prefetch')]);
+    expect(value.errors).toEqual([]);
+  });
+
+  it('bounds thousands of document rules without a where over thousands of links', async () => {
+    const json = { prefetch: Array.from({ length: 4000 }, () => ({ source: 'document', eagerness: 'immediate' })) };
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body>${anchors(14000, (i) => `/p/${i}`)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(ms).toBeLessThan(BUDGET_BACKSTOP_MS);
+    expect(value.status).toBe('failed');
+    expect(value.nodes.map((n) => n.data)).toEqual([{ action: 'prefetch', candidates: 14000, limit: 50, source: 'document' }]);
+    expect(value.incomplete).toHaveLength(1);
+    expect(value.errors).toEqual([]);
+  });
+
+  it('keeps counts for ordinary selector_matches rules', async () => {
+    const json = {
+      prefetch: [
+        { where: { selector_matches: ['.nav a', 'a.cta'] }, eagerness: 'immediate' },
+        { where: { and: [{ selector_matches: '.nav a' }, { not: { selector_matches: '.skip' } }] }, eagerness: 'immediate' },
+      ],
+    };
+    const links = Array.from({ length: 100 }, (_, i) => `<a href="/p/${i}"${i % 10 === 0 ? ' class="skip"' : ''}>a</a>`).join('');
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body><nav class="nav">${links}</nav><a class="cta" href="/cta">c</a></body></html>`;
+    const value = runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] }));
+    expect(value.status).toBe('failed');
+    expect(value.nodes.map((n) => n.data)).toEqual([
+      { action: 'prefetch', candidates: 101, limit: 50, source: 'document' },
+      { action: 'prefetch', candidates: 90, limit: 50, source: 'document' },
+    ]);
+    expect(value.incomplete).toEqual([]);
+    expect(value.errors).toEqual([]);
+  });
+
+  /** Run the immediate-abuse rule over a page and time it. */
+  const runPage = async (html) => timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+  /** Same, but time only the rule: collecting a page near the 2 MiB cap takes most of a second on its own. */
+  const runRuleOnly = async (html) => {
+    const ctx = await contextFor({ 'index.html': html }, { areas: ['transitions'] });
+    return timed(() => runRule(speculationRulesImmediateAbuse, ctx));
+  };
+  const expectIncomplete = (value, ms) => {
+    expect(ms).toBeLessThan(BUDGET_BACKSTOP_MS);
+    expect(value.status).toBe('incomplete');
+    expect(value.errors).toEqual([]);
+    expect(value.incomplete.map((n) => n.message)).toEqual([BUDGET_MESSAGE('prefetch')]);
+  };
+  const selectorPage = (selectors, body) => `<!doctype html><html><head>${rulesTag({ prefetch: [{ where: { selector_matches: selectors }, eagerness: 'immediate' }] })}</head><body>${body}</body></html>`;
+
+  it('reports a long :is() chain over thousands of links as incomplete', async () => {
+    const { ms, value } = await runPage(selectorPage(`a${':is(a)'.repeat(2000)}`, anchors(5000, (i) => `/p/${i}`)));
+    expectIncomplete(value, ms);
+  });
+
+  it('charges parsing and nesting of selectors under the length cap', async () => {
+    const selectors = Array.from({ length: 10 }, (_, i) => `a${':is(a)'.repeat(167)}:is(b${i})`);
+    expect(selectors[0].length).toBeLessThanOrEqual(1024);
+    const { ms, value } = await runPage(selectorPage(selectors, anchors(5000, (i) => `/p/${i}`)));
+    expectIncomplete(value, ms);
+  });
+
+  it('charges attribute value text to attribute selectors', async () => {
+    const selectors = Array.from({ length: 200 }, (_, i) => `[class~=q${i}]`);
+    const links = Array.from({ length: 20 }, (_, i) => `<a class="${'x ' + 'y '.repeat(20000)}" href="/p/${i}">a</a>`).join('');
+    const { ms, value } = await runPage(selectorPage(selectors, links));
+    expectIncomplete(value, ms);
+  });
+
+  it('reports a very deeply nested selector as incomplete, not an error', async () => {
+    const { ms, value } = await runPage(selectorPage(`${':is('.repeat(3000)}a${')'.repeat(3000)}`, anchors(60, (i) => `/p/${i}`)));
+    expectIncomplete(value, ms);
+  });
+
+  it('charges sibling combinators by the work they do', async () => {
+    const selectors = Array.from({ length: 60 }, (_, i) => `b${i}${'~a'.repeat(509)}`);
+    const { ms, value } = await runPage(selectorPage(selectors, anchors(5000, (i) => `/p/${i}`)));
+    expectIncomplete(value, ms);
+  });
+
+  it('charges every node of a predicate of empty and/or/not nodes', async () => {
+    const where = { and: Array.from({ length: 20000 }, () => ({ and: [] })) };
+    const html = `<!doctype html><html><head>${rulesTag({ prefetch: [{ where, eagerness: 'immediate' }] })}</head><body>${anchors(20000, (i) => `/p/${i}`)}</body></html>`;
+    const { ms, value } = await runPage(html);
+    expectIncomplete(value, ms);
+  });
+
+  it('keeps counts for ordinary selectors on a page with a base href', async () => {
+    const json = {
+      prefetch: [
+        { where: { selector_matches: 'a[rel~="nofollow"]' }, eagerness: 'immediate' },
+        { where: { selector_matches: '.skip, .skip a' }, eagerness: 'immediate' },
+        { where: { selector_matches: 'nav > a:not(.skip)' }, eagerness: 'immediate' },
+      ],
+    };
+    const links = Array.from({ length: 300 }, (_, i) => `<a href="p/${i}"${i % 5 === 0 ? ' class="skip"' : ''}${i % 3 === 0 ? ' rel="nofollow noopener"' : ''}>a</a>`).join('');
+    const html = `<!doctype html><html><head><base href="/sub/dir/">${rulesTag(json)}</head><body><nav>${links}</nav></body></html>`;
+    const { ms, value } = await runPage(html);
+    expect(value.status).toBe('failed');
+    expect(value.nodes.map((n) => n.data)).toEqual([
+      { action: 'prefetch', candidates: 100, limit: 50, source: 'document' },
+      { action: 'prefetch', candidates: 240, limit: 50, source: 'document' },
+      { action: 'prefetch', candidates: 60, limit: 50, source: 'document' },
+    ]);
+    expect(value.incomplete).toEqual([]);
+    expect(value.errors).toEqual([]);
+    expect(ms).toBeLessThan(FAST_MS);
+  });
+
+  describe('with a long <base href>', () => {
+    const longBase = `<base href="https://a.example/${'d/'.repeat(50000)}">`;
+    const pagesWith = (base, json, body) => `<!doctype html><html><head>${base}${rulesTag(json)}</head><body>${body}</body></html>`;
+
+    it('reports 1000 relative patterns as incomplete', async () => {
+      const patterns = Array.from({ length: 1000 }, (_, i) => `p${i}*`);
+      const html = pagesWith(longBase, { prefetch: [{ where: { href_matches: patterns }, eagerness: 'immediate' }] }, anchors(10, (i) => `/x${i}`));
+      const { ms, value } = await runPage(html);
+      expectIncomplete(value, ms);
+    });
+
+    it('reports one pattern over 8000 relative links as incomplete', async () => {
+      const html = pagesWith(longBase, { prefetch: [{ where: { href_matches: 'p*' }, eagerness: 'immediate' }] }, anchors(8000, (i) => `p${i}`));
+      const { ms, value } = await runPage(html);
+      expectIncomplete(value, ms);
+    });
+
+    it('reports a list rule of 8000 relative urls as incomplete', async () => {
+      const urls = Array.from({ length: 8000 }, (_, i) => `p${i}`);
+      const { ms, value } = await runPage(pagesWith(longBase, { prefetch: [{ urls }] }, ''));
+      expectIncomplete(value, ms);
+    });
+
+    it('reports an immediate document rule without where as incomplete on a 17,000 character base', async () => {
+      const base = `<base href="https://a.example/${'d/'.repeat(8500)}">`;
+      const html = pagesWith(base, { prefetch: [{ source: 'document', eagerness: 'immediate' }] }, anchors(3000, (i) => `p${i}`));
+      const { ms, value } = await runPage(html);
+      expectIncomplete(value, ms);
+    });
+
+    it('still counts links on a short base', async () => {
+      const base = `<base href="https://a.example/${'d/'.repeat(1500)}">`;
+      const html = pagesWith(base, { prefetch: [{ source: 'document', eagerness: 'immediate' }] }, anchors(200, (i) => `p${i}`));
+      const { value } = await runPage(html);
+      expect(value.status).toBe('failed');
+      expect(value.nodes.map((n) => n.data)).toEqual([{ action: 'prefetch', candidates: 200, limit: 50, source: 'document' }]);
+      expect(value.incomplete).toEqual([]);
+    });
+  });
+
+  it('reports 380,000 patterns in one rule as incomplete', async () => {
+    const patterns = Array.from({ length: 380_000 }, () => '/a');
+    const html = `<!doctype html><html><head>${rulesTag({ prefetch: [{ where: { href_matches: patterns }, eagerness: 'immediate' }] })}</head><body>${anchors(1, () => '/b')}</body></html>`;
+    const { ms, value } = await runPage(html);
+    expectIncomplete(value, ms);
+  });
+
+  it('reports links over the URL length cap as incomplete instead of passing', async () => {
+    const json = { prefetch: [{ where: { href_matches: '/*' }, eagerness: 'immediate' }] };
+    const page = (len) => `<!doctype html><html><head>${rulesTag(json)}</head><body>${anchors(60, (i) => `/${'a'.repeat(len)}${i}`)}</body></html>`;
+    const long = await runPage(page(8300));
+    expectIncomplete(long.value, long.ms);
+    const ok = await runPage(page(8000));
+    expect(ok.value.status).toBe('failed');
+    expect(ok.value.nodes.map((n) => n.data)).toEqual([{ action: 'prefetch', candidates: 60, limit: 50, source: 'document' }]);
+    expect(ok.value.incomplete).toEqual([]);
+  });
+
+  it('leaves an ordinary page complete, with the same counts', async () => {
+    const json = {
+      prefetch: [
+        { where: { and: [{ href_matches: ['/docs/*', '/blog/:slug'] }, { not: { href_matches: '/docs/item-3' } }] }, eagerness: 'immediate' },
+        { where: { href_matches: '/shop/*' }, eagerness: 'moderate' },
+      ],
+      prerender: [{ where: { href_matches: '/blog/*' }, eagerness: 'immediate' }, { where: { href_matches: '/none/*' }, eagerness: 'immediate' }],
+    };
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body>${anchors(300, (i) => `/${['docs', 'blog', 'shop'][i % 3]}/item-${i}`)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(value.status).toBe('failed');
+    expect(value.nodes.map((n) => n.data)).toEqual([
+      { action: 'prefetch', candidates: 199, limit: 50, source: 'document' },
+      { action: 'prerender', candidates: 100, limit: 10, source: 'document' },
+    ]);
+    expect(value.incomplete).toEqual([]);
+    expect(value.errors).toEqual([]);
+    expect(ms).toBeLessThan(FAST_MS);
+    // At the limits nothing is reported, as before.
+    const atLimit = { prerender: [{ where: { href_matches: '/blog/*' }, eagerness: 'immediate' }] };
+    const small = `<!doctype html><html><head>${rulesTag(atLimit)}</head><body>${anchors(30, (i) => `/${['docs', 'blog', 'shop'][i % 3]}/item-${i}`)}</body></html>`;
+    expect(runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': small }, { areas: ['transitions'] })).status).toBe('passed');
+  });
+
+  describe('rules times unbounded work', () => {
+    const FIVE_S = 5000;
+    const immediateDoc = { source: 'document', eagerness: 'immediate' };
+    const failedWith = (value, ms, candidates) => {
+      expect(ms).toBeLessThan(FIVE_S);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('failed');
+      expect(value.nodes.map((n) => n.data)).toEqual([{ action: 'prefetch', candidates, limit: 50, source: 'document' }]);
+      expect(value.incomplete).toEqual([]);
+    };
+    const incompleteFast = (value, ms) => {
+      expect(ms).toBeLessThan(FIVE_S);
+      expect(value.status).toBe('incomplete');
+      expect(value.errors).toEqual([]);
+      expect(value.incomplete.map((n) => n.message)).toEqual([BUDGET_MESSAGE('prefetch')]);
+    };
+
+    it('builds one node for 2000 findings on a script with a 1 MB start tag', async () => {
+      const prefetch = Array.from({ length: 2000 }, () => immediateDoc);
+      const html = `<!doctype html><html><head><script type="speculationrules" data-x="${'a '.repeat(500000)}">${JSON.stringify({ prefetch })}</script></head><body>${anchors(51, (i) => `/p/${i}`)}</body></html>`;
+      const { ms, value } = await runPage(html);
+      failedWith(value, ms, 51);
+    });
+
+    it('builds one node for 20000 findings on a script under 500 long-class ancestors', async () => {
+      const prefetch = Array.from({ length: 20000 }, () => immediateDoc);
+      const open = `<div class="${'c'.repeat(1000)} ${'d'.repeat(1000)}">`.repeat(500);
+      const html = `<!doctype html><html><head></head><body>${anchors(51, (i) => `/p/${i}`)}${open}<script type="speculationrules">${JSON.stringify({ prefetch })}</script>${'</div>'.repeat(500)}</body></html>`;
+      const { ms, value } = await runPage(html);
+      failedWith(value, ms, 51);
+    });
+
+    it('counts 254 links of 16 thousand characters once, not once per rule', async () => {
+      const links = anchors(254, (i) => `/x${' '.repeat(5470)}${String(i).padStart(4, '0')}`);
+      const prefetch = Array.from({ length: 1000 }, () => immediateDoc);
+      const { ms, value } = await runPage(`<!doctype html><html><head>${rulesTag({ prefetch })}</head><body>${links}</body></html>`);
+      failedWith(value, ms, 254);
+    });
+
+    it('counts the same long links for 1000 selector_matches rules', async () => {
+      const links = anchors(254, (i) => `/x${' '.repeat(5470)}${String(i).padStart(4, '0')}`);
+      const prefetch = Array.from({ length: 1000 }, () => ({ where: { selector_matches: 'a' }, eagerness: 'immediate' }));
+      const { ms, value } = await runPage(`<!doctype html><html><head>${rulesTag({ prefetch })}</head><body>${links}</body></html>`);
+      failedWith(value, ms, 254);
+    });
+
+    it('reports one list rule of 400,000 unparsable urls as incomplete', async () => {
+      const urls = Array.from({ length: 400_000 }, () => '//');
+      const { ms, value } = await runRuleOnly(`<!doctype html><html><head>${rulesTag({ prefetch: [{ urls }] })}</head><body></body></html>`);
+      incompleteFast(value, ms);
+    });
+
+    it('reports one list rule of 500,000 relative urls with no base as incomplete', async () => {
+      const urls = Array.from({ length: 500_000 }, () => 'a');
+      const { ms, value } = await runRuleOnly(`<!doctype html><html><head>${rulesTag({ prefetch: [{ urls }] })}</head><body></body></html>`);
+      incompleteFast(value, ms);
+    });
+
+    it('charges case-insensitive attribute selectors for the length of their value', async () => {
+      const selectors = Array.from({ length: 60 }, (_, k) => `[a="${'ABCDEFGHIJKLMNOP'[k % 16].repeat(990)}${k}"i]`);
+      const body = `${'<p a=x>'.repeat(15000)}${anchors(1, () => '/p/0')}`;
+      const { ms, value } = await runPage(selectorPage(selectors, body));
+      incompleteFast(value, ms);
+    });
+
+    it('builds 2000 nodes for 2000 scripts under 500 long-class ancestors', async () => {
+      const open = `<div class="${'c'.repeat(1000)} ${'d'.repeat(1000)}">`.repeat(500);
+      const scripts = rulesTag({ prefetch: [immediateDoc] }).repeat(2000);
+      const { ms, value } = await runPage(`<!doctype html><html><head></head><body>${anchors(51, (i) => `/p/${i}`)}${open}${scripts}${'</div>'.repeat(500)}</body></html>`);
+      expect(ms).toBeLessThan(FIVE_S);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('failed');
+      expect(value.nodes).toHaveLength(50);
+      expect(value.nodesTruncated).toBe(1950);
+      expect(value.nodes.every((n) => n.selector.length <= MAX_PATH_TEXT + 512 * 22)).toBe(true);
+    });
+
+    it('does not walk the links again for each document rule once the budget is spent', async () => {
+      // The list rule takes every free resolution and the selector parses
+      // spend the rest, so the link list fails at its only href, after 100,000
+      // <a> without one.
+      const sel = `${':is('.repeat(200)}a${')'.repeat(200)}`;
+      const prefetch = [
+        { urls: Array.from({ length: 20_001 }, () => 'a') },
+        { where: { selector_matches: Array.from({ length: 100 }, () => sel) }, eagerness: 'immediate' },
+        ...Array.from({ length: 4000 }, () => immediateDoc),
+      ];
+      const { ms, value } = await runPage(`<!doctype html><html><head>${rulesTag({ prefetch })}</head><body>${'<a>'.repeat(100_000)}<a href="/p/0">x</a></body></html>`);
+      incompleteFast(value, ms);
+    });
+
+    it('does not walk the links again for each document rule under a base over 8192 characters', async () => {
+      const prefetch = Array.from({ length: 2000 }, () => immediateDoc);
+      const base = `<base href="https://a.example/${'d'.repeat(8200)}/">`;
+      const { ms, value } = await runPage(`<!doctype html><html><head>${base}${rulesTag({ prefetch })}</head><body>${'<a>'.repeat(100_000)}<a href="/p/0">x</a></body></html>`);
+      incompleteFast(value, ms);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('vta-duplicate-names on broad repeated selectors', () => {
+  it('stays bounded for hundreds of universal view-transition-name rules over many elements', async () => {
+    const css = '*{view-transition-name:a}'.repeat(400);
+    const html = `<!doctype html><html><head><style>${css}</style></head><body>${'<i></i>'.repeat(20000)}</body></html>`;
+    const ctx = await contextFor({ 'index.html': html }, { areas: ['transitions'] });
+    const before = process.memoryUsage().heapUsed;
+    const { ms, value } = await timedAsync(async () => runRule(vtaDuplicateNames, ctx));
+    expect(ms).toBeLessThan(60_000);
+    expect(value.status).toBe('failed');
+    expect(value.nodes[0].data).toMatchObject({ name: 'a' });
+    expect(process.memoryUsage().heapUsed - before).toBeLessThan(400 * 1024 * 1024);
+  }, 90_000);
+
+  it('gives up with an incomplete result for hundreds of distinct condition sets', async () => {
+    const css = Array.from({ length: 300 }, (_, i) => `@media (min-width:${400 + i}px){*{view-transition-name:a}}`).join('');
+    const html = `<!doctype html><html><head><style>${css}</style></head><body>${'<i></i>'.repeat(20000)}</body></html>`;
+    const ctx = await contextFor({ 'index.html': html }, { areas: ['transitions'] });
+    const before = process.memoryUsage().heapUsed;
+    const { ms, value } = await timedAsync(async () => runRule(vtaDuplicateNames, ctx));
+    expect(ms).toBeLessThan(60_000);
+    expect(value.status).toBe('incomplete');
+    expect(process.memoryUsage().heapUsed - before).toBeLessThan(600 * 1024 * 1024);
+  }, 90_000);
+
+  it('gives up in bounded time on 300 distinct selectors that each match every element', async () => {
+    const css = Array.from({ length: 300 }, (_, i) => `i:not(.c${i}){view-transition-name:a}`).join('');
+    const html = `<!doctype html><html><head><style>${css}</style></head><body>${'<i></i>'.repeat(20000)}</body></html>`;
+    const ctx = await contextFor({ 'index.html': html }, { areas: ['transitions'] });
+    const { ms, value } = await timedAsync(async () => runRule(vtaDuplicateNames, ctx));
+    expect(ms).toBeLessThan(60_000);
+    expect(value.status).toBe('incomplete');
+  }, 90_000);
+
+  it('gives up in bounded time on thousands of distinct media rules that each match one element', async () => {
+    const n = 5000;
+    const css = Array.from({ length: n }, (_, i) => `@media (min-width:${400 + i}px){#e${i}{view-transition-name:a}}`).join('');
+    const html = `<!doctype html><html><head><style>${css}</style></head><body>${Array.from({ length: n }, (_, i) => `<i id="e${i}"></i>`).join('')}</body></html>`;
+    const ctx = await contextFor({ 'index.html': html }, { areas: ['transitions'] });
+    const { ms, value } = await timedAsync(async () => runRule(vtaDuplicateNames, ctx));
+    expect(ms).toBeLessThan(60_000);
+    expect(value.status).toBe('incomplete');
+  }, 90_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -443,6 +1078,154 @@ describe('HTML nesting depth', () => {
     const m = buildHtmlModel('<!doctype html><table><tr><td>a<b>x<p>y</b>z</td></tr></table><p>1<p>2');
     expect(m.querySelectorAll('td p')).toHaveLength(1);
     expect(m.querySelectorAll('body > p')).toHaveLength(2);
+  });
+
+  it('bounds the text of a path under long class names and still selects only that element', () => {
+    const m = buildHtmlModel(`<!doctype html><body>${`<div class="${'c'.repeat(1000)} ${'d'.repeat(1000)}">`.repeat(500)}<p>a</p><p>b</p>`);
+    const target = m.byTag('p')[1];
+    const path = m.cssPath(target);
+    expect(path.length).toBeLessThanOrEqual(MAX_PATH_TEXT + 512 * 22);
+    expect(m.querySelectorAll(path)).toEqual([target]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('long property chains in scripts', () => {
+  const chain = `a${'.b'.repeat(50_000)}`;
+
+  it('reads a 50000-segment path without overflowing the stack', () => {
+    const { ast, error } = parseJs(`${chain};`);
+    expect(error).toBeNull();
+    expect(pathOf(ast.body[0].expression) === chain).toBe(true);
+  });
+
+  it('audits a page whose scripts use such a chain as a callee and as an assignment target', async () => {
+    const { dir, cleanup } = tempDir('ux-chain-');
+    try {
+      writeFiles(dir, {
+        'index.html': '<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>t</title></head>'
+          + '<body><p>x</p><script src="call.js"></script><script src="assign.js"></script><script>window.addEventListener("unload", () => {});</script></body></html>',
+        'call.js': `${chain}();`,
+        'assign.js': `${chain} = 1;`,
+      });
+      const res = await auditRuntimeUx({ url: join(dir, 'index.html'), timestamp: FIXED_TS, write: false });
+      // The rest of the page is still audited: the inline unload handler is reported.
+      expect(res.violations.critical.map((v) => v.ruleId)).toEqual(['atelier/runtime-ux/no-unload-handler']);
+      expect(res.raw.errors).toEqual([]);
+      expect(res.pass).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('JS nesting depth', () => {
+  const model = (source) => {
+    const { ast, comments, error } = parseJs(source);
+    const js = buildJsModel([{ order: 1, displayPath: 'a.js', kind: 'external', type: 'classic', el: null, src: 'a.js', source, rawText: source, ast, comments, selector: 'script', inDocument: false }]);
+    return { js, error };
+  };
+  const chainOf = (n) => `x${'.a()'.repeat(n)};`;
+
+  it('indexes a 20000-call chain down to the depth bound, with no ancestor copy per call', () => {
+    const { ms, value: { js, error } } = timed(() => model(chainOf(20_000)));
+    expect(error).toBeNull();
+    // The depth bound caps the work: unbounded, all 20,000 calls are indexed
+    // and each keeps a copy of its path (3.2 GB). The time is only a backstop.
+    expect(js.calls.length).toBeGreaterThan(0);
+    expect(js.calls.length).toBeLessThanOrEqual(MAX_JS_DEPTH);
+    expect(Math.max(...js.calls.map((c) => c.ancestors.length))).toBeLessThanOrEqual(MAX_JS_DEPTH);
+    expect(js.complete).toBe(false);
+    expect(ms).toBeLessThan(30_000);
+  });
+
+  it('does the same for a long run of calls joined by +', () => {
+    // 2500 terms nest 2500 deep. A parser that runs out of stack first gives
+    // a parse error, which also leaves the model incomplete.
+    const { js } = model(`${Array.from({ length: 2500 }, () => 'f()').join('+')};`);
+    expect(js.calls.length).toBeLessThanOrEqual(MAX_JS_DEPTH);
+    expect(js.complete).toBe(false);
+  });
+
+  it('keeps one ancestor list at a time instead of one per record', () => {
+    const { js } = model('function a() { if (x) { f(); } }\nfunction b() { for (;;) { g(); } }');
+    const [f, g] = js.calls;
+    const first = f.ancestors;
+    expect(f.ancestors).toBe(first);
+    expect(first.map((n) => n.type)).toEqual(['Program', 'FunctionDeclaration', 'BlockStatement', 'IfStatement', 'BlockStatement', 'ExpressionStatement']);
+    expect(g.ancestors.map((n) => n.type)).toEqual(['Program', 'FunctionDeclaration', 'BlockStatement', 'ForStatement', 'BlockStatement', 'ExpressionStatement']);
+    // Reading g dropped the list of f; it is rebuilt on the next read.
+    expect(f.ancestors).not.toBe(first);
+    expect(f.ancestors).toEqual(first);
+    expect(Object.isFrozen(first) && Object.isFrozen(f.ancestors)).toBe(true);
+  });
+
+  it('indexes deep code below the bound completely', () => {
+    const { js } = model(`window.addEventListener('unload', bye);\n${chainOf(900)}\nfunction bye() {}`);
+    expect(js.complete).toBe(true);
+    expect(js.calls).toHaveLength(901);
+    expect(js.calls[900].ancestors).toHaveLength(1800);
+    expect(js.calls.every((c) => c.topLevel && !c.inLoop)).toBe(true);
+    expect(js.listenersByEvent('unload')[0].handler.id.name).toBe('bye');
+  });
+
+  it('keeps findings from the part of a script above the bound and sends absence-based ones to review', async () => {
+    const ctx = await contextFor({
+      'index.html': '<!doctype html><html><head></head><body><p>x</p><script src="a.js"></script></body></html>',
+      'a.js': `window.addEventListener('unload', bye);\nga('send', 'pageview');\n${chainOf(20_000)}`,
+    });
+    expect(ctx.js.complete).toBe(false);
+    expect(runRule(noUnloadHandler, ctx).nodes.map((n) => n.location)).toEqual(['a.js:1:1']);
+    const analytics = runRule(analyticsWithoutPrerenderGuard, ctx);
+    expect(analytics.status).toBe('incomplete');
+    expect(analytics.incomplete.map((n) => n.location)).toEqual(['a.js:2:1']);
+    // The same page without the deep chain: a plain violation.
+    const plain = await contextFor({
+      'index.html': '<!doctype html><html><head></head><body><p>x</p><script src="a.js"></script></body></html>',
+      'a.js': `ga('send', 'pageview');\n${chainOf(900)}`,
+    });
+    expect(runRule(analyticsWithoutPrerenderGuard, plain).nodes.map((n) => n.location)).toEqual(['a.js:1:1']);
+  });
+
+  const clickHandler = (links) => `btn.addEventListener('click', function () { box.style.width = '10px'; var h = box.offsetHeight; ${chainOf(links)} });`;
+  const walk = (js) => {
+    const seen = { visits: 0, longest: 0, calls: 0 };
+    js.walkFunction(js.listenersByEvent('click')[0].handler, (node, ancestors) => {
+      seen.visits += 1;
+      seen.longest = Math.max(seen.longest, ancestors.length);
+      if (node.type === 'CallExpression') seen.calls += 1;
+    });
+    return seen;
+  };
+
+  it('walks a handler body down to the same bound', () => {
+    // Unbounded, the walk copies the path to each of the 12,000 levels of this
+    // chain: work that grows with the square of the depth.
+    const { js } = model(clickHandler(6000));
+    const deep = walk(js);
+    expect(deep.longest).toBe(MAX_JS_DEPTH);
+    expect(deep.visits).toBeLessThan(2 * MAX_JS_DEPTH);
+    expect(js.complete).toBe(false);
+    // Below the bound every node is visited, with its whole path.
+    const shallow = model(clickHandler(900));
+    expect(walk(shallow.js)).toMatchObject({ calls: 900, longest: 3 + 1800 });
+    expect(shallow.js.complete).toBe(true);
+  });
+
+  it('still reports what a handler does above the bound', async () => {
+    const page = (links) => ({
+      'index.html': '<!doctype html><html><head></head><body><button id="btn">x</button><div id="box"></div><script src="a.js"></script></body></html>',
+      'a.js': clickHandler(links),
+    });
+    const { ms, value: res } = await timedAsync(async () => runRule(clickHandlerForcedLayout, await contextFor(page(20_000))));
+    expect(res.nodes.map((n) => [n.snippet, n.location])).toEqual([['box.offsetHeight', 'a.js:1:79']]);
+    expect(ms).toBeLessThan(30_000);
+    // A handler that only writes is not reported, deep chain or not.
+    const writeOnly = { ...page(0), 'a.js': `btn.addEventListener('click', function () { box.style.width = '10px'; ${chainOf(20_000)} });` };
+    expect(runRule(clickHandlerForcedLayout, await contextFor(writeOnly)).status).toBe('passed');
   });
 });
 

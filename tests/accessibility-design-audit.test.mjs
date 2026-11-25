@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   AuditError,
   DEFAULT_TAGS,
@@ -173,6 +173,169 @@ describe('auditPage on local files', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Local pages: which files the page may load
+// ---------------------------------------------------------------------------
+
+describe('auditPage on a local page: file access', () => {
+  const SECRET = 'SENTINEL_TOKEN_ALPHA';
+
+  /** <base>/site for the page and <base>/elsewhere/credentials, a file the page must not reach. */
+  function makeSite(label) {
+    const base = mkdtempSync(join(tmp, `${label}-`));
+    const site = join(base, 'site');
+    const elsewhere = join(base, 'elsewhere');
+    mkdirSync(site);
+    mkdirSync(elsewhere);
+    const secret = join(elsewhere, 'credentials');
+    writeFileSync(secret, `${SECRET}\nSENTINEL_TOKEN_BETA\n`, 'utf8');
+    return { base, site, elsewhere, secret };
+  }
+
+  const pageWith = (body) => `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Local page</title></head>
+<body><main><h1>Local page</h1>${body}</main></body>
+</html>`;
+
+  /** Audit <site>/index.html and return the raw JSON text, the report text and the warnings. */
+  async function audit(site, label, extra = {}) {
+    const warnings = [];
+    const res = await auditPage({ url: join(site, 'index.html'), outDir: outDir(label), browser, onWarning: (m) => warnings.push(m), ...extra });
+    return { res, raw: readFileSync(res.rawPath, 'utf8'), report: readFileSync(res.reportPath, 'utf8'), warnings };
+  }
+
+  it('a file outside the page folder that the page frames or embeds never reaches the report', async () => {
+    const { site, secret } = makeSite('outside');
+    // Windows opens "credentials." (trailing dot) as "credentials".
+    writeFileSync(join(site, 'index.html'), pageWith(`
+      <iframe title="absolute" src="${pathToFileURL(secret).href}"></iframe>
+      <iframe title="relative" src="../elsewhere/credentials"></iframe>
+      <iframe title="windows alias" src="../elsewhere/credentials."></iframe>
+      <object aria-label="object" data="../elsewhere/credentials"></object>`), 'utf8');
+
+    const { raw, report, warnings } = await audit(site, 'outside');
+    expect(raw).not.toContain('SENTINEL_TOKEN');
+    expect(report).not.toContain('SENTINEL_TOKEN');
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings[0]).toMatch(/^blocked local file file:\/\/\/\S+\/elsewhere\/credentials: /);
+    expect(warnings[0]).toContain('--root');
+  });
+
+  it('a frame inside the page folder still loads and is audited, without a warning', async () => {
+    const { site } = makeSite('inside');
+    mkdirSync(join(site, 'parts'));
+    writeFileSync(join(site, 'parts', 'inner.html'), '<!DOCTYPE html><html lang="en"><head><title>inner</title></head><body><p>INNER_FRAME_TEXT</p><img id="x" src="f.png"></body></html>', 'utf8');
+    writeFileSync(join(site, 'index.html'), pageWith('<iframe id="fr" title="inner" src="parts/inner.html"></iframe>'), 'utf8');
+
+    const { res, raw, report, warnings } = await audit(site, 'inside');
+    expect(raw).toContain('INNER_FRAME_TEXT');
+    expect(res.violations.critical.map((v) => v.id)).toContain('image-alt');
+    expect(report).toContain('`#fr >>frame>> #x` (in iframe)');
+    // f.png does not exist: a missing file is the page's own problem, not a blocked one.
+    expect(warnings).toEqual([]);
+  });
+
+  it('dot-named files and folders in the page folder do not load; .well-known does', async () => {
+    const { site } = makeSite('dotfiles');
+    writeFileSync(join(site, '.env'), 'DOTENV_SENTINEL=1\n', 'utf8');
+    mkdirSync(join(site, '.git'));
+    writeFileSync(join(site, '.git', 'config'), 'GITCONFIG_SENTINEL\n', 'utf8');
+    mkdirSync(join(site, '.well-known'));
+    writeFileSync(join(site, '.well-known', 'security.txt'), 'WELLKNOWN_SENTINEL\n', 'utf8');
+    writeFileSync(join(site, 'index.html'), pageWith(`
+      <iframe title="env" src=".env"></iframe>
+      <iframe title="git" src=".git/config"></iframe>
+      <iframe title="well-known" src=".well-known/security.txt"></iframe>`), 'utf8');
+
+    const { raw, warnings } = await audit(site, 'dotfiles');
+    expect(raw).not.toContain('DOTENV_SENTINEL');
+    expect(raw).not.toContain('GITCONFIG_SENTINEL');
+    expect(raw).toContain('WELLKNOWN_SENTINEL');
+    expect(warnings).toHaveLength(2);
+  });
+
+  it('a link inside the page folder that leads outside is not followed', async (ctx) => {
+    const { site, elsewhere } = makeSite('link');
+    try {
+      symlinkSync(elsewhere, join(site, 'shared'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      ctx.skip();
+    }
+    writeFileSync(join(site, 'index.html'), pageWith('<iframe title="linked" src="shared/credentials"></iframe>'), 'utf8');
+
+    const { raw, warnings } = await audit(site, 'link');
+    expect(raw).not.toContain('SENTINEL_TOKEN');
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('root widens the folder: a file under it loads, and the page must be inside it', async () => {
+    const { base, site, elsewhere } = makeSite('root');
+    writeFileSync(join(site, 'index.html'), pageWith('<iframe title="shared" src="../elsewhere/credentials"></iframe>'), 'utf8');
+
+    const { raw, warnings } = await audit(site, 'root', { root: base });
+    expect(raw).toContain(SECRET);
+    expect(warnings).toEqual([]);
+
+    const page = join(site, 'index.html');
+    await expect(auditPage({ url: page, outDir: outDir('x'), root: elsewhere }))
+      .rejects.toMatchObject({ name: 'AuditError', code: 'OUTSIDE_ROOT' });
+    await expect(auditPage({ url: page, outDir: outDir('x'), root: join(base, 'missing') }))
+      .rejects.toMatchObject({ name: 'AuditError', code: 'INPUT_NOT_FOUND', message: expect.stringContaining('root directory not found') });
+    await expect(auditPage({ url: page, outDir: outDir('x'), root: page }))
+      .rejects.toMatchObject({ code: 'INPUT_NOT_FOUND' });
+    await expect(auditPage({ url: page, outDir: outDir('x'), root: 5 })).rejects.toThrow(TypeError);
+    await expect(auditPage({ url: page, outDir: outDir('x'), root: ' ' })).rejects.toThrow(/root must be/);
+    await expect(auditPage({ url: page, outDir: outDir('x'), onWarning: 'loud' })).rejects.toThrow(/onWarning must be a function/);
+  });
+
+  it('a file URL of a folder or of a missing file fails before the browser starts', async () => {
+    const { site } = makeSite('fileurl');
+    await expect(auditPage({ url: `${pathToFileURL(site).href}/`, outDir: outDir('x') }))
+      .rejects.toMatchObject({ code: 'INPUT_IS_DIRECTORY' });
+    await expect(auditPage({ url: pathToFileURL(join(site, 'nope.html')).href, outDir: outDir('x') }))
+      .rejects.toMatchObject({ code: 'NAVIGATION_FAILED', message: expect.stringMatching(/^could not open file:\/\/\/.*nope\.html: /) });
+  });
+
+  it('a page that is itself a link to a file outside its folder, or to a dot-named file, is refused', async (ctx) => {
+    const { site, elsewhere } = makeSite('pagelink');
+    writeFileSync(join(elsewhere, 'real.html'), CLEAN_HTML, 'utf8');
+    writeFileSync(join(site, '.env'), 'DOTENV_SENTINEL=1\n', 'utf8');
+    try {
+      symlinkSync(join(elsewhere, 'real.html'), join(site, 'index.html'), 'file');
+      symlinkSync(join(site, '.env'), join(site, 'env.html'), 'file');
+    } catch {
+      ctx.skip(); // file symlinks need a privilege on Windows
+    }
+    await expect(auditPage({ url: join(site, 'index.html'), outDir: outDir('x') }))
+      .rejects.toMatchObject({ code: 'OUTSIDE_ROOT', message: expect.stringContaining('outside the root directory') });
+    await expect(auditPage({ url: join(site, 'env.html'), outDir: outDir('x') }))
+      .rejects.toMatchObject({ code: 'OUTSIDE_ROOT', message: expect.stringContaining('dot-named') });
+  });
+
+  it('the CLI takes --root and prints a warning line for each blocked file', async () => {
+    const { base, site } = makeSite('cli-root');
+    writeFileSync(join(site, 'index.html'), pageWith('<iframe title="shared" src="../elsewhere/credentials"></iframe>'), 'utf8');
+    const page = join(site, 'index.html');
+
+    const blocked = captureIo();
+    const blockedOut = outDir('cli-blocked');
+    expect(await runCli([page, blockedOut], blocked)).toBe(0);
+    expect(blocked.err).toMatch(/^atelier: warning: blocked local file file:\/\/\/\S+\/elsewhere\/credentials: .*--root.*\n$/);
+    expect(readFileSync(join(blockedOut, 'a11y-raw.json'), 'utf8')).not.toContain('SENTINEL_TOKEN');
+
+    const widened = captureIo();
+    const widenedOut = outDir('cli-widened');
+    expect(await runCli([page, widenedOut, '--root', base], widened)).toBe(0);
+    expect(widened.err).toBe('');
+    expect(readFileSync(join(widenedOut, 'a11y-raw.json'), 'utf8')).toContain(SECRET);
+
+    const empty = captureIo();
+    expect(await runCli([page, '--root', ' '], empty)).toBe(2);
+    expect(empty.err).toMatch(/^atelier: --root needs a directory/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Served pages: load timing and HTTP status
 // ---------------------------------------------------------------------------
 
@@ -258,6 +421,35 @@ describe('auditPage input validation', () => {
       .rejects.toMatchObject({ code: 'UNSUPPORTED_SCHEME' });
     await expect(auditPage({ url: 'http://exa mple.com/', outDir: outDir('x') }))
       .rejects.toMatchObject({ code: 'INVALID_URL' });
+  });
+
+  // ':' is not allowed in Windows file names; tests/accessibility-design-audit-target.test.mjs
+  // covers the same cases there with a simulated file.
+  it.skipIf(process.platform === 'win32')('a URL is opened as a URL even when a same-named path exists under the working directory', async () => {
+    // path.resolve() turns "https://staging.example.com" into <cwd>/https:/staging.example.com.
+    const dir = mkdtempSync(join(tmp, 'shadow-'));
+    mkdirSync(join(dir, 'https:'));
+    writeFileSync(join(dir, 'https:', 'staging.example.com'), CLEAN_HTML, 'utf8');
+    mkdirSync(join(dir, 'http:', 'localhost:4173'), { recursive: true });
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    try {
+      for (const url of ['https://staging.example.com', 'http://localhost:4173']) {
+        const opened = [];
+        const page = {
+          setDefaultTimeout() {},
+          goto: async (target) => {
+            opened.push(target);
+            throw new Error('stub browser: navigation refused');
+          },
+        };
+        const context = { newPage: async () => page, route: async () => {}, close: async () => {} };
+        await expect(auditPage({ url, outDir: outDir('x'), browser: { newContext: async () => context } }))
+          .rejects.toMatchObject({ code: 'NAVIGATION_FAILED' });
+        expect(opened).toEqual([url]);
+      }
+    } finally {
+      cwd.mockRestore();
+    }
   });
 
   it('rejects bad options', async () => {

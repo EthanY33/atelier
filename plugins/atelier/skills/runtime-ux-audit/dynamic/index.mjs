@@ -9,15 +9,23 @@
  *
  * Sequence (each step isolated; a failure becomes errors[] and later steps
  * still run; a global dynamicTimeoutMs deadline skips what is left):
- *   1. navigate   load the page (local inputs over a loopback server)
+ *   1. navigate   load the page (local inputs over a loopback server); an HTTP
+ *                 status of 400 or more, or ending on another origin, fails
+ *                 the step and the page probes do not run
  *   2. sweep      rendered HTML and DOM facts (targets, repeated groups, view-transition names)
  *   3-5. interactions  4x CPU, settle, Tab presses and taps; Event Timing and LoAF
  *   6. dialogs    open each dialog trigger by keyboard, close it, check where focus went
  *   7. bfcache    about:blank and back; restored or notRestoredReasons
  * A launch failure (Chromium or Playwright missing) is thrown, not recorded.
- * For local inputs the page can only reach the loopback server and the
- * allowOrigins origins; other requests are blocked and listed in errors[].
+ * For local inputs Chromium runs behind a deny-by-default proxy that forwards
+ * only to the loopback server and the allowOrigins origins, with no WebRTC
+ * UDP and no DNS of its own; blocked requests Playwright sees are listed in
+ * errors[]. For http(s) inputs the main frame is pinned to the audited
+ * origin: a redirect or script navigation to another origin is refused and
+ * listed in errors[].
  */
+import http from 'node:http';
+import net from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DYNAMIC_LIMITS } from '../lib/options.mjs';
 import { createPageUrls } from '../lib/url.mjs';
@@ -82,11 +90,139 @@ function defaultToDisplay(target, server, targetUrl) {
 
 const MAX_BLOCKED_SHOWN = 5;
 
+/** Chromium switches for local inputs, next to the proxy (startEgressProxy). */
+const LOCAL_EGRESS_ARGS = Object.freeze([
+  // WebRTC gets no UDP socket (STUN, TURN over UDP, peer traffic), and its TCP goes through the proxy.
+  '--webrtc-ip-handling-policy=disable_non_proxied_udp',
+  // Chromium resolves no host names itself, so a lookup (WebRTC resolves ICE
+  // server names on its own) cannot carry data out. The proxy resolves the
+  // hosts it forwards to.
+  '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1',
+]);
+
+/**
+ * Deny-by-default forward proxy for local inputs. Chromium is launched with
+ * it as the proxy for every scheme and host, loopback included, so each
+ * http(s) and ws(s) connection passes through it whoever opens it: the page,
+ * a dedicated or shared worker, a prefetch, a redirect, WebRTC over TCP. Only
+ * the allowed origins get an upstream connection; the rest is answered 403.
+ * @param {Set<string>} allowed - http(s) origins
+ * @returns {Promise<{ url: string, close(): Promise<void> }>}
+ */
+async function startEgressProxy(allowed) {
+  const authority = (u) => `${u.hostname}:${u.port || (u.protocol === 'https:' ? 443 : 80)}`;
+  const bare = (hostname) => hostname.replace(/^\[|\]$/g, '');
+  // CONNECT names no scheme, so tunnels (https, wss, and ws to an http origin) are matched on host:port.
+  const tunnels = new Set();
+  for (const origin of allowed) {
+    try {
+      tunnels.add(authority(new URL(origin)));
+    } catch {
+      // not an origin: nothing to allow
+    }
+  }
+  const sockets = new Set();
+
+  const proxy = http.createServer((req, res) => {
+    let url = null;
+    try {
+      url = new URL(req.url);
+    } catch {
+      // origin-form target: not a proxy request
+    }
+    req.on('error', () => {});
+    res.on('error', () => {});
+    if (!url || url.protocol !== 'http:' || !allowed.has(url.origin)) {
+      req.resume();
+      res.writeHead(403, { 'Content-Length': 0 });
+      res.end();
+      return;
+    }
+    const headers = { ...req.headers, connection: 'close' };
+    delete headers['proxy-connection'];
+    delete headers['proxy-authorization'];
+    const upstream = http.request({
+      host: bare(url.hostname), port: url.port || 80, method: req.method, path: `${url.pathname}${url.search}`, headers, agent: false,
+    }, (up) => {
+      const out = { ...up.headers };
+      delete out.connection;
+      delete out['keep-alive'];
+      up.on('error', () => res.destroy());
+      res.writeHead(up.statusCode, up.statusMessage, out);
+      up.pipe(res);
+    });
+    upstream.on('error', () => {
+      if (res.headersSent) {
+        res.destroy();
+      } else {
+        res.writeHead(502, { 'Content-Length': 0 });
+        res.end();
+      }
+    });
+    res.on('close', () => upstream.destroy());
+    req.pipe(upstream);
+  });
+
+  proxy.on('connect', (req, client, head) => {
+    client.on('error', () => {});
+    let target = null;
+    try {
+      target = new URL(`https://${req.url}`);
+    } catch {
+      // malformed authority
+    }
+    if (!target || !tunnels.has(authority(target))) {
+      client.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
+    let open = false;
+    const upstream = net.connect(Number(target.port || 443), bare(target.hostname), () => {
+      open = true;
+      client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head.length > 0) upstream.write(head);
+      upstream.pipe(client);
+      client.pipe(upstream);
+    });
+    upstream.on('error', () => {
+      if (open) client.destroy();
+      else client.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n');
+    });
+    upstream.on('close', () => client.destroy());
+    client.on('close', () => upstream.destroy());
+  });
+
+  // A tunnelled socket leaves the HTTP server, so closeAllConnections() would miss it.
+  proxy.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+
+  await new Promise((ok, fail) => {
+    proxy.once('error', fail);
+    proxy.listen(0, '127.0.0.1', () => {
+      proxy.off('error', fail);
+      ok();
+    });
+  });
+  return {
+    url: `http://127.0.0.1:${proxy.address().port}`,
+    close() {
+      return new Promise((ok) => {
+        for (const socket of sockets) socket.destroy();
+        proxy.close(() => ok());
+      });
+    },
+  };
+}
+
 /**
  * Local inputs: page scripts run against the loopback server, so they could
- * read files under the root and send them anywhere. Only the server's origin
- * and --allow-origin origins are reachable; every other http(s) or ws(s)
- * request is aborted. Returns the set of blocked origins.
+ * read files under the root and send them anywhere. The proxy above is what
+ * stops them: only the server's origin and --allow-origin origins are
+ * reachable. This routing aborts the requests Playwright can intercept before
+ * they leave the page and collects the origins that were refused, for the
+ * report; it does not see shared worker requests or WebRTC. Returns the set
+ * of blocked origins.
  */
 async function restrictEgress(context, allowed) {
   const blocked = new Set();
@@ -107,6 +243,12 @@ async function restrictEgress(context, allowed) {
     return false;
   };
   await context.route('**/*', (route) => (permitted(route.request().url()) ? route.continue() : route.abort('blockedbyclient')).catch(() => {}));
+  // Routing skips redirect hops and some worker requests. The proxy refuses
+  // those; the request event names the ones Playwright reports. Speculation-rules
+  // prefetches and prerenders are refused by the proxy without being named.
+  context.on('request', (request) => {
+    permitted(request.url());
+  });
   if (typeof context.routeWebSocket === 'function') {
     await context.routeWebSocket(/.*/, (ws) => {
       if (permitted(ws.url())) ws.connectToServer();
@@ -114,6 +256,41 @@ async function restrictEgress(context, allowed) {
     });
   }
   return blocked;
+}
+
+/**
+ * http(s) inputs: the main frame only ever loads documents of the audited
+ * origin, so a redirect or a script cannot move the audit onto another site
+ * or an internal address. Chromium pauses every document request, redirect
+ * hops included (Playwright's routing never sees those), and a main-frame
+ * request to another origin is failed before it is sent, which leaves
+ * Chromium's error page in the main frame. Frames inside the page are not
+ * restricted. Returns the set of refused origins.
+ */
+async function pinMainFrame(context, page, origin) {
+  const refused = new Set();
+  const cdp = await context.newCDPSession(page);
+  // Read once, up front: the id survives navigations, and asking for the
+  // frame tree while a request is paused never answers.
+  const mainFrameId = (await cdp.send('Page.getFrameTree')).frameTree.frame.id;
+  cdp.on('Fetch.requestPaused', (event) => {
+    let refuse = false;
+    if (event.frameId === mainFrameId) {
+      try {
+        const hop = new URL(event.request.url).origin;
+        refuse = hop !== origin;
+        if (refuse) refused.add(hop);
+      } catch {
+        // not a URL: Chromium fails it on its own
+      }
+    }
+    const reply = refuse
+      ? cdp.send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'BlockedByClient' })
+      : cdp.send('Fetch.continueRequest', { requestId: event.requestId });
+    reply.catch(() => {});
+  });
+  await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', resourceType: 'Document' }] });
+  return refused;
 }
 
 function lowercaseHeaders(headers) {
@@ -151,6 +328,7 @@ export async function runDynamicPass(input = {}) {
 
   const server = target.kind === 'file' ? await startServer(target.root) : null;
   if (server) targetUrl = server.urlFor(target.filePath);
+  const targetOrigin = new URL(targetUrl).origin;
   // Core passes ctx.page.toDisplay; direct callers get the same mapping by default.
   const toDisplay = typeof input.toDisplay === 'function' ? input.toDisplay : defaultToDisplay(target, server, targetUrl);
   // Served URLs never leak into facts: map them back to file URLs, then to display strings.
@@ -210,21 +388,40 @@ export async function runDynamicPass(input = {}) {
   let browser = null;
   let context = null;
   let launching = null;
+  let proxy = null;
   let blockedOrigins = null;
+  let refusedOrigins = null;
+  const listOrigins = (origins) => {
+    const list = [...origins].sort();
+    return list.slice(0, MAX_BLOCKED_SHOWN).join(', ') + (list.length > MAX_BLOCKED_SHOWN ? ` and ${list.length - MAX_BLOCKED_SHOWN} more` : '');
+  };
+  // Refused main-frame navigations (pinMainFrame) that no error has named yet.
+  const refusal = () => {
+    const fresh = [...(refusedOrigins ?? [])];
+    if (fresh.length === 0) return null;
+    refusedOrigins.clear();
+    return new Error(`navigation to ${listOrigins(fresh)} was refused: the dynamic pass only loads the audited origin; audit that URL directly if that was intended`);
+  };
   const noteBlocked = () => {
-    if (!blockedOrigins?.size) return;
-    const list = [...blockedOrigins].sort();
-    const shown = list.slice(0, MAX_BLOCKED_SHOWN).join(', ') + (list.length > MAX_BLOCKED_SHOWN ? ` and ${list.length - MAX_BLOCKED_SHOWN} more` : '');
-    errors.push({ probe: 'network', message: `blocked requests to ${shown}; a local page only reaches the loopback server and --allow-origin origins` });
+    if (blockedOrigins?.size) {
+      errors.push({ probe: 'network', message: `blocked requests to ${listOrigins(blockedOrigins)}; a local page only reaches the loopback server and --allow-origin origins` });
+    }
+    const refused = refusal();
+    if (refused) errors.push({ probe: 'navigate', message: refused.message });
   };
   try {
+    const allowed = server ? new Set([server.origin, ...(input.allowOrigins ?? [])]) : null;
+    if (server) proxy = await startEgressProxy(allowed);
     const setup = async () => {
-      launching = Promise.resolve().then(() => launch({ ...LAUNCH_OPTIONS }));
+      launching = Promise.resolve().then(() => launch(proxy
+        // <-loopback> drops Chromium's built-in proxy bypass for localhost and 127.0.0.1.
+        ? { ...LAUNCH_OPTIONS, proxy: { server: proxy.url, bypass: '<-loopback>' }, args: [...LOCAL_EGRESS_ARGS] }
+        : { ...LAUNCH_OPTIONS }));
       browser = await launching;
       const device = await deviceDescriptor();
       // Service worker fetches would bypass the request routing below.
       context = await browser.newContext(server ? { ...device, serviceWorkers: 'block' } : { ...device });
-      if (server) blockedOrigins = await restrictEgress(context, new Set([server.origin, ...(input.allowOrigins ?? [])]));
+      if (server) blockedOrigins = await restrictEgress(context, allowed);
       const page = await context.newPage();
       // Popups would hold an opener and block the bfcache; dialogs would block the page.
       context.on('page', (p) => {
@@ -235,6 +432,7 @@ export async function runDynamicPass(input = {}) {
       page.setDefaultTimeout(Math.min(limits.navigationTimeoutMs, 10_000));
       await page.addInitScript({ path: OBSERVERS_JS });
       await page.addInitScript({ path: SWEEP_JS });
+      if (!server) refusedOrigins = await pinMainFrame(context, page, targetOrigin);
       return {
         page,
         engine: { name: 'chromium', version: String(browser.version()), headless: 'new' },
@@ -258,6 +456,26 @@ export async function runDynamicPass(input = {}) {
     const { page } = session;
     facts.engine = session.engine;
     facts.profile = session.profile;
+    /** Throws when the main frame is not on a document of the audited origin. */
+    const onTarget = () => {
+      const url = page.url();
+      let origin = null;
+      try {
+        origin = new URL(url).origin;
+      } catch {
+        // not a URL
+      }
+      if (origin === targetOrigin) return;
+      const where = origin && origin !== 'null' ? origin : url.slice(0, 80);
+      throw refusal() ?? new Error(`the page left the audited origin (it is on ${where}), so it was not probed`);
+    };
+
+    /** As onTarget, and also throws while a refused navigation is still replacing the document with Chromium's error page. */
+    const onAuditedDocument = () => {
+      const refused = refusal();
+      if (refused) throw refused;
+      onTarget();
+    };
 
     const nav = await step('navigate', async (errs) => {
       let status = null;
@@ -270,33 +488,52 @@ export async function runDynamicPass(input = {}) {
         }
       } catch (err) {
         // A load event that never came still leaves a usable document; an error page does not.
-        if (!/^https?:/i.test(page.url())) throw err;
+        if (!/^https?:/i.test(page.url())) throw refusal() ?? err;
         errs.push({ probe: 'navigate', message: errorMessage(err, scrub) });
       }
+      // An error page is not the page that was asked for: nothing on it is probed.
+      if (status !== null && status >= 400) throw new Error(`the page answered Chromium with HTTP ${status}, so it was not probed`);
       await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
       await doubleRaf(page).catch(() => {});
+      onAuditedDocument();
       const finalUrl = display(page.url());
       return headers ? { status, finalUrl, headers } : { status, finalUrl };
     });
 
     if (nav) {
       facts.navigation = nav.value;
+      // The page can navigate itself after load, and a refused navigation
+      // leaves an error page behind. The probes that read or drive the loaded
+      // document check where it is first, and what was read only counts when
+      // the page is still there afterwards. The dialog and bfcache probes
+      // load the target themselves.
       const rendered = await step('sweep', async () => {
+        onTarget();
         const html = await page.content();
+        onTarget();
         if (html.length > MAX_RENDERED_CHARS) throw new Error(`the rendered DOM is over ${MAX_RENDERED_CHARS} characters, so it was not re-checked`);
         return { html: server ? html.split(server.origin).join('') : html };
       });
       if (rendered) facts.rendered = rendered.value;
       const sweep = await step('sweep', async () => {
+        onTarget();
         const raw = await page.evaluate((o) => window.__atelierSweep(o), { maxInteractive: limits.maxInteractive });
+        onTarget();
         return cleanSweep(raw, limits.maxInteractive);
       });
       if (sweep) facts.sweep = sweep.value;
-      const interactions = await step('interactions', (errs) => runInteractions(page, context, { targetUrl, limits, errors: errs, display, scrub }));
+      const interactions = await step('interactions', (errs) => {
+        onAuditedDocument();
+        return runInteractions(page, context, { targetUrl, limits, errors: errs, display, scrub, onTarget: onAuditedDocument });
+      });
       if (interactions) facts.interactions = interactions.value;
       const dialogs = await step('dialogs', (errs) => probeDialogs(page, targetUrl, { limits, errors: errs, scrub }));
       if (dialogs) facts.dialogs = dialogs.value;
-      const bfcache = await step('bfcache', () => probeBfcache(page, targetUrl, { limits }));
+      const bfcache = await step('bfcache', async () => {
+        const state = await probeBfcache(page, targetUrl, { limits });
+        onTarget();
+        return state;
+      });
       if (bfcache) facts.bfcache = bfcache.value;
     }
     if (expired) noteTimeout();
@@ -312,6 +549,7 @@ export async function runDynamicPass(input = {}) {
     // seconds on the page kept in the back/forward cache).
     if (context) await Promise.race([context.close().catch(() => {}), sleep(CLOSE_WAIT_MS)]);
     if (browser) await Promise.race([browser.close().catch(() => {}), sleep(CLOSE_WAIT_MS)]);
+    if (proxy) await proxy.close();
     if (server) await server.close();
   }
 }

@@ -37,7 +37,7 @@ Run the CLI from the checkout with `node plugins/atelier/bin/atelier <command>`.
 
 Tests live in `tests/`, never inside the plugin: `tests/<skill>.test.mjs` for the API, `tests/<skill>-cli.test.mjs` for the CLI, and folders for the larger suites (`design-token-sync/`, `runtime-ux-audit/`, `lib/`, `integration/`). Run one file with `npx vitest run tests/lib/io.test.mjs`.
 
-Tests that need Chromium, ffmpeg or a particular OS use `it.skipIf(...)` and skip when the prerequisite is missing. CI installs Chromium and ffmpeg on Ubuntu, macOS and Windows, so a test that skips on your machine still runs there.
+Run `npm run setup:browsers` before `npm test`: most suites launch Chromium and fail with `Playwright Chromium is not installed` without it. Only some tests skip when a prerequisite is missing (`it.skipIf(...)` on ffmpeg, a particular OS, or in `tests/runtime-ux-audit` on Chromium), so a skip on your machine can still run on CI, which installs Chromium and ffmpeg on Ubuntu, macOS and Windows.
 
 Every behavior change needs a test. A bug fix needs a test that fails without the fix.
 

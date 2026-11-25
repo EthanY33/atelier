@@ -211,6 +211,15 @@ describe('click-handler-forced-layout', () => {
     expect(res.nodes[0]).toMatchObject({ selector: 'body > button[onclick]', snippet: 'this.offsetWidth', location: 'index.html:1:95' });
     expect(res.nodes[1].data.event).toBe('pointerdown');
   });
+
+  it('analyses the handler declared in the listener scope when two modules share its name', async () => {
+    const frame = "(function () { function update() { box.style.width = '10px'; var h = box.offsetHeight; requestAnimationFrame(update); } requestAnimationFrame(update); })();";
+    const counter = "(function () { function update(e) { q.dataset.len = String(e.target.value.length); } q.addEventListener('input', update); })();";
+    expect((await check('click-handler-forced-layout', `${frame}\n${counter}`)).status).toBe('passed');
+    const grow = "(function () { function update(e) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; } ta.addEventListener('input', update); })();";
+    const res = await check('click-handler-forced-layout', `${frame}\n${grow}`);
+    expect(res.nodes.map((n) => [n.snippet, n.location])).toEqual([['ta.scrollHeight', 'app.js:2:81']]);
+  });
 });
 
 describe('scroll-listener-animates-transform', () => {
@@ -243,6 +252,14 @@ describe('scroll-listener-animates-transform', () => {
       window.addEventListener('resize', () => { e.style.transform = 'scale(' + innerWidth / 1000 + ')'; });
     `);
     expect(res.status).toBe('passed');
+  });
+
+  it('follows a rAF callback name to the function in scope, not to a namesake in another module', async () => {
+    const press = "(function () { function update() { card.style.transform = 'scale(' + pressed + ')'; } card.addEventListener('pointerdown', update); })();";
+    const progress = (write) => `(function () { function update() { ${write} } window.addEventListener('scroll', function () { requestAnimationFrame(update); }); })();`;
+    expect((await check('scroll-listener-animates-transform', `${press}\n${progress("bar.style.width = pct + '%';")}`)).status).toBe('passed');
+    const res = await check('scroll-listener-animates-transform', `${press}\n${progress("bar.style.transform = 'scaleX(' + pct + ')';")}`);
+    expect(res.nodes.map((n) => n.data.write)).toEqual(['bar.style.transform']);
   });
 });
 

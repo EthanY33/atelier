@@ -27,18 +27,26 @@ export function parseIgnoreIds(text) {
   return { all: ids.size === 0, ids };
 }
 
-function matches(text, ruleId) {
+/**
+ * The parsed id list of a comment that carries a marker, or null when it has
+ * none.
+ * @param {string} text
+ * @returns {{ all: boolean, ids: Set<string> }|null}
+ */
+function parseMarker(text) {
   const m = MARK_RE.exec(String(text ?? ''));
-  if (!m) return false;
-  const { all, ids } = parseIgnoreIds(m[1].replace(/\*\/\s*$/, ''));
-  return all || ids.has(ruleId);
+  return m ? parseIgnoreIds(m[1].replace(/\*\/\s*$/, '')) : null;
 }
 
-// Both indexes below are built once per node or script and hold only the
-// comments that carry a marker (usually none), so checking a finding costs a
-// few lookups instead of a scan over every comment of the sheet or script.
+const hits = (parsed, ruleId) => parsed.all || parsed.ids.has(ruleId);
 
-/** CSS node -> texts of the marked comments directly before it. */
+// Both indexes below are built once per node or script and hold only the
+// comments that carry a marker (usually none), each already parsed, so
+// checking a finding costs a few lookups instead of a scan over every comment
+// of the sheet or script, and a long id list is split once, not once per
+// finding under it.
+
+/** CSS node -> parsed id lists of the marked comments directly before it. */
 const markedBeforeNode = new WeakMap();
 function markedPrecedingComments(node) {
   let out = markedBeforeNode.get(node);
@@ -46,14 +54,15 @@ function markedPrecedingComments(node) {
   out = [];
   let prev = typeof node?.prev === 'function' ? node.prev() : undefined;
   while (prev && prev.type === 'comment') {
-    if (MARK_RE.test(String(prev.text ?? ''))) out.push(prev.text);
+    const parsed = parseMarker(prev.text);
+    if (parsed) out.push(parsed);
     prev = prev.prev();
   }
   markedBeforeNode.set(node, out);
   return out;
 }
 
-/** Script record -> end line -> comments that carry a marker. */
+/** Script record -> end line -> parsed id lists of the comments that carry a marker. */
 const markedByScript = new WeakMap();
 function markedCommentsByEndLine(script) {
   let byLine = markedByScript.get(script);
@@ -61,10 +70,12 @@ function markedCommentsByEndLine(script) {
   byLine = new Map();
   for (const c of script.comments ?? []) {
     const end = c.loc?.end?.line;
-    if (!end || !MARK_RE.test(String(c.value ?? ''))) continue;
+    if (!end) continue;
+    const parsed = parseMarker(c.value);
+    if (!parsed) continue;
     const list = byLine.get(end);
-    if (list) list.push(c);
-    else byLine.set(end, [c]);
+    if (list) list.push(parsed);
+    else byLine.set(end, [parsed]);
   }
   markedByScript.set(script, byLine);
   return byLine;
@@ -75,6 +86,9 @@ function markedCommentsByEndLine(script) {
  * @returns {(ruleId: string, ref: object) => boolean}
  */
 export function createSuppressor() {
+  // Element -> its parsed data-atelier-ignore list. Parsed once per element:
+  // a long list above many findings would otherwise be split again for each.
+  const ignoreOf = new WeakMap();
   return (ruleId, ref) => {
     const meta = refMeta(ref);
     if (!meta) return false;
@@ -84,21 +98,22 @@ export function createSuppressor() {
     if (anchor && model && model.owns(anchor)) {
       for (const el of [anchor, ...model.ancestors(anchor)]) {
         if (!model.hasAttr(el, 'data-atelier-ignore')) continue;
-        const { all, ids } = parseIgnoreIds(model.attr(el, 'data-atelier-ignore'));
-        if (all || ids.has(ruleId)) return true;
+        let parsed = ignoreOf.get(el);
+        if (!parsed) ignoreOf.set(el, (parsed = parseIgnoreIds(model.attr(el, 'data-atelier-ignore'))));
+        if (parsed.all || parsed.ids.has(ruleId)) return true;
       }
     }
     // CSS: a comment right before the node or before any enclosing rule/at-rule.
     if (meta.cssNode) {
       for (let n = meta.cssNode; n && n.type !== 'root' && n.type !== 'document'; n = n.parent) {
-        if (markedPrecedingComments(n).some((t) => matches(t, ruleId))) return true;
+        if (markedPrecedingComments(n).some((parsed) => hits(parsed, ruleId))) return true;
       }
     }
     // JS: a comment ending on the same line or the line before.
     if (meta.script && meta.jsLine) {
       const byLine = markedCommentsByEndLine(meta.script);
       for (const line of [meta.jsLine, meta.jsLine - 1]) {
-        for (const c of byLine.get(line) ?? []) if (matches(c.value, ruleId)) return true;
+        for (const parsed of byLine.get(line) ?? []) if (hits(parsed, ruleId)) return true;
       }
     }
     return false;

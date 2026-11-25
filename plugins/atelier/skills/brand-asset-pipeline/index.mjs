@@ -203,7 +203,12 @@ function decodeSvgText(buf) {
 }
 
 /** The text is re-encoded as UTF-8, so a declared encoding would now be wrong. */
-const dropXmlEncoding = (text) => text.replace(/^(\s*<\?xml\b[^>]*?)\s+encoding\s*=\s*(["'])[^"']*\2/i, '$1');
+const PROLOG_SCAN_CHARS = 1024;
+const dropXmlEncoding = (text) =>
+  // Only the first chars are scanned, so a long whitespace run after <?xml
+  // cannot make the lazy match quadratic.
+  text.slice(0, PROLOG_SCAN_CHARS).replace(/^(\s*<\?xml\b[^>]*?)\s+encoding\s*=\s*(["'])[^"']*\2/i, '$1') +
+  text.slice(PROLOG_SCAN_CHARS);
 
 const looksLikeSvg = (text) => /<svg[\s>]/i.test(text);
 
@@ -219,11 +224,44 @@ const decodeXmlEntities = (s) =>
     return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
   });
 
+/** Start of an <image> or <feImage> tag (with an optional namespace prefix). */
+const IMAGE_TAG_START = /<(?:[\w.-]+:)?(?:image|feImage)\b/iy;
+
 /**
- * <image> and <feImage> tags. Comments and CDATA sections come first, so an
- * <image> inside one is consumed by that match and left alone, as librsvg does.
+ * Find the <image> and <feImage> tags in `text` in one linear pass. A comment
+ * or CDATA section is skipped whole, so an <image> inside one is left alone,
+ * as librsvg does. An unterminated comment, CDATA section or tag ends the
+ * scan: nothing after it can be a well-formed tag.
+ * @returns {{ index: number, text: string }[]}
  */
-const IMAGE_TAG = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<(?:[\w.-]+:)?(?:image|feImage)\b[^>]*>/gi;
+function findImageTags(text) {
+  const tags = [];
+  let i = text.indexOf('<');
+  while (i !== -1) {
+    let next;
+    if (text.startsWith('<!--', i)) {
+      const end = text.indexOf('-->', i + 4);
+      if (end === -1) break;
+      next = end + 3;
+    } else if (text.startsWith('<![CDATA[', i)) {
+      const end = text.indexOf(']]>', i + 9);
+      if (end === -1) break;
+      next = end + 3;
+    } else {
+      IMAGE_TAG_START.lastIndex = i;
+      if (IMAGE_TAG_START.test(text)) {
+        const end = text.indexOf('>', i);
+        if (end === -1) break;
+        tags.push({ index: i, text: text.slice(i, end + 1) });
+        next = end + 1;
+      } else {
+        next = i + 1;
+      }
+    }
+    i = text.indexOf('<', next);
+  }
+  return tags;
+}
 const HREF_ATTR = /(\s(?:xlink:)?href\s*=\s*)(?:"([^"]*)"|'([^']*)')/gi;
 /** Data URI image types librsvg renders itself. Others (WebP, GIF, ...) render blank. */
 const RSVG_DATA_TYPES = /^image\/(png|jpe?g|svg\+xml)$/i;
@@ -366,20 +404,18 @@ async function resolveImageHref(sharp, href, fromFile, chain, state) {
 async function inlineLinkedImages(sharp, text, fromFile, chain, state) {
   let out = '';
   let last = 0;
-  for (const tag of text.matchAll(IMAGE_TAG)) {
-    // A comment or CDATA section: librsvg ignores the tags inside, so keep it verbatim.
-    if (tag[0].startsWith('<!')) continue;
+  for (const tag of findImageTags(text)) {
     let rewritten = '';
     let tagLast = 0;
-    for (const attr of tag[0].matchAll(HREF_ATTR)) {
+    for (const attr of tag.text.matchAll(HREF_ATTR)) {
       const raw = attr[2] ?? attr[3];
       const replacement = await resolveImageHref(sharp, decodeXmlEntities(raw.trim()), fromFile, chain, state);
       if (replacement === null) continue;
-      rewritten += tag[0].slice(tagLast, attr.index) + `${attr[1]}"${replacement}"`;
+      rewritten += tag.text.slice(tagLast, attr.index) + `${attr[1]}"${replacement}"`;
       tagLast = attr.index + attr[0].length;
     }
-    out += text.slice(last, tag.index) + rewritten + tag[0].slice(tagLast);
-    last = tag.index + tag[0].length;
+    out += text.slice(last, tag.index) + rewritten + tag.text.slice(tagLast);
+    last = tag.index + tag.text.length;
   }
   return out + text.slice(last);
 }
@@ -392,6 +428,7 @@ async function inlineLinkedImages(sharp, text, fromFile, chain, state) {
 async function loadMark(sharp, markPath) {
   let buf;
   try {
+    if (statSync(markPath).size > MAX_LINKED_FILE_BYTES) throw new Error(`larger than ${MAX_LINKED_FILE_BYTES / MB} MB`);
     buf = readFileSync(markPath);
   } catch (err) {
     throw new Error(`Cannot read mark ${markPath}: ${err.code === 'ENOENT' ? 'file not found' : err.message}`, { cause: err });

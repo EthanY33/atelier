@@ -18,6 +18,9 @@ inputs:
   brand:
     description: Path to a brand.json whose targets and motion sections set the budgets.
     default: ''
+  root:
+    description: Folder whose files a local page may load (for example the build folder when pages link ../ assets). Default is the HTML file's folder. Ignored for http(s) targets.
+    default: ''
   out:
     description: Directory for the reports.
     default: atelier-reports
@@ -46,7 +49,7 @@ runs:
         fi
 
     - if: steps.node.outputs.ok != 'true'
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: '22'
         package-manager-cache: false
@@ -54,8 +57,10 @@ runs:
     - name: Install atelier
       shell: bash
       run: |
-        npm ci --prefix "$GITHUB_ACTION_PATH/plugins/atelier" --no-audit --no-fund
-        npm exec --prefix "$GITHUB_ACTION_PATH/plugins/atelier" -- playwright install --with-deps chromium
+        # Run from the action directory, not the caller's workspace, so a
+        # workspace node_modules/.bin cannot shadow node, sh, sudo or apt-get.
+        npm ci --prefix "$GITHUB_ACTION_PATH/plugins/atelier" --no-audit --no-fund --ignore-scripts
+        (cd "$GITHUB_ACTION_PATH/plugins/atelier" && node node_modules/playwright/cli.js install --with-deps chromium)
 
     - name: Run audits
       shell: bash
@@ -64,26 +69,37 @@ runs:
         AUDITS: ${{ inputs.audits }}
         DYNAMIC: ${{ inputs.dynamic }}
         BRAND: ${{ inputs.brand }}
+        ROOT: ${{ inputs.root }}
         OUT: ${{ inputs.out }}
       run: |
         set -u
         cli="$GITHUB_ACTION_PATH/plugins/atelier/bin/atelier"
         status=0
-        IFS=',' read -ra list <<< "$AUDITS"
-        for audit in "${list[@]}"; do
+        ran=0
+        IFS=',' read -ra list <<< "$(printf '%s' "$AUDITS" | tr '\r\n' ',,')"
+        for audit in ${list[@]+"${list[@]}"}; do
           audit="$(echo "$audit" | tr -d '[:space:]')"
           case "$audit" in
             a11y)
-              node "$cli" a11y "$TARGET" --out "$OUT/a11y" || status=$(( $? > status ? $? : status )) ;;
+              ran=$((ran + 1))
+              args=("$TARGET" --out "$OUT/a11y")
+              [ -n "$ROOT" ] && args+=(--root "$ROOT")
+              node "$cli" a11y "${args[@]}" || status=$(( $? > status ? $? : status )) ;;
             ux)
+              ran=$((ran + 1))
               args=("$TARGET" --out "$OUT/ux")
               [ "$DYNAMIC" = "true" ] && args+=(--dynamic)
               [ -n "$BRAND" ] && args+=(--brand "$BRAND")
+              [ -n "$ROOT" ] && args+=(--root "$ROOT")
               node "$cli" ux "${args[@]}" || status=$(( $? > status ? $? : status )) ;;
             "") ;;
             *) echo "Unknown audit: $audit (expected a11y or ux)"; exit 2 ;;
           esac
         done
+        if [ "$ran" -eq 0 ]; then
+          echo "No audits selected (audits input: '$AUDITS'); expected a11y, ux or both"
+          exit 2
+        fi
         for f in "$OUT"/*/*-report.md; do
           [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
         done

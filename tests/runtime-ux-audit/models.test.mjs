@@ -4,7 +4,7 @@ import * as V from '../../plugins/atelier/skills/runtime-ux-audit/lib/css-values
 import { buildHtmlModel, cssEscape, collapseSnippet } from '../../plugins/atelier/skills/runtime-ux-audit/lib/html-model.mjs';
 import { compileSelector } from '../../plugins/atelier/skills/runtime-ux-audit/lib/selector-match.mjs';
 import { parseCsp } from '../../plugins/atelier/skills/runtime-ux-audit/lib/csp.mjs';
-import { parseJs, pathOf, childNodes } from '../../plugins/atelier/skills/runtime-ux-audit/lib/js-model.mjs';
+import { parseJs, pathOf, childNodes, traverse } from '../../plugins/atelier/skills/runtime-ux-audit/lib/js-model.mjs';
 import { parseCss, isPrintOnlyMedia, normalizePrelude } from '../../plugins/atelier/skills/runtime-ux-audit/lib/css-model.mjs';
 
 // ---------------------------------------------------------------------------
@@ -380,9 +380,95 @@ function onScroll() {}
     const attr = js.listeners.find((l) => l.via === 'attribute' && l.event === 'scroll');
     expect(attr.handler.type).toBe('Program');
     expect(attr.handlerText).toBe('s()');
+    // Code in an event attribute is the body of that handler: it does not run at script start.
+    expect(['s', 'c', 'x'].map((name) => js.callsByCallee(name).map((c) => c.topLevel))).toEqual([[false], [false], [false]]);
+    const inAttr = js.callsByCallee('x')[0];
+    expect(js.enclosingFunctions(inAttr.ancestors)).toEqual([inAttr.script.ast]);
+    expect(js.listenerForFunction(inAttr.script.ast)).toMatchObject({ via: 'attribute', event: 'click', target: 'element' });
+    expect(js.enclosingFunctions(js.listenersByEvent('touchstart')[0].ancestors)).toEqual([]);
     expect(js.assignments.map((a) => [a.target, a.normalizedTarget, a.property])).toEqual([
       ['window.onbeforeunload', 'onbeforeunload', 'onbeforeunload'], ['onunload', 'onunload', 'onunload'], ['window.onpagehide', 'onpagehide', 'onpagehide'],
     ]);
+  });
+});
+
+describe('js model: handler names resolve by scope', () => {
+  const src = `(function () {
+  function init() { one(); }
+  document.addEventListener('DOMContentLoaded', init);
+})();
+(function () {
+  function init() { two(); }
+  window.addEventListener('load', init);
+  el.addEventListener('click', later);
+  function later() { three(); }
+})();
+function shared() { four(); }
+function cb() { five(); }
+var late = function () { six(); };
+(function (cb) {
+  el.addEventListener('focus', cb);
+  el.addEventListener('blur', shared);
+  el.addEventListener('keyup', late.bind(this));
+  { const inner = () => { seven(); }; el.addEventListener('input', inner); }
+  el.addEventListener('change', inner);
+  try { go(); } catch (shared) { el.addEventListener('error', shared); }
+  if (x) { function hoisted() { eight(); } }
+  el.addEventListener('paste', hoisted);
+})(x);
+function wrap(shared, { late }) { el.addEventListener('scroll', shared); el.addEventListener('resize', late); }
+const named = function self() { el.addEventListener('wheel', self); };
+for (const cb of list) el.addEventListener('copy', cb);
+function more([shared], late = 1, ...cb) { el.addEventListener('cut', shared); el.addEventListener('drop', late); el.addEventListener('drag', cb); }
+function plain() { el.addEventListener('dragend', cb); }
+`;
+
+  it('picks the declaration the reference can see, and nothing when a binding shadows it', async () => {
+    const { js } = await contextFor({ 'index.html': '<script src="a.js"></script>', 'a.js': src });
+    const firstCall = (l) => (l.handler ? /\b(\w+)\(\)/.exec(js.sourceOf(l.script, l.handler.body))?.[1] ?? 'self' : null);
+    expect(Object.fromEntries(js.listeners.map((l) => [l.event, firstCall(l)]))).toEqual({
+      // Two modules, one name: each listener gets the init of its own function.
+      domcontentloaded: 'one', load: 'two',
+      // Hoisted in the same function, declared in an outer scope, var function through bind.
+      click: 'three', blur: 'four', keyup: 'six',
+      // Block scope: visible inside the block only. A function declared in a block is hoisted.
+      input: 'seven', change: null, paste: 'eight',
+      // Parameters, destructured parameters, catch and loop bindings shadow outer functions.
+      focus: null, error: null, scroll: null, resize: null, copy: null,
+      // So do array, default and rest parameters; the same name resolves where nothing shadows it.
+      cut: null, drop: null, drag: null, dragend: 'five',
+      // A named function expression sees itself.
+      wheel: 'self',
+    });
+  });
+
+  it('binds a function declared in a block to that block, and still hoists it past the block', async () => {
+    const blockSrc = [
+      "{ function init() { one(); } el.addEventListener('focus', init); }",
+      "{ function init() { two(); } el.addEventListener('blur', init); }",
+      "el.addEventListener('click', init);",
+      "function wrap() { let cb = 1; { function cb() { three(); } el.addEventListener('keyup', cb); } el.addEventListener('keydown', cb); }",
+      "switch (k) { case 1: function pick() { four(); } el.addEventListener('change', pick); }",
+      "const named = function self() { function self() { five(); } el.addEventListener('wheel', self); };",
+    ].join('\n');
+    const { js } = await contextFor({ 'index.html': '<script src="a.js"></script>', 'a.js': blockSrc });
+    const firstCall = (l) => (l.handler ? /\b(\w+)\(\)/.exec(js.sourceOf(l.script, l.handler.body))?.[1] ?? 'self' : null);
+    expect(Object.fromEntries(js.listeners.map((l) => [l.event, firstCall(l)]))).toEqual({
+      focus: 'one', blur: 'two', click: 'one', keyup: 'three', keydown: null, change: 'four', wheel: 'five',
+    });
+  });
+
+  it('resolveFunction uses the position of the node, or the top of the script without one', async () => {
+    const { js } = await contextFor({ 'index.html': '<script src="a.js"></script>', 'a.js': src });
+    for (const l of js.listeners) {
+      const arg = l.node.arguments[1];
+      if (arg.type === 'Identifier') expect(js.resolveFunction(l.script, arg), l.event).toBe(l.handler);
+    }
+    const script = js.scripts[0];
+    const top = (name) => js.resolveFunction(script, { type: 'Identifier', name });
+    expect(top('shared').id.name).toBe('shared');
+    expect(top('late').type).toBe('FunctionExpression');
+    expect([top('init'), top('later'), top('inner'), top('self'), top('nope')]).toEqual([null, null, null, null, null]);
   });
 });
 
@@ -430,6 +516,22 @@ importScripts('w.js', 'v.js');
     expect(fns.map((fn) => fn.__iife)).toEqual([true]);
     expect(Object.keys(fns[0])).not.toContain('__iife');
     expect(js.enclosingFunctions(js.callsByCallee('z')[0].ancestors).map((fn) => fn.__iife)).toEqual([false]);
+  });
+
+  it('lists the ancestors of each record on demand, equal to its path from the Program', async () => {
+    const { js } = await contextFor({ 'index.html': '<script src="a.js"></script>', 'a.js': `${src}window.onload = function () { el.onclick = go; };\n` });
+    const paths = new Map();
+    traverse(js.scripts[0].ast, (node, live) => { paths.set(node, live.slice()); });
+    const records = [...js.calls, ...js.assignments, ...js.listeners];
+    expect([js.calls.length > 20, js.assignments.length, js.listeners.length]).toEqual([true, 2, 2]);
+    for (const r of records) {
+      const want = paths.get(r.node);
+      expect(r.ancestors).toHaveLength(want.length);
+      expect(r.ancestors.every((a, i) => a === want[i])).toBe(true);
+      expect(Object.isFrozen(r.ancestors)).toBe(true);
+      expect(Object.keys(r)).toContain('ancestors');
+    }
+    expect(js.listeners.map((l) => [l.event, l.topLevel, js.enclosingFunctions(l.ancestors).length])).toEqual([['load', true, 0], ['click', false, 1]]);
   });
 
   it('isGuarded covers the (a) to (e) guard forms', async () => {
@@ -498,6 +600,11 @@ importScripts('w.js', 'v.js');
     const ast = parseJs('a.b["c"][d]().e').ast;
     expect(pathOf(ast.body[0].expression)).toBe('?.e');
     expect(pathOf(ast.body[0].expression.object.callee)).toBe('a.b.c.?');
+    const paths = (src) => parseJs(src, { module: true }).ast.body.map((s) => pathOf(s.expression));
+    expect(paths('x; a?.b.c; this.x; import.meta.url; a[`k`].b; f().x; window.a.b; 1;')).toEqual(['x', 'a.b.c', 'this.x', 'import.meta.url', 'a.k.b', '?.x', 'window.a.b', '?']);
+    const method = parseJs('class A extends B { #p; m() { super.x.y; this.#p.q; } }').ast.body[0].body.body[1].value.body.body;
+    expect(method.map((s) => pathOf(s.expression))).toEqual(['super.x.y', 'this.#p.q']);
+    expect(pathOf(null)).toBe('?');
     expect(childNodes(ast.body[0])).toHaveLength(1);
     expect(childNodes({ type: 'Nope' })).toEqual([]);
   });

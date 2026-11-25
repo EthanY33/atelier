@@ -300,6 +300,13 @@ describe('non-passive-touch-listener', () => {
     ].join('\n');
     expect((await run('non-passive-touch-listener', withJs(js))).status).toBe('passed');
   });
+
+  it('reads event attributes as handlers: a blocker added from ontouchstart is the drag pattern', async () => {
+    const handle = (attr) => page(VP, `<div class="handle" ${attr}="document.addEventListener('touchmove', block, { passive: false })">drag</div>`);
+    expect((await run('non-passive-touch-listener', handle('ontouchstart'))).status).toBe('passed');
+    const onClick = await run('non-passive-touch-listener', handle('onclick'));
+    expect(onClick.nodes.map((n) => [n.data.event, n.data.target])).toEqual([['touchmove', 'document']]);
+  });
 });
 
 describe('scroll-hijack', () => {
@@ -374,6 +381,15 @@ describe('user-scalable-no', () => {
       expect(r.nodes[0].message).toBe(msg);
       expect(r.nodes[0].location).toMatch(/^index\.html:1:\d+$/);
     }
+  });
+
+  it('reads whitespace-separated viewport properties like a browser does', async () => {
+    const content = 'width=device-width initial-scale=1 user-scalable=no';
+    const r = await run('user-scalable-no', vp(content));
+    expect(r.nodes).toHaveLength(1);
+    expect(r.nodes[0].message).toBe('user-scalable=no blocks zooming to 200%; remove it.');
+    expect((await run('viewport-meta-missing', vp(content))).status).toBe('passed');
+    expect((await run('viewport-meta-missing', vp('width = device-width , initial-scale = 1'))).status).toBe('passed');
   });
 
   it('passes zoomable viewports and is not applicable without a viewport meta', async () => {

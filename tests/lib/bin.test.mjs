@@ -1,8 +1,9 @@
-import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { binPath, isWin, makeTmp, pluginRoot, runNode } from './helpers.mjs';
+import { hasTerminal, relaySignals } from '../../plugins/atelier/lib/relay.mjs';
+import { binPath, envWithPath, isWin, makeTmp, pluginRoot, runNode, touch } from './helpers.mjs';
 
 const pkg = JSON.parse(readFileSync(join(pluginRoot, 'package.json'), 'utf8'));
 const manifest = JSON.parse(readFileSync(join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'));
@@ -37,6 +38,11 @@ const fs = require('node:fs');
 fs.appendFileSync(process.env.ATELIER_SPY_LOG, JSON.stringify(process.argv) + '\\n');
 if (/[\\\\/]skills[\\\\/][^\\\\/]+[\\\\/]index\\.mjs$/.test(process.argv[1] || '')) {
   if (process.env.ATELIER_SPY_MODE === 'kill') process.kill(process.pid, 'SIGKILL');
+  if (process.env.ATELIER_SPY_MODE === 'wait') {
+    fs.writeFileSync(process.env.ATELIER_SPY_PID, String(process.pid));
+    setInterval(() => {}, 1000);
+    return;
+  }
   process.exit(7);
 }
 `);
@@ -169,10 +175,64 @@ describe('atelier skill forwarding', () => {
     expect(child.slice(1)).toEqual([join(pluginRoot, 'skills', 'brand-memory', 'index.mjs'), 'get', 'x']);
   });
 
-  it('exits 1 when the skill process is killed by a signal', () => {
+  // The signal path only exists on POSIX; on Windows a self-kill is a plain exit code.
+  it.skipIf(isWin)('exits 2 and names the signal when the skill process is killed by one', () => {
     const { env } = spyEnv();
     const r = atelier(['tokens'], { env: { ...env, ATELIER_SPY_MODE: 'kill' } });
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/atelier: design-token-sync was terminated by SIGKILL/);
+  });
+
+  it.skipIf(isWin)('relays SIGTERM sent to the wrapper to the skill process', async () => {
+    const { env } = spyEnv();
+    const pidFile = join(tmp, 'skill.pid');
+    const child = spawn(process.execPath, [binPath, 'tokens'], {
+      cwd: tmp,
+      env: { ...env, ATELIER_SPY_MODE: 'wait', ATELIER_SPY_PID: pidFile },
+      stdio: 'ignore',
+    });
+    const closed = new Promise((res) => child.on('close', (code, signal) => res({ code, signal })));
+    let skillPid;
+    for (let i = 0; i < 100 && !skillPid; i++) {
+      if (existsSync(pidFile)) skillPid = Number(readFileSync(pidFile, 'utf8'));
+      else await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(skillPid).toBeGreaterThan(0);
+    child.kill('SIGTERM');
+    const end = await closed;
+    expect(end.code).toBe(2);
+    let alive = true;
+    for (let i = 0; i < 20 && alive; i++) {
+      try { process.kill(skillPid, 0); await new Promise((r) => setTimeout(r, 50)); } catch { alive = false; }
+    }
+    expect(alive).toBe(false);
+  });
+
+  // Without a terminal nothing else delivers SIGINT to the skill, so it is relayed.
+  // The terminal case is covered by the relaySignals unit tests below.
+  it.skipIf(isWin)('relays SIGINT sent to the wrapper to the skill process when there is no terminal', async () => {
+    const { env } = spyEnv();
+    const pidFile = join(tmp, 'skill-int.pid');
+    const child = spawn(process.execPath, [binPath, 'tokens'], {
+      cwd: tmp,
+      env: { ...env, ATELIER_SPY_MODE: 'wait', ATELIER_SPY_PID: pidFile },
+      stdio: 'ignore',
+    });
+    const closed = new Promise((res) => child.on('close', (code, signal) => res({ code, signal })));
+    let skillPid;
+    for (let i = 0; i < 100 && !skillPid; i++) {
+      if (existsSync(pidFile)) skillPid = Number(readFileSync(pidFile, 'utf8'));
+      else await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(skillPid).toBeGreaterThan(0);
+    child.kill('SIGINT');
+    const end = await closed;
+    expect(end.code).toBe(2);
+    let alive = true;
+    for (let i = 0; i < 20 && alive; i++) {
+      try { process.kill(skillPid, 0); await new Promise((r) => setTimeout(r, 50)); } catch { alive = false; }
+    }
+    expect(alive).toBe(false);
   });
 
   it('atelier tokens --help prints the skill usage, the same as running the skill directly', () => {
@@ -189,9 +249,48 @@ describe('atelier skill forwarding', () => {
 
 describe.skipIf(!isWin)('atelier.cmd shim', () => {
   const cmdPath = join(pluginRoot, 'bin', 'atelier.cmd');
-  const viaCmd = (args) => spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${cmdPath}" ${args}`], {
-    cwd: tmp, encoding: 'utf8', windowsVerbatimArguments: true, windowsHide: true,
-  });
+  const comspec = process.env.ComSpec || 'cmd.exe';
+  const powershell = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const run = (file, args, opts) => spawnSync(file, args, { cwd: tmp, encoding: 'utf8', windowsHide: true, timeout: 60_000, ...opts });
+
+  // A command line in cmd syntax, the way a cmd prompt, a batch file or
+  // `shell: true` runs it. cmd /s /c strips the first and the last quote of
+  // the command line, so the whole line gets its own pair around the quoted
+  // path. `switches` go before /s.
+  const viaCmd = (args, shim = cmdPath, switches = []) =>
+    run(comspec, ['/d', ...switches, '/s', '/c', `""${shim}" ${args}"`], { windowsVerbatimArguments: true });
+
+  // cmd.exe exactly as Windows starts it when PowerShell (or another .NET
+  // program) launches the .cmd file itself: `cmd.exe /c ""<file>" <arguments>"`,
+  // the arguments quoted for a program and not for cmd. Node refuses to
+  // spawn a .cmd file without a shell, so the test builds that line itself.
+  const direct = (rawArgs, shim = cmdPath) => run(comspec, ['/c', `""${shim}" ${rawArgs}"`], { windowsVerbatimArguments: true });
+
+  // Windows PowerShell with `binDir` first on PATH, so a bare `atelier` is
+  // the shim. `command` is PowerShell syntax. Progress records are off
+  // because a redirected PowerShell writes them to stderr as CLIXML.
+  const viaPowerShell = (command, binDir) => run(powershell, [
+    '-NoProfile', '-NonInteractive', '-Command', `$ProgressPreference = 'SilentlyContinue'; ${command}; exit $LASTEXITCODE`,
+  ], { env: envWithPath(`${binDir};${process.env.PATH}`) });
+
+  /**
+   * A copy of the shim under a directory with a space in its name, beside a
+   * stub `atelier` that prints its arguments as JSON and exits 3. Returns the
+   * bin directory.
+   */
+  function stubInstall() {
+    const bin = join(tmp, 'sp ace', 'bin');
+    touch(join(bin, 'atelier'), 'console.log(JSON.stringify(process.argv.slice(2)));\nprocess.exitCode = 3;\n');
+    copyFileSync(cmdPath, join(bin, 'atelier.cmd'));
+    return bin;
+  }
+
+  /** The arguments the stub received, after checking it ran cleanly. */
+  function argvOf(r) {
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(3);
+    return JSON.parse(r.stdout);
+  }
 
   it('runs the bin and passes its output through', () => {
     const r = viaCmd('--version');
@@ -201,5 +300,84 @@ describe.skipIf(!isWin)('atelier.cmd shim', () => {
 
   it('propagates the exit code', () => {
     expect(viaCmd('nope').status).toBe(2);
+  });
+
+  // Regression: viaCmd passed `"<path>" <args>` to cmd /s /c, which strips
+  // the first and last quote, so a path with a space was cut at the space
+  // and these tests failed from a checkout such as C:\Users\Jane Doe\atelier.
+  it('runs from a path with a space and passes quoted arguments unchanged', () => {
+    const r = viaCmd('og --title "a b" --x "50% & more" "p|q" "c^d" "wow!" "<x>" "a&b" "say \\"hi\\""', join(stubInstall(), 'atelier.cmd'));
+    expect(argvOf(r)).toEqual(['og', '--title', 'a b', '--x', '50% & more', 'p|q', 'c^d', 'wow!', '<x>', 'a&b', 'say "hi"']);
+  });
+
+  // Regression: the shim's own line was expanded a second time when the
+  // calling cmd.exe had delayed expansion on, which ate every `!`.
+  it('keeps ! in an argument when the calling cmd.exe has delayed expansion on', () => {
+    const r = viaCmd('"wow^!" "a^!b^!c"', join(stubInstall(), 'atelier.cmd'), ['/v:on']);
+    expect(argvOf(r)).toEqual(['wow!', 'a!b!c']);
+  });
+
+  it('leaves cmd operators after the shim to a caller that wrote cmd syntax', () => {
+    const r = viaCmd('x & echo AFTER', join(stubInstall(), 'atelier.cmd'));
+    expect(r.stderr).toBe('');
+    expect(r.stdout.split(/\r?\n/).filter(Boolean)).toEqual(['["x"]', 'AFTER']);
+  });
+
+  // The shim reads %CMDCMDLINE% and may end cmd.exe; neither may touch a
+  // session it was merely called from. (A substitution made directly on
+  // %CMDCMDLINE% rewrites it for the rest of the session.)
+  it('does not end an interactive cmd.exe session or change its %CMDCMDLINE%', () => {
+    const shim = join(stubInstall(), 'atelier.cmd');
+    const r = run(comspec, ['/d', '/q', '/k'], { input: `"${shim}" a\r\necho SEEN=%CMDCMDLINE%\r\nexit 4\r\n` });
+    expect(r.stdout).toContain('["a"]');
+    expect(r.stdout).toMatch(/SEEN=.+ \/d \/q \/k/);
+    expect(r.status).toBe(4);
+  });
+
+  // Regression: a program that starts the .cmd file itself (PowerShell above
+  // all) does not quote a whitespace-free argument for cmd, so cmd.exe cut the
+  // command line at an &, expanded %VAR%, dropped ^ and ran the remainder as
+  // a command: `atelier a11y "https://x.example/?a=1&b=2"` audited
+  // https://x.example/?a=1 and then executed `b=2`.
+  it('passes cmd metacharacters through when the shim is started directly', () => {
+    const r = direct('og --title Q&A --slug faq a^b 100%PATHEXT% x&&y p||q wow! (z) "a b" "50% & more"', join(stubInstall(), 'atelier.cmd'));
+    expect(argvOf(r)).toEqual(['og', '--title', 'Q&A', '--slug', 'faq', 'a^b', '100%PATHEXT%', 'x&&y', 'p||q', 'wow!', '(z)', 'a b', '50% & more']);
+  });
+
+  // Not covered, because no .cmd file can fix it: a | < or > in a
+  // whitespace-free argument. cmd.exe starts the other side of the pipe or
+  // opens the file before the shim runs. See the note in atelier.cmd.
+  describe.skipIf(!existsSync(powershell))('from PowerShell', () => {
+    it('passes arguments to node unchanged', () => {
+      const r = viaPowerShell("atelier og --title 'Q&A' --slug faq 'a^b' '100%PATHEXT%' 'wow!' 'a b' '50% & more' 'p | q'", stubInstall());
+      expect(r.stdout.trim()).toBe(JSON.stringify(['og', '--title', 'Q&A', '--slug', 'faq', 'a^b', '100%PATHEXT%', 'wow!', 'a b', '50% & more', 'p | q']));
+      expect(r.status).toBe(3);
+    });
+
+    it('runs nothing after an & in an argument', () => {
+      const r = viaPowerShell("atelier 'nope&echo=INJECTED'", join(pluginRoot, 'bin'));
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain('unknown command "nope&echo=INJECTED"');
+      expect(r.stdout).toBe('');
+    });
+  });
+});
+
+describe('relaySignals', () => {
+  it('relays SIGINT, SIGTERM and SIGHUP and keeps the default SIGINT handling without a terminal', () => {
+    expect(relaySignals(false)).toEqual({ signals: ['SIGINT', 'SIGTERM', 'SIGHUP'], swallowSigint: false });
+  });
+
+  it('does not relay SIGINT with a terminal and keeps the wrapper alive until the skill closes', () => {
+    expect(relaySignals(true)).toEqual({ signals: ['SIGTERM', 'SIGHUP'], swallowSigint: true });
+  });
+
+  it('counts a terminal on any of stdin, stdout or stderr', () => {
+    const proc = (i, o, e) => ({ stdin: { isTTY: i }, stdout: { isTTY: o }, stderr: { isTTY: e } });
+    expect(hasTerminal(proc(false, false, false))).toBe(false);
+    expect(hasTerminal(proc(undefined, undefined, undefined))).toBe(false);
+    expect(hasTerminal(proc(false, true, false))).toBe(true);
+    expect(hasTerminal(proc(false, false, true))).toBe(true);
+    expect(hasTerminal(proc(true, false, false))).toBe(true);
   });
 });

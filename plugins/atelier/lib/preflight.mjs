@@ -81,7 +81,7 @@ export function findOnPath(name, { env = process.env, platform = process.platfor
     // Windows drops every double quote in a PATH entry ("C:\Program Files\x").
     dir = win ? dir.replaceAll('"', '').trim() : dir.trim().replace(/^"(.*)"$/, '$1');
     if (!dir) continue;
-    const hit = first(join(dir, name));
+    const hit = first(join(resolve(dir), name));
     if (hit) return hit;
   }
   return null;
@@ -175,8 +175,14 @@ export async function runPreflight(checks) {
     }
     results.push({ ...check, ...result });
     if (!result.ok) {
-      const what = check.kind === 'bin' ? `binary: ${check.cmd}` : `module: ${check.name}`;
-      failures.push(`Missing ${what}${check.install ? `\n  Install: ${check.install}` : ''}`);
+      if (check.kind === 'bin' && result.path) {
+        // Found but unusable: name the real cause instead of asking for a reinstall.
+        failures.push(`${check.cmd} (${result.path}) does not run: ${result.error}`);
+      } else {
+        const what = check.kind === 'bin' ? `binary: ${check.cmd}` : `module: ${check.name}`;
+        const cause = check.kind === 'module' && result.error ? `\n  Error: ${firstLine(result.error)}` : '';
+        failures.push(`Missing ${what}${check.install ? `\n  Install: ${check.install}` : ''}${cause}`);
+      }
     }
   }
   if (failures.length > 0) {

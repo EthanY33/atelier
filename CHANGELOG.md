@@ -7,10 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- GitHub Action: a new optional `root` input, forwarded as `--root` to the accessibility and runtime-UX audits, so a page that loads stylesheets from outside its own folder can be audited.
+
+### Changed
+
+- The release workflow now requires the tag to be on `origin/main` with passing check runs, marks release candidates and backports as prereleases instead of Latest, and CI pins `@anthropic-ai/claude-code` to 2.1.331. `docs/releasing.md` describes the new steps.
+- `npm run check:versions` now also fails on a stale version pin in `getting-started.md` or `CLAUDE.md`, and the release checklist lists both files. The 1.0.0 pins in `getting-started.md` now point at the current release.
+- `contributing.md` and `CLAUDE.md` now say that `npm run setup:browsers` must run before `npm test`; the Chromium suites fail with a `PreflightError` when the browser is missing instead of skipping.
+
 ### Security
 
+- **Behaviour change:** accessibility-design-audit and html-to-video now open a local HTML file with access limited to its own folder. The page can load only regular files under that folder whose names do not start with a dot, checked by real path. A page that pulled in files from outside its folder (stylesheets, images, frames) now has them blocked: pass `--root` (API: `root`) to widen the folder. Each blocked file is a warning on stderr (API: `onWarning`); the first five are listed, then one more message says others were blocked.
+- **Behaviour change:** runtime-ux-audit `--dynamic` on a local page now launches Chromium behind a deny-by-default proxy that forwards only to the local server and to `--allow-origin` origins. A local page can no longer send files from `--root` to other hosts through shared workers, speculation-rules prefetch or WebRTC. Requests from an unload-time handler and from a dedicated worker's WebSocket are refused without being listed.
+- **Behaviour change:** runtime-ux-audit `--dynamic` on an http(s) URL now stays on the audited origin. A redirect or script navigation to another origin is refused and reported as a navigate probe error with the page probes skipped, and so is an HTTP status of 400 or more.
+- **Behaviour change:** the GitHub Action now exits 2 when its `audits` input selects no audit, instead of passing, and it splits `audits` on newlines, so a multi-line value runs every audit instead of only the first.
+- GitHub Action: Chromium installs from the action's own directory instead of the caller's workspace, so a `node_modules/.bin` in the workspace can no longer shadow `node`, `sh` or `sudo`; `npm ci` runs with `--ignore-scripts`, and `setup-node` is pinned by commit SHA.
+- Update fast-uri from 3.1.8 to 3.1.9 in the plugin lockfile to clear four moderate advisories reported by `npm audit`.
+- Update vitest and `@vitest/coverage-v8` from 5.0.1 to 5.1.1 (development only, nothing ships), which resolves a patched vite and `@vitest/mocker`.
 - Upgrade sharp from 0.35.4 to 0.35.5 to include the patched librsvg dependency (GHSA-wq5f-xc86-pv6w).
 - Update source-map-js from 1.2.1 to 1.2.2 in the runtime and development lockfiles to fix indexed source-map denial of service (GHSA-68fv-2mgg-jv7q).
+
+### Fixed
+
+- **Exit codes on signals.** The `atelier` wrapper now exits 2 and names the signal on stderr when the skill it runs is killed by a signal; before, that exited 1, the findings code, silently. It relays SIGTERM and SIGHUP to the skill (SIGTERM sent to the wrapper alone used to orphan the skill on POSIX), and relays SIGINT only when stdin, stdout and stderr are all redirected. On a terminal, Ctrl+C reaches the skill through the process group and the wrapper stays alive until the skill finishes cleaning up, so html-to-video's graceful cleanup is no longer cut short.
+- **PowerShell.** `atelier.cmd` now passes arguments from PowerShell through unparsed: an `&`, a `%VAR%` or a `^` no longer cuts the command line or runs the rest as a command, and `!` is kept. A `|`, `<` or `>` in an argument is still acted on by `cmd.exe` before the shim starts; the README, getting-started and `docs/api.md` now say so and give `node <plugin>\bin\atelier` as the workaround. The shim also works from a checkout path that contains a space.
+- Relative `PATH` entries are resolved before the lookup, so html-to-video no longer fails to spawn ffmpeg from its frame directory after capturing every frame.
+- `atelier doctor` and the preflight checks report a binary that is found but does not run with its path and the error, instead of calling it missing, and failed module checks include the resolve error.
+- brand-asset-pipeline scans SVG text in linear time. An unterminated `<image`, `<!--` or `<![CDATA[`, or a long run of whitespace after `<?xml`, used to hang `atelier assets` on a few hundred KB of input. A mark over the 16 MB linked-file cap is now refused.
+- accessibility-design-audit treats an argument with a scheme of two or more characters as a URL and never looks it up on disk; before, a file or folder at `<cwd>/https:/host` was audited in place of `https://host`. An unsupported scheme that names an existing file hints at `./name`.
+- runtime-ux-audit static pass:
+  - `window.onunload = window.onbeforeunload = null` and `window.onunload = void 0` are read as clearing the handler, not as adding a listener, so they are no longer reported as a critical finding.
+  - Code inside an `on*` attribute is read as the body of its handler, so a beforeunload guard armed from `oninput` or `onclick` is no longer reported as always attached.
+  - A handler name is resolved in the scope that sees it, so two modules that both declare `init` or `update` no longer have their listeners bound to the wrong body, and functions declared in sibling blocks resolve to their own block.
+  - Viewport meta values separated by spaces are read as browsers read them, which removes a false `viewport-meta-missing` and no longer hides `user-scalable=no`.
+- runtime-ux-audit no longer fails on hostile or very large pages. A script with one very long property chain no longer overflows the stack and ends the audit with exit 2, and script syntax nested deeper than 2000 levels is not analyzed, so findings that rest on something being absent move to Needs review. The immediate-speculation-rules check now draws on one budget of 20 million steps for URL resolution, links, `href_matches` patterns and `selector_matches` selectors across all its rules. When a pattern or selector is over 1024 characters, a link tested against an `href_matches` pattern is over 8192 characters without its query and hash, the base URL (the `<base href>`, or the page URL when there is none) is over 8192 characters, or the budget runs out, the rule is not counted: its `<script>` is listed under Needs review, once per action. Speculation rules that are not immediate are skipped without being matched, so they use none of the budget. The duplicate view-transition-name check has its own bound and is listed under Needs review when it is exceeded. Report selectors spell out at most 4096 characters of tag, class and id names and write an element whose names do not fit as `*:nth-child(n)`, so very long class names no longer make the audit run for minutes or out of memory. A long `atelier-ignore` comment or `data-atelier-ignore` list is parsed once instead of once per finding under it, and the speculation-rules CSP check reads each policy once and checks repeated copies of a script once, so neither a long marker, a policy with many sources nor many policies times many scripts slows the audit.
+- runtime-ux-audit `--dynamic`: the dialog probe waits up to 700 ms more for a slow exit animation before clicking close, which removes a false focus-lost finding. It also drops results read after the page left, and the probes no longer run on Chromium's error page after a refused navigation. A rendered DOM nested deeper than 512 elements skips the rendered re-check with a dynamic-phase error entry instead of ending the audit with `COLLECT_FAILED`.
 
 ## [1.1.0] - 2026-09-23
 

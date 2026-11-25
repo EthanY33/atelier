@@ -83,7 +83,7 @@ jobs:
         run: npm run check:versions
 
       - name: Claude Code plugin validate
-        run: npx --yes @anthropic-ai/claude-code plugin validate .
+        run: npx --yes @anthropic-ai/claude-code@2.1.331 plugin validate .
 
   plugin-install:
     name: Installed-plugin smoke (${{ matrix.os }})
@@ -127,6 +127,18 @@ jobs:
         with:
           node-version: ${{ matrix.caller-node }}
 
+      # A workspace node_modules/.bin must not shadow node, sh or sudo during
+      # the action's Chromium install. If it does, the plant touches ./hijacked.
+      - name: Plant a hostile node in the workspace
+        run: |
+          mkdir -p node_modules/.bin
+          {
+            echo '#!/bin/sh'
+            echo "touch \"$GITHUB_WORKSPACE/hijacked\""
+            echo 'exit 1'
+          } > node_modules/.bin/node
+          chmod +x node_modules/.bin/node
+
       - name: Run the composite action against the bundled example page
         uses: ./
         with:
@@ -138,6 +150,87 @@ jobs:
           test -s action-reports/a11y/a11y-report.md
           test -s action-reports/ux/ux-report.md
           test -s action-reports/ux/ux-raw.json
+
+      - name: The workspace node_modules/.bin was not used
+        run: test ! -e hijacked
+
+      # Failing paths, once per workflow run. Each leg must end in failure.
+      - name: Write a page with a critical accessibility violation
+        if: matrix.caller-node == '24'
+        run: |
+          mkdir -p bad-fixture
+          printf '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bad</title></head><body><main><h1>Bad</h1><img src="p.png"></main></body></html>' > bad-fixture/bad.html
+
+      - name: Action on a failing page
+        id: leg-bad-page
+        if: matrix.caller-node == '24'
+        continue-on-error: true
+        uses: ./
+        with:
+          target: bad-fixture/bad.html
+          audits: a11y
+          out: leg-bad-page
+
+      - name: Action with an unknown audit name
+        id: leg-bogus
+        if: matrix.caller-node == '24'
+        continue-on-error: true
+        uses: ./
+        with:
+          target: plugins/atelier/examples/page.html
+          audits: bogus
+          out: leg-bogus
+
+      - name: Action with a missing target
+        id: leg-missing
+        if: matrix.caller-node == '24'
+        continue-on-error: true
+        uses: ./
+        with:
+          target: plugins/atelier/examples/no-such-page.html
+          out: leg-missing
+
+      - name: Action with an empty audits list
+        id: leg-empty
+        if: matrix.caller-node == '24'
+        continue-on-error: true
+        uses: ./
+        with:
+          target: plugins/atelier/examples/page.html
+          audits: ','
+          out: leg-empty
+
+      # The example brand has no targets, so budgets match the defaults with or
+      # without --brand. Give it a non-default budget the run must report.
+      - name: Write a brand with a non-default budget
+        if: matrix.caller-node == '24'
+        run: |
+          node -e "const fs=require('fs');const b=JSON.parse(fs.readFileSync('plugins/atelier/examples/brand.json','utf8'));b.targets={inpBudgetMs:500};fs.writeFileSync('brand-ci.json',JSON.stringify(b))"
+
+      - name: Action with dynamic and brand
+        id: leg-dynamic
+        if: matrix.caller-node == '24'
+        uses: ./
+        with:
+          target: plugins/atelier/examples/page.html
+          audits: ux
+          dynamic: 'true'
+          brand: brand-ci.json
+          out: leg-dynamic
+
+      - name: Failing legs failed and the dynamic leg wrote its report
+        if: matrix.caller-node == '24'
+        env:
+          BAD_PAGE: ${{ steps.leg-bad-page.outcome }}
+          BOGUS: ${{ steps.leg-bogus.outcome }}
+          MISSING: ${{ steps.leg-missing.outcome }}
+          EMPTY: ${{ steps.leg-empty.outcome }}
+        run: |
+          test "$BAD_PAGE" = failure
+          test "$BOGUS" = failure
+          test "$MISSING" = failure
+          test "$EMPTY" = failure
+          node -e "const r=JSON.parse(require('fs').readFileSync('leg-dynamic/ux/ux-raw.json','utf8'));process.exit(r.mode?.dynamic === true && r.budgets?.inpBudgetMs === 500 ? 0 : 1)"
 
       - name: Job's Node after the action
         env:

@@ -17,6 +17,16 @@ import { UxAuditError } from './errors.mjs';
  */
 export const MAX_HTML_DEPTH = 512;
 
+/**
+ * Most selector text cssPath spells out with tag, class and id names. Once a
+ * path holds this much, each further ancestor is written by position only
+ * (*:nth-child(n)), which still selects exactly that element. Without the
+ * bound a selector is as long as the names of every ancestor, and every
+ * NodeRef under them pays that again: 1000 speculation scripts under 500 divs
+ * with two 1000-character classes took 172 s and 2.6 GB, and 4000 ran out of heap.
+ */
+export const MAX_PATH_TEXT = 4096;
+
 function depthGuardedAdapter(max, displayPath) {
   const depth = new WeakMap();
   const place = (parent, child) => {
@@ -164,17 +174,36 @@ export function buildHtmlModel(text, meta = {}) {
 
   const isUniqueId = (id) => (byIdIdx.get(id)?.length ?? 0) === 1;
 
+  // Element -> its own path segment, escaped once however many paths run through it.
+  const pathSegs = new Map();
+  const pathSeg = (el, m, byId) => {
+    let seg = pathSegs.get(el);
+    if (seg === undefined) {
+      if (byId) seg = `#${cssEscape(m.id)}`;
+      else {
+        seg = m.tag + m.classList.slice(0, 2).map((c) => `.${cssEscape(c)}`).join('');
+        if (m.typeCount > 1) seg += `:nth-of-type(${m.typeIndex})`;
+      }
+      pathSegs.set(el, seg);
+    }
+    return seg;
+  };
   const cssPath = (el) => {
     const segs = [];
+    let chars = 0;
     for (let cur = el; cur; cur = metas.get(cur).parent) {
       const m = metas.get(cur);
-      if (m.tag === 'html' || m.tag === 'body' || m.tag === 'head') { segs.unshift(m.tag); break; }
-      if (m.id !== null && isUniqueId(m.id)) { segs.unshift(`#${cssEscape(m.id)}`); break; }
-      let seg = m.tag + m.classList.slice(0, 2).map((c) => `.${cssEscape(c)}`).join('');
-      if (m.typeCount > 1) seg += `:nth-of-type(${m.typeIndex})`;
-      segs.unshift(seg);
+      if (m.tag === 'html' || m.tag === 'body' || m.tag === 'head') { segs.push(m.tag); break; }
+      const byId = m.id !== null && isUniqueId(m.id);
+      // Raw length first, so a name that cannot fit is never escaped.
+      const raw = byId ? m.id.length : m.tag.length + (m.classList[0]?.length ?? 0) + (m.classList[1]?.length ?? 0);
+      const seg = chars + raw > MAX_PATH_TEXT ? null : pathSeg(cur, m, byId);
+      if (seg === null || chars + seg.length > MAX_PATH_TEXT) { segs.push(`*:nth-child(${m.childIndex})`); continue; }
+      chars += seg.length;
+      segs.push(seg);
+      if (byId) break;
     }
-    return segs.join(' > ');
+    return segs.reverse().join(' > ');
   };
 
   const startTagSource = (el) => {
@@ -206,7 +235,9 @@ export function buildHtmlModel(text, meta = {}) {
   const viewportContent = viewportEl ? metas.get(viewportEl).attrs.get('content') ?? null : null;
   const viewportProps = {};
   if (viewportContent !== null) {
-    for (const part of viewportContent.split(/[,;]/)) {
+    // Browsers separate properties by whitespace, commas or semicolons and
+    // allow spaces around '='.
+    for (const part of viewportContent.replace(/\s*=\s*/g, '=').split(/[\s,;]+/)) {
       const [k, ...rest] = part.split('=');
       const key = k.trim().toLowerCase();
       if (!key) continue;

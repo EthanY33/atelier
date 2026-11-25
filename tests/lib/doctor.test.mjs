@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { formatDoctor, runDoctor } from '../../plugins/atelier/lib/doctor.mjs';
@@ -102,6 +102,42 @@ describe('runDoctor without launching a browser', () => {
     expect(ffmpeg.status).toBe('warn');
     expect(ffmpeg.detail).toMatch(/does not run/);
     expect(ffmpeg.fix).toBeTruthy();
+  });
+});
+
+describe('runDoctor failing checks', () => {
+  /** Run with process.versions.node replaced, restoring it afterwards. */
+  async function withNodeVersion(version, fn) {
+    const desc = Object.getOwnPropertyDescriptor(process.versions, 'node');
+    Object.defineProperty(process.versions, 'node', { ...desc, value: version });
+    try {
+      return await fn();
+    } finally {
+      Object.defineProperty(process.versions, 'node', desc);
+    }
+  }
+
+  it('fails the node check on an unsupported Node major', async () => {
+    const result = await withNodeVersion('20.11.0', () => runDoctor({ cwd: tmp, launchBrowser: false }));
+    expect(byName(result).node).toMatchObject({ status: 'fail', detail: 'v20.11.0; atelier needs 22+' });
+    expect(byName(result).node.fix).toMatch(/nodejs\.org/);
+    expect(result.ok).toBe(false);
+  });
+
+  it('fails dependencies and sharp when the plugin has no node_modules', () => {
+    // tmp lives under the OS temp dir, which has no ancestor node_modules to resolve from.
+    const copy = join(tmp, 'plugin');
+    cpSync(pluginRoot, copy, { recursive: true, filter: (src) => !/[\\/]node_modules([\\/]|$)/.test(src) });
+    const r = runNode([join(copy, 'bin', 'atelier'), 'doctor', '--no-browser', '--json'], { cwd: tmp });
+    expect(r.status).toBe(1);
+    const parsed = JSON.parse(r.stdout);
+    const checks = byName(parsed);
+    expect(parsed.ok).toBe(false);
+    expect(checks.dependencies.status).toBe('fail');
+    expect(checks.dependencies.detail).toMatch(/^missing: .*\bsharp\b/);
+    expect(checks.dependencies.fix).toContain('npm ci --prefix');
+    expect(checks.sharp.status).toBe('fail');
+    expect(checks.sharp.fix).toContain('npm ci --prefix');
   });
 });
 

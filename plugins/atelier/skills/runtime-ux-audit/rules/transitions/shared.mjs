@@ -188,32 +188,136 @@ export function specificity(sel) {
 // ---------------------------------------------------------------------------
 
 const TOKEN = 'zzatelier';
+// A longer pattern or link makes the rule incomplete (MATCH_BUDGET): matching costs pattern length times URL length per link.
+const MAX_PATTERN_LENGTH = 1024;
+const MAX_URL_LENGTH = 8192;
+// The two bounds above cap one test() call. This one caps the steps of every
+// call that draws on the same budget, about a second of matching.
+const MAX_MATCH_STEPS = 20_000_000;
+
+/** Thrown by test() once the step budget of its matcher is spent. */
+export const MATCH_BUDGET = Symbol('href-match-budget');
 
 /**
- * Compile the supported subset of a URL pattern string into a RegExp over
+ * A step budget for compileHrefPattern, with the state arrays its matchers
+ * work in. Matchers that share one stop together, so many links times many
+ * patterns cannot multiply the bound. The same budget also pays for link
+ * visits and selector passes (spendMatchBudget).
+ */
+export function hrefMatchBudget() {
+  return { left: MAX_MATCH_STEPS, cur: [], next: [], stamp: [], step: 0 };
+}
+
+/**
+ * Take steps from a budget made by hrefMatchBudget, for work done outside
+ * test() (link visits, selector passes). Throws MATCH_BUDGET once it is spent.
+ * @param {ReturnType<typeof hrefMatchBudget>} budget
+ * @param {number} steps
+ */
+export function spendMatchBudget(budget, steps) {
+  if ((budget.left -= steps) < 0) throw MATCH_BUDGET;
+}
+
+/**
+ * Compile the supported subset of a URL pattern string into a matcher over
  * absolute URLs without query or hash. '*' matches anything and ':name' one
  * path segment. Relative patterns resolve like links (resolveHref, which
  * honors <base href> and the local root). Regex groups, braces, modifiers,
- * escapes and search or hash parts are unsupported: null.
+ * escapes and search or hash parts are unsupported: null. A pattern over 1024
+ * characters throws MATCH_BUDGET, so the rule is reported incomplete rather
+ * than skipped as unsupported. The matcher runs
+ * in time linear in pattern length times URL length (no regex backtracking),
+ * and every test() draws on a step budget, so hostile patterns and links
+ * cannot stall the audit: once the budget is spent, test() throws
+ * MATCH_BUDGET instead of answering. Compiling takes 512 steps plus the length
+ * of the resolved pattern from the budget, so it can throw MATCH_BUDGET too:
+ * call it where that is caught.
  * @param {unknown} pattern
  * @param {(href: string) => string|null} resolveHref
- * @returns {RegExp|null}
+ * @param {ReturnType<typeof hrefMatchBudget>} [budget] - pass the same one
+ *   for every pattern of a run. Default: one per pattern.
+ * @returns {{ test: (url: string) => boolean }|null}
  */
-export function compileHrefPattern(pattern, resolveHref) {
+export function compileHrefPattern(pattern, resolveHref, budget = hrefMatchBudget()) {
   if (typeof pattern !== 'string' || !pattern.trim()) return null;
   const p = pattern.trim();
+  if (p.length > MAX_PATTERN_LENGTH) throw MATCH_BUDGET;
   if (/[(){}\\?#+]/.test(p)) return null;
   const kinds = [];
   const withTokens = p.replace(/\*|:([A-Za-z_$][\w$]*)/g, (m) => {
-    kinds.push(m === '*' ? '.*' : '[^/]+');
+    kinds.push(m === '*' ? 'any' : 'seg');
     return `${TOKEN}${kinds.length - 1}x`;
   });
   const abs = resolveHref(withTokens);
   if (!abs) return null;
   const bare = stripQueryHash(abs);
-  let src = bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  src = src.replace(new RegExp(`${TOKEN}(\\d+)x`, 'g'), (m, n) => kinds[Number(n)] ?? m);
-  return new RegExp(`^${src}$`);
+  spendMatchBudget(budget, 512 + bare.length);
+  // Items: a literal char, 'any' (zero or more of anything) or 'ns' / 'nsstar'
+  // (one, then zero or more, non-slash chars: a ':name' segment).
+  const items = [];
+  const tokenRe = new RegExp(`${TOKEN}(\\d+)x`, 'g');
+  const pushLiteral = (text) => { for (const ch of text) items.push(ch); };
+  let last = 0;
+  for (const m of bare.matchAll(tokenRe)) {
+    pushLiteral(bare.slice(last, m.index));
+    last = m.index + m[0].length;
+    const kind = kinds[Number(m[1])];
+    if (kind === 'seg') items.push('ns', 'nsstar');
+    else if (kind === 'any') { if (items[items.length - 1] !== 'any') items.push('any'); }
+    else pushLiteral(m[0]);
+  }
+  pushLiteral(bare.slice(last));
+  return { test: (url) => matchItems(items, String(url), budget) };
+}
+
+/**
+ * Simulate the pattern as an NFA over the input, one state set per character.
+ * A call costs one step plus the number of active states per character, not
+ * the pattern length, and an input longer than MAX_URL_LENGTH throws
+ * MATCH_BUDGET: the link cannot be matched, and a clean answer would hide it.
+ * The steps come out of the budget (MATCH_BUDGET once it is spent), and the
+ * state arrays are the budget's too: allocating them per call cost more than
+ * matching an ordinary link.
+ */
+function matchItems(items, input, budget) {
+  if (--budget.left < 0) throw MATCH_BUDGET;
+  if (input.length > MAX_URL_LENGTH) throw MATCH_BUDGET;
+  const m = items.length;
+  const loops = (i) => items[i] === 'any' || items[i] === 'nsstar';
+  let { cur, next } = budget;
+  let curN = 0;
+  let nextN = 0;
+  // stamp[i] === step marks state i as already in the set being built. Each
+  // call takes its own run of step values, so stamps of earlier calls never match.
+  const { stamp } = budget;
+  while (stamp.length < m + 2) stamp.push(-1);
+  let step = budget.step;
+  budget.step += input.length + 1;
+  const add = (i) => { if (stamp[i] !== step) { stamp[i] = step; next[nextN++] = i; } };
+  // Add the states and follow epsilon moves out of loop states.
+  const addClosed = (i) => { for (let j = i; ; j++) { add(j); if (j >= m || !loops(j)) break; } };
+  addClosed(0);
+  [cur, next] = [next, cur];
+  curN = nextN;
+  for (const ch of input) {
+    if ((budget.left -= curN) < 0) throw MATCH_BUDGET;
+    step++;
+    nextN = 0;
+    for (let k = 0; k < curN; k++) {
+      const i = cur[k];
+      if (i >= m) continue;
+      const it = items[i];
+      if (it === 'any') addClosed(i);
+      else if (it === 'nsstar') { if (ch !== '/') addClosed(i); }
+      else if (it === 'ns') { if (ch !== '/') addClosed(i + 1); }
+      else if (it === ch) addClosed(i + 1);
+    }
+    if (nextN === 0) return false;
+    [cur, next] = [next, cur];
+    curN = nextN;
+  }
+  for (let k = 0; k < curN; k++) if (cur[k] === m) return true;
+  return false;
 }
 
 /** Drop the query and fragment of a URL string. */

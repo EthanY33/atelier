@@ -244,6 +244,13 @@ const STATE_SEL_RE = new RegExp(`(^|[^:]):(${STATE_PSEUDOS.join('|')})(?![\\w-])
 const LEGACY_PSEUDO_ELEMENTS = new Set(['before', 'after', 'first-line', 'first-letter']);
 const NOT_RENDERED = new Set(['head', 'script', 'style', 'template', 'title', 'meta', 'link', 'base', 'noscript']);
 const MAX_LISTED = 5;
+// Stored (condition set, element, pseudo) entries after which the duplicate
+// scan gives up, so many distinct conditions over many elements stay bounded.
+const MAX_SCAN_ENTRIES = 100_000;
+// Work units (considered matches plus winner-resolution steps) after which the
+// scan gives up. The entry cap bounds memory; this one bounds time.
+const MAX_SCAN_WORK = 2_000_000;
+const SCAN_BUDGET = Symbol('vta-scan-budget');
 const UA_ROOT_DECL = Object.freeze({ value: 'root' });
 
 /** The name a declaration assigns, or null for keywords, var() and other non-idents. */
@@ -303,43 +310,103 @@ function conditionsOf(d) {
  * (importance, layers, inline style, specificity, order) for the base
  * conditions and for each distinct media/container condition set, then
  * group the fixed names.
- * @returns {Array<{ name: string, decl: object, labels: string[], count: number, conditions: string[] }>}
+ * @returns {{ dups: Array<{ name: string, decl: object, labels: string[], count: number, conditions: string[] }>, overBudget: object|null }}
+ *   overBudget is the first fixed declaration when the scan stopped early.
  */
 function staticDuplicates(ctx) {
-  const { css, html } = ctx;
-  const decls = css.declsByProp('view-transition-name')
+  const decls = ctx.css.declsByProp('view-transition-name')
     .filter((d) => d.rule && d.context.keyframes === null && !d.context.startingStyle);
-  if (!decls.some((d) => fixedName(d.value))) return [];
+  const firstFixed = decls.find((d) => fixedName(d.value));
+  if (!firstFixed) return { dups: [], overBudget: null };
+  try {
+    return { dups: scanDuplicates(ctx, decls), overBudget: null };
+  } catch (e) {
+    if (e === SCAN_BUDGET) return { dups: [], overBudget: firstFixed };
+    throw e;
+  }
+}
+
+function scanDuplicates(ctx, decls) {
+  const { html } = ctx;
 
   const isHidden = hiddenChecker(html);
-  const entries = [];
+  const cmpRank = (x, y) => {
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
+    return 0;
+  };
+  // Only the best declaration per (condition set, element, pseudo) can ever
+  // win a scenario, so keep that one instead of every (declaration, element).
+  const groups = new Map(); // condition key -> { conds, best: Map(el -> Map(pseudo -> entry)) }
+  const groupFor = (conds) => {
+    const key = [...conds].sort().join(' && ');
+    let g = groups.get(key);
+    if (!g) groups.set(key, g = { conds, best: new Map() });
+    return g;
+  };
+  let stored = 0;
+  let work = 0;
+  const spend = (n) => { if ((work += n) > MAX_SCAN_WORK) throw SCAN_BUDGET; };
+  const consider = (g, el, pseudo, decl, rank) => {
+    spend(1);
+    let byPseudo = g.best.get(el);
+    if (!byPseudo) g.best.set(el, byPseudo = new Map());
+    const cur = byPseudo.get(pseudo);
+    if (!cur && ++stored > MAX_SCAN_ENTRIES) throw SCAN_BUDGET;
+    if (!cur || cmpRank(rank, cur.rank) >= 0) byPseudo.set(pseudo, { el, pseudo, decl, rank, conds: g.conds });
+  };
+  const matchedCache = new Map();
+  const matched = (sel) => {
+    let list = matchedCache.get(sel);
+    if (!list) {
+      spend(html.elements.length); // one pass over every element per distinct selector
+      matchedCache.set(sel, list = html.querySelectorAll(sel));
+    }
+    return list;
+  };
+  const hidden = new Map();
+  const visible = (el) => {
+    let h = hidden.get(el);
+    if (h === undefined) hidden.set(el, h = isHidden(el));
+    return !h;
+  };
+  // Within one condition set a later or more specific declaration of the same
+  // selector beats an earlier one on every element, so keep only that one.
+  const bySelector = new Map(); // group -> Map(selector -> { d, rank })
   decls.forEach((d, order) => {
     const layered = d.context.layer.length > 0;
     const base = [d.important ? 1 : 0, d.important === layered ? 1 : 0];
-    const found = new Map(); // el -> Map(pseudo -> specificity)
-    const add = (el, pseudo, spec) => {
-      if (isHidden(el)) return;
-      if (!found.has(el)) found.set(el, new Map());
-      const prev = found.get(el).get(pseudo);
-      if (!prev || compareSpecificity(spec, prev) > 0) found.get(el).set(pseudo, spec);
-    };
-    if (d.rule.fromStyleAttr) add(d.rule.fromStyleAttr, '', [Infinity, 0, 0]);
-    else {
+    const g = groupFor(conditionsOf(d));
+    if (d.rule.fromStyleAttr) {
+      if (visible(d.rule.fromStyleAttr)) consider(g, d.rule.fromStyleAttr, '', d, [...base, Infinity, 0, 0, order]);
+    } else {
+      let sels = bySelector.get(g);
+      if (!sels) bySelector.set(g, sels = new Map());
       for (const sel of d.rule.selectors) {
         if (STATE_SEL_RE.test(sel) || VT_SELECTOR_RE.test(sel)) continue;
-        const pseudo = pseudoElementOf(sel);
-        const spec = specificity(sel);
-        for (const el of html.querySelectorAll(sel)) add(el, pseudo, spec);
+        const rank = [...base, ...specificity(sel), order];
+        const cur = sels.get(sel);
+        if (!cur || cmpRank(rank, cur.rank) >= 0) sels.set(sel, { d, rank });
       }
     }
-    for (const [el, byPseudo] of found) {
-      for (const [pseudo, spec] of byPseudo) entries.push({ el, pseudo, decl: d, rank: [...base, ...spec, order], conds: conditionsOf(d) });
-    }
   });
+  for (const [g, sels] of bySelector) {
+    for (const [sel, { d, rank }] of sels) {
+      const pseudo = pseudoElementOf(sel);
+      const els = matched(sel);
+      spend(els.length);
+      for (const el of els) if (visible(el)) consider(g, el, pseudo, d, rank);
+    }
+  }
   // The UA stylesheet names the root element 'root' (:root { view-transition-name: root }).
   const rootEl = html.byTag('html')[0];
   if (rootEl && decls.some((d) => fixedName(d.value) === 'root')) {
-    entries.unshift({ el: rootEl, pseudo: '', decl: UA_ROOT_DECL, rank: [0, -1, 0, 0, 0, -1], conds: [] });
+    const g = groups.get('') ?? { conds: [], best: new Map() };
+    groups.set('', g);
+    let byPseudo = g.best.get(rootEl);
+    if (!byPseudo) g.best.set(rootEl, byPseudo = new Map());
+    const ua = { el: rootEl, pseudo: '', decl: UA_ROOT_DECL, rank: [0, -1, 0, 0, 0, -1], conds: [] };
+    const cur = byPseudo.get('');
+    if (!cur || cmpRank(cur.rank, ua.rank) < 0) byPseudo.set('', ua);
   }
 
   const scenarios = [[]];
@@ -351,21 +418,24 @@ function staticDuplicates(ctx) {
     seenKeys.add(key);
     scenarios.push(conds);
   }
-  const cmpRank = (a, b) => {
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
-    return 0;
-  };
 
+  spend(scenarios.length * groups.size);
   const reported = new Set();
   const out = [];
   for (const scenario of scenarios) {
     const active = new Set(scenario);
     const winners = new Map(); // el -> Map(pseudo -> entry)
-    for (const e of entries) {
-      if (!e.conds.every((c) => active.has(c))) continue;
-      if (!winners.has(e.el)) winners.set(e.el, new Map());
-      const cur = winners.get(e.el).get(e.pseudo);
-      if (!cur || cmpRank(e.rank, cur.rank) >= 0) winners.get(e.el).set(e.pseudo, e);
+    for (const g of groups.values()) {
+      if (!g.conds.every((c) => active.has(c))) continue;
+      spend(g.best.size);
+      for (const [el, byPseudo] of g.best) {
+        if (!winners.has(el)) winners.set(el, new Map());
+        const w = winners.get(el);
+        for (const [pseudo, e] of byPseudo) {
+          const cur = w.get(pseudo);
+          if (!cur || cmpRank(e.rank, cur.rank) >= 0) w.set(pseudo, e);
+        }
+      }
     }
     const byName = new Map();
     for (const byPseudo of winners.values()) {
@@ -411,7 +481,15 @@ export const vtaDuplicateNames = {
     if (!hasDecls && !runtimeNames.size) return { notApplicable: 'no view-transition-name declarations' };
 
     const out = [];
-    for (const dup of staticDuplicates(ctx)) {
+    const { dups, overBudget } = staticDuplicates(ctx);
+    if (overBudget) {
+      out.push({
+        node: ctx.ref.css(overBudget),
+        message: 'Too many element and condition combinations to check for duplicate view-transition-name values statically.',
+        incomplete: true,
+      });
+    }
+    for (const dup of dups) {
       if (runtimeNames.has(dup.name)) continue;
       const data = { count: dup.count, elements: dup.labels, name: dup.name };
       if (dup.conditions.length) data.conditions = dup.conditions.join(' and ');

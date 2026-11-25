@@ -29,7 +29,7 @@ Claude Code copies the plugin and installs its Node dependencies (`npm ci` insid
 It runs `atelier doctor` from your project folder and explains each line:
 
 ```
-atelier 1.0.0 doctor  (<plugin folder>)
+atelier 1.1.0 doctor  (<plugin folder>)
 
   ok    node          v22.13.0
   ok    dependencies  9 of 9 resolve
@@ -48,7 +48,7 @@ Ready.
 
 ## Install Chromium and ffmpeg
 
-**Chromium.** Use the exact command the doctor prints. For atelier 1.0.0 it is:
+**Chromium.** Use the exact command the doctor prints. For atelier 1.1.0 it is:
 
 ```bash
 npx playwright@1.63.0 install chromium
@@ -114,10 +114,10 @@ Runs every skill on a bundled sample brand, logo and page and writes the results
 
 ## Use the CLI outside Claude Code
 
-Every skill is also a command-line tool, so the same work runs in scripts and CI. Inside a Claude Code session the plugin's `bin/` is on the PATH, so `atelier doctor` just works. Elsewhere, get a copy of the plugin and run it with Node 22 or newer:
+Every skill is also a command-line tool, so the same work runs in scripts and CI. Inside a Claude Code session the plugin's `bin/` is on the PATH, so `atelier doctor` just works. In Windows PowerShell, run `node <plugin>\bin\atelier ...` for an argument that contains `|`, `<` or `>` (see docs/api.md). Elsewhere, get a copy of the plugin and run it with Node 22 or newer:
 
 ```bash
-git clone --depth 1 --branch v1.0.0 https://github.com/EthanY33/atelier
+git clone --depth 1 --branch v1.1.0 https://github.com/EthanY33/atelier
 npm ci --prefix atelier/plugins/atelier
 npm exec --prefix atelier/plugins/atelier -- playwright install chromium
 node atelier/plugins/atelier/bin/atelier doctor
@@ -167,11 +167,12 @@ jobs:
 | `audits` | `a11y,ux` | Which audits to run |
 | `dynamic` | `false` | `true` adds runtime-ux-audit's Chromium pass (INP estimate, bfcache, focus, tap targets) |
 | `brand` | none | Path to a brand.json whose `targets`, `motion` and `surfaces` set the budgets |
+| `root` | the HTML file's folder | Folder whose files a local page may load. Set it to the build folder when pages load `../` assets, or the audits skip those files. Ignored for http(s) targets |
 | `out` | `atelier-reports` | Report directory; the `report-dir` output points to it |
 
 The action uses the job's Node when it is 22 or newer and installs Node 22 otherwise, installs the plugin's dependencies and Chromium, then writes `<out>/a11y/` and `<out>/ux/` and appends both reports to the job summary. The step fails with the highest exit code of the audits it ran. It is tested on `ubuntu-latest`.
 
-`@v1` follows the newest 1.x release, which may add runtime-ux rules. To keep the gate fixed, pin a release: `EthanY33/atelier@v1.0.0`.
+`@v1` follows the newest 1.x release, which may add runtime-ux rules. To keep the gate fixed, pin a release: `EthanY33/atelier@v1.1.0`.
 
 ## Next
 

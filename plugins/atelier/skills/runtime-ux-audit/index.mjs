@@ -104,12 +104,19 @@ export async function auditRuntimeUx(opts) {
 
   let facts = null;
   let rendered = null;
+  const renderedErrors = [];
   if (options.dynamic) {
     facts = await runDynamic(options, collected, budgets);
     if (typeof facts?.rendered?.html === 'string') {
-      rendered = buildHtmlModel(normalizeText(facts.rendered.html), {
-        source: 'rendered', displayPath: '(rendered DOM)', resolve: (href) => collected.urls.resolve(href),
-      });
+      try {
+        rendered = buildHtmlModel(normalizeText(facts.rendered.html), {
+          source: 'rendered', displayPath: '(rendered DOM)', resolve: (href) => collected.urls.resolve(href),
+        });
+      } catch (err) {
+        // Script can build a tree the HTML parser would never nest; skip the re-check, keep the audit.
+        if (!(err instanceof UxAuditError) || err.code !== 'COLLECT_FAILED') throw err;
+        renderedErrors.push({ phase: 'dynamic', message: 'the rendered DOM nests more than 512 elements deep, so it was not re-checked' });
+      }
     }
   }
 
@@ -119,6 +126,7 @@ export async function auditRuntimeUx(opts) {
   const metrics = buildMetrics(facts, highlights);
   const errors = [
     ...run.errors,
+    ...renderedErrors,
     ...(facts?.errors ?? []).map((e) => ({ phase: 'dynamic', message: `${e.probe}: ${String(e.message ?? '').replace(/\s+/g, ' ').trim()}` })),
   ];
   const result = {

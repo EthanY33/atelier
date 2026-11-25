@@ -181,6 +181,24 @@ describe('runPreflight', () => {
     expect(err.message).not.toContain('sharp');
   });
 
+  it('reports a binary that exists but fails with its path and error, not as missing', async () => {
+    const err = await runPreflight([
+      { kind: 'bin', cmd: 'node', args: ['-e', "console.error('boom: real failure'); process.exit(3)"], install: 'brew install node' },
+    ]).catch((e) => e);
+    expect(err).toBeInstanceOf(PreflightError);
+    expect(err.message).toContain('does not run: boom: real failure');
+    expect(err.message).toContain(findOnPath('node'));
+    expect(err.message).not.toContain('Missing binary: node');
+    expect(err.message).not.toContain('brew install node');
+  });
+
+  it('adds the first line of the resolve error to a failed module check', async () => {
+    const err = await runPreflight([{ kind: 'module', name: 'this-module-does-not-exist-xyz-12345', install: 'npm install xyz' }]).catch((e) => e);
+    expect(err.message).toContain('Missing module: this-module-does-not-exist-xyz-12345');
+    expect(err.message).toMatch(/\n {2}Error: Cannot find (module|package) /);
+    expect(err.message.split('\n').filter((l) => l.startsWith('  Error:'))).toHaveLength(1);
+  });
+
   it('rejects an unknown check kind', async () => {
     await expect(runPreflight([{ kind: 'nope' }])).rejects.toThrow(/Unknown preflight check kind: nope/);
   });

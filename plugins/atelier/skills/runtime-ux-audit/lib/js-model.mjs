@@ -17,6 +17,11 @@ const JQUERY_SHORTHANDS = new Set(['blur', 'focus', 'focusin', 'focusout', 'resi
 // Body/frameset attributes that register on the window (HTML "window-reflecting" handlers).
 const WINDOW_REFLECTING = new Set(['blur', 'error', 'focus', 'load', 'resize', 'scroll', 'afterprint', 'beforeprint', 'beforeunload', 'hashchange', 'languagechange', 'message', 'messageerror', 'offline', 'online', 'pageswap', 'pagehide', 'pagereveal', 'pageshow', 'popstate', 'rejectionhandled', 'storage', 'unhandledrejection', 'unload']);
 
+// Syntax nested deeper than this is not indexed, and the model then reports
+// complete: false. One very long call chain or run of operators nests one
+// level per link, and work on a node grows with its depth.
+export const MAX_JS_DEPTH = 2000;
+
 export const isFunctionNode = (n) => Boolean(n) && FUNCTION_TYPES.has(n.type);
 
 /**
@@ -86,24 +91,33 @@ export function traverse(root, enter) {
   }
 }
 
-/** Dotted path of an expression; '?' marks a computed or call segment. */
+/**
+ * Dotted path of an expression; '?' marks a computed or call segment.
+ * Walks the member chain in a loop: one chain can be tens of thousands of
+ * segments long, which would overflow the stack if each segment recursed.
+ */
 export function pathOf(n) {
-  if (!n) return '?';
-  switch (n.type) {
-    case 'Identifier': return n.name;
-    case 'ThisExpression': return 'this';
-    case 'Super': return 'super';
-    case 'ChainExpression': return pathOf(n.expression);
-    case 'MetaProperty': return `${n.meta.name}.${n.property.name}`;
-    case 'MemberExpression': {
+  const props = [];
+  let node = n;
+  for (;;) {
+    if (node?.type === 'ChainExpression') {
+      node = node.expression;
+    } else if (node?.type === 'MemberExpression') {
       let prop = '?';
-      if (!n.computed) prop = n.property.type === 'PrivateIdentifier' ? `#${n.property.name}` : n.property.name;
-      else if (n.property.type === 'Literal' && typeof n.property.value === 'string') prop = n.property.value;
-      else if (n.property.type === 'TemplateLiteral' && n.property.expressions.length === 0) prop = n.property.quasis[0].value.cooked;
-      return `${pathOf(n.object)}.${prop}`;
-    }
-    default: return '?';
+      if (!node.computed) prop = node.property.type === 'PrivateIdentifier' ? `#${node.property.name}` : node.property.name;
+      else if (node.property.type === 'Literal' && typeof node.property.value === 'string') prop = node.property.value;
+      else if (node.property.type === 'TemplateLiteral' && node.property.expressions.length === 0) prop = node.property.quasis[0].value.cooked;
+      props.push(prop);
+      node = node.object;
+    } else break;
   }
+  let path = '?';
+  if (node?.type === 'Identifier') path = node.name;
+  else if (node?.type === 'ThisExpression') path = 'this';
+  else if (node?.type === 'Super') path = 'super';
+  else if (node?.type === 'MetaProperty') path = `${node.meta.name}.${node.property.name}`;
+  for (let i = props.length - 1; i >= 0; i--) path += `.${props[i]}`;
+  return path;
 }
 
 const stripGlobal = (p) => String(p).replace(GLOBAL_PREFIX_RE, '');
@@ -128,27 +142,11 @@ function markIife(fn, parent, grand) {
   Object.defineProperty(fn, '__iife', { value: iife, enumerable: false, configurable: true });
 }
 
-function hasEnclosingNonArrowFn(ancestors) {
-  return ancestors.some((a) => a.type === 'FunctionDeclaration' || a.type === 'FunctionExpression');
-}
-
-function computeTopLevel(ancestors) {
-  return ancestors.every((a) => !FUNCTION_TYPES.has(a.type) || a.__iife === true);
-}
-
-function computeInLoop(ancestors) {
-  for (let i = ancestors.length - 1; i >= 0; i--) {
-    const a = ancestors[i];
-    if (FUNCTION_TYPES.has(a.type)) return false;
-    if (LOOP_TYPES.has(a.type)) return true;
-  }
-  return false;
-}
-
-function classifyTarget(receiver, ancestors) {
+/** `inFunction`: the receiver sits in a non-arrow function, where `this` is not the window. */
+function classifyTarget(receiver, inFunction) {
   if (!receiver) return 'window';
   const node = unwrapChain(receiver);
-  if (node.type === 'ThisExpression') return hasEnclosingNonArrowFn(ancestors) ? 'unknown' : 'window';
+  if (node.type === 'ThisExpression') return inFunction ? 'unknown' : 'window';
   const raw = pathOf(node);
   if (raw === 'window' || raw === 'self' || raw === 'globalThis') return 'window';
   const p = stripGlobal(raw);
@@ -157,11 +155,11 @@ function classifyTarget(receiver, ancestors) {
   return 'element';
 }
 
-function classifyJqueryTarget(arg, ancestors) {
+function classifyJqueryTarget(arg, inFunction) {
   if (!arg) return 'unknown';
   const s = stringValue(arg);
   if (s !== null) return /^\s*(body|html)\s*$/i.test(s) ? 'root-element' : 'element';
-  return classifyTarget(arg, ancestors);
+  return classifyTarget(arg, inFunction);
 }
 
 function parseListenerOptions(node) {
@@ -186,6 +184,39 @@ function parseListenerOptions(node) {
 
 const collapse = (s) => String(s).replace(/\s+/g, ' ').trim();
 
+// Scopes for name lookup: var scopes hold var, function and parameter
+// bindings; block scopes also hold let, const, class and catch bindings, and
+// the functions declared in the block.
+const BLOCK_SCOPE_TYPES = new Set(['BlockStatement', 'ForStatement', 'ForInStatement', 'ForOfStatement', 'SwitchStatement', 'CatchClause']);
+const isVarScope = (n) => n.type === 'Program' || n.type === 'StaticBlock' || FUNCTION_TYPES.has(n.type);
+
+/** Names a binding pattern declares: identifiers, destructuring, defaults and rest. */
+function bindingNames(pattern) {
+  const out = [];
+  const stack = [pattern];
+  while (stack.length) {
+    const p = stack.pop();
+    if (!p) continue;
+    if (p.type === 'Identifier') out.push(p.name);
+    else if (p.type === 'ObjectPattern') for (const prop of p.properties) stack.push(prop.type === 'RestElement' ? prop.argument : prop.value);
+    else if (p.type === 'ArrayPattern') for (const el of p.elements) stack.push(el);
+    else if (p.type === 'AssignmentPattern') stack.push(p.left);
+    else if (p.type === 'RestElement') stack.push(p.argument);
+  }
+  return out;
+}
+
+/**
+ * Record a binding in a scope: `fn` is the function it names, or null for any
+ * other binding. The first function a scope gives a name wins; other bindings
+ * only hide same-named functions of outer scopes.
+ */
+function declare(scope, name, fn) {
+  if (!scope) return;
+  if (!scope.names) scope.names = new Map();
+  if (fn ? !scope.names.get(name) : !scope.names.has(name)) scope.names.set(name, fn);
+}
+
 /**
  * Build a JsModel from collector script records.
  * @param {Array<object>} scripts - ScriptInfo records (ast may be null)
@@ -197,17 +228,66 @@ export function buildJsModel(scripts, { complete = true } = {}) {
   const assignments = [];
   const imports = [];
   const literalIndex = new Map();
-  const fnIndex = new Map(); // script -> Map(name -> fn node)
+  const scopeIndex = new Map(); // script -> scope records in source order; the first is the Program
   const initIndex = new Map(); // script -> Map(name -> init node)
   const listenerByFn = new Map();
+  // Programs of event attributes. Their code is the body of the attribute's
+  // handler: it runs when the event fires, not when the page loads.
+  const handlerPrograms = new Set();
+  let truncated = false;
+
+  // A record's ancestors are listed on demand from parent links that records
+  // share, and only the latest list is kept. A copy of the path on every
+  // record costs time and memory quadratic in nesting depth.
+  const NO_ANCESTORS = Object.freeze([]);
+  let listedChain = null;
+  let listed = NO_ANCESTORS;
+  const ancestorsOf = (chain) => {
+    if (chain !== listedChain) {
+      const list = new Array(chain ? chain.depth : 0);
+      for (let link = chain; link; link = link.up) list[link.depth - 1] = link.node;
+      listedChain = chain;
+      listed = Object.freeze(list);
+    }
+    return listed;
+  };
 
   const sourceOf = (script, node) => (node && script?.source ? script.source.slice(node.start, node.end) : '');
+
+  /**
+   * The function `name` refers to at source offset `pos`: the nearest scope
+   * around `pos` that declares the name decides, and the result is null when
+   * that binding is not a function (a parameter, say) or no scope declares
+   * it. Without an offset the lookup starts at the top of the script.
+   */
+  const resolveName = (script, name, pos) => {
+    const scopes = scopeIndex.get(script);
+    if (!scopes?.length) return null;
+    let scope = scopes[0];
+    if (typeof pos === 'number') {
+      // Last scope that starts at or before pos: the innermost scope around
+      // pos, or a scope nested in it that has already ended.
+      let lo = 0;
+      let hi = scopes.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (scopes[mid].start <= pos) lo = mid;
+        else hi = mid - 1;
+      }
+      scope = scopes[lo];
+      while (scope.parent && !(scope.start <= pos && pos < scope.end)) scope = scope.parent;
+    }
+    for (; scope; scope = scope.parent) {
+      if (scope.names?.has(name)) return scope.names.get(name);
+    }
+    return null;
+  };
 
   const resolveFunctionIn = (script, node, depth = 0) => {
     const n = unwrapChain(node);
     if (!n || depth > 3) return null;
     if (FUNCTION_TYPES.has(n.type)) return n;
-    if (n.type === 'Identifier') return fnIndex.get(script)?.get(n.name) ?? null;
+    if (n.type === 'Identifier') return resolveName(script, n.name, n.start);
     if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && !n.callee.computed && n.callee.property.name === 'bind') {
       return resolveFunctionIn(script, n.callee.object, depth + 1);
     }
@@ -222,38 +302,100 @@ export function buildJsModel(scripts, { complete = true } = {}) {
 
   for (const script of scripts) {
     if (!script.ast) continue;
-    const fns = new Map();
+    const inHandler = script.kind === 'event-attr';
+    if (inHandler) handlerPrograms.add(script.ast);
     const inits = new Map();
-    fnIndex.set(script, fns);
     initIndex.set(script, inits);
-    // Pass 1: function names and initializers, so handlers resolve regardless of order.
+    const scopes = [];
+    scopeIndex.set(script, scopes);
+    // Innermost scope and innermost var scope around the children of the node at each depth.
+    const scopeAt = [];
+    const varScopeAt = [];
+    // Pass 1: scopes, function names and initializers, so handlers resolve regardless of order.
     traverse(script.ast, (node, ancestors) => {
-      if (FUNCTION_TYPES.has(node.type)) markIife(node, ancestors[ancestors.length - 1], ancestors[ancestors.length - 2]);
+      const depth = ancestors.length;
+      if (depth > MAX_JS_DEPTH) {
+        truncated = true;
+        return false;
+      }
+      const parent = ancestors[depth - 1];
+      let scope = depth ? scopeAt[depth - 1] : null;
+      let varScope = depth ? varScopeAt[depth - 1] : null;
+      if (FUNCTION_TYPES.has(node.type)) markIife(node, parent, ancestors[depth - 2]);
       if (node.type === 'FunctionDeclaration' && node.id) {
-        if (!fns.has(node.id.name)) fns.set(node.id.name, node);
+        // Bound in its own block, and hoisted to the enclosing function so code after the block still sees it.
+        if (scope !== varScope) declare(scope, node.id.name, node);
+        declare(varScope, node.id.name, node);
         if (!inits.has(node.id.name)) inits.set(node.id.name, node);
+      } else if (node.type === 'VariableDeclarator') {
+        const fn = node.id.type === 'Identifier' && node.init && FUNCTION_TYPES.has(node.init.type) ? node.init : null;
+        for (const name of bindingNames(node.id)) declare(parent?.kind === 'var' ? varScope : scope, name, fn);
+        if (node.id.type === 'Identifier' && node.init && !inits.has(node.id.name)) inits.set(node.id.name, node.init);
+      } else if (node.type === 'ClassDeclaration' && node.id) {
+        declare(scope, node.id.name, null);
       }
-      if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) {
-        if (!inits.has(node.id.name)) inits.set(node.id.name, node.init);
-        if (FUNCTION_TYPES.has(node.init.type) && !fns.has(node.id.name)) fns.set(node.id.name, node.init);
+      if (isVarScope(node) || BLOCK_SCOPE_TYPES.has(node.type)) {
+        scope = { start: node.start, end: node.end, parent: scope, names: null };
+        scopes.push(scope);
+        if (isVarScope(node)) varScope = scope;
+        if (FUNCTION_TYPES.has(node.type)) {
+          for (const param of node.params) for (const name of bindingNames(param)) declare(scope, name, null);
+          // A named function expression can refer to itself.
+          if (node.type === 'FunctionExpression' && node.id && !scope.names?.has(node.id.name)) declare(scope, node.id.name, node);
+        } else if (node.type === 'CatchClause') {
+          for (const name of bindingNames(node.param)) declare(scope, name, null);
+        }
       }
+      scopeAt[depth] = scope;
+      varScopeAt[depth] = varScope;
       if (node.type === 'Literal' && typeof node.value === 'string') push(literalIndex, node.value, { script, node });
       if (node.type === 'TemplateLiteral' && node.expressions.length === 0) push(literalIndex, node.quasis[0].value.cooked, { script, node });
+      return true;
     });
+    scopes.sort((a, b) => a.start - b.start);
 
-    // Pass 2: calls, listeners, assignments, imports.
+    // Pass 2: calls, listeners, assignments, imports. The flags are kept per
+    // depth, for a node with that many ancestors: it runs at script start
+    // (every function around it is an IIFE), it is in a loop of its function,
+    // it is in a non-arrow function.
+    const top = [];
+    const inLoop = [];
+    const inFunction = [];
+    // links[i]: parent link of live[i], made when a record first needs it.
+    const links = [];
+    const chainFor = (live) => {
+      for (let i = links.length; i < live.length; i++) links[i] = { node: live[i], up: i ? links[i - 1] : null, depth: i + 1 };
+      return live.length ? links[live.length - 1] : null;
+    };
     traverse(script.ast, (node, live) => {
+      const depth = live.length;
+      if (depth > MAX_JS_DEPTH) return false;
+      if (links.length > depth) links.length = depth;
+      const parent = live[depth - 1];
+      if (!parent) {
+        top[0] = !inHandler;
+        inLoop[0] = false;
+        inFunction[0] = false;
+      } else if (FUNCTION_TYPES.has(parent.type)) {
+        top[depth] = top[depth - 1] && parent.__iife === true;
+        inLoop[depth] = false;
+        inFunction[depth] = inFunction[depth - 1] || parent.type !== 'ArrowFunctionExpression';
+      } else {
+        top[depth] = top[depth - 1];
+        inLoop[depth] = inLoop[depth - 1] || LOOP_TYPES.has(parent.type);
+        inFunction[depth] = inFunction[depth - 1];
+      }
       if (node.type === 'CallExpression' || node.type === 'NewExpression') {
-        const ancestors = Object.freeze(live.slice());
+        const chain = chainFor(live);
         const calleeNode = unwrapChain(node.callee);
         const callee = stripGlobal(pathOf(calleeNode));
         const method = callee.includes('.') ? callee.slice(callee.lastIndexOf('.') + 1) : callee;
         const info = Object.freeze({
-          script, node, ancestors, callee, method, args: node.arguments, isNew: node.type === 'NewExpression',
-          optional: node.optional === true, topLevel: computeTopLevel(ancestors), inLoop: computeInLoop(ancestors),
+          script, node, get ancestors() { return ancestorsOf(chain); }, callee, method, args: node.arguments, isNew: node.type === 'NewExpression',
+          optional: node.optional === true, topLevel: top[depth], inLoop: inLoop[depth],
         });
         calls.push(info);
-        collectListenerFromCall(script, node, calleeNode, info);
+        collectListenerFromCall(script, node, calleeNode, info, chain, inFunction[depth]);
         if (node.type === 'CallExpression' && calleeNode.type === 'Identifier') {
           const src = stringValue(node.arguments[0]);
           if (src !== null && calleeNode.name === 'require') imports.push(Object.freeze({ script, node, source: src, kind: 'require', specifiers: Object.freeze([]) }));
@@ -265,14 +407,14 @@ export function buildJsModel(scripts, { complete = true } = {}) {
           }
         }
       } else if (node.type === 'AssignmentExpression') {
-        const ancestors = Object.freeze(live.slice());
+        const chain = chainFor(live);
         const target = pathOf(node.left);
         const property = node.left.type === 'MemberExpression' ? target.slice(target.lastIndexOf('.') + 1) : (node.left.type === 'Identifier' ? node.left.name : '?');
         const info = Object.freeze({
-          script, node, ancestors, target, normalizedTarget: stripGlobal(target), property, operator: node.operator, valueNode: node.right,
+          script, node, get ancestors() { return ancestorsOf(chain); }, target, normalizedTarget: stripGlobal(target), property, operator: node.operator, valueNode: node.right,
         });
         assignments.push(info);
-        collectListenerFromAssignment(script, node, info);
+        collectListenerFromAssignment(script, node, chain, top[depth], inFunction[depth]);
       } else if (node.type === 'ImportDeclaration') {
         imports.push(Object.freeze({
           script, node, source: String(node.source.value), kind: 'static',
@@ -298,15 +440,14 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       if ((tag === 'body' || tag === 'frameset') && WINDOW_REFLECTING.has(event)) target = 'window';
       else if (tag === 'body' || tag === 'html') target = 'root-element';
       pushListener({
-        script, node: script.ast, ancestors: Object.freeze([]), via: 'attribute', event, target,
+        script, node: script.ast, ancestors: NO_ANCESTORS, via: 'attribute', event, target,
         targetText: script.selector.replace(/\[on[a-z-]+\]$/, ''), handler: script.ast, handlerText: script.source,
         options: parseListenerOptions(null), topLevel: true,
       });
     }
   }
 
-  function collectListenerFromCall(script, node, calleeNode, info) {
-    const { ancestors } = info;
+  function collectListenerFromCall(script, node, calleeNode, info, chain, inFunction) {
     // addEventListener(type, handler, options)
     if (info.method === 'addEventListener' && node.type === 'CallExpression') {
       const type = stringValue(node.arguments[0]);
@@ -315,8 +456,8 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       const handlerArg = node.arguments[1] ?? null;
       const handler = resolveFunctionIn(script, handlerArg);
       pushListener({
-        script, node, ancestors, via: 'addEventListener', event: type.toLowerCase(),
-        target: classifyTarget(receiver, ancestors),
+        script, node, get ancestors() { return ancestorsOf(chain); }, via: 'addEventListener', event: type.toLowerCase(),
+        target: classifyTarget(receiver, inFunction),
         targetText: receiver ? collapse(sourceOf(script, receiver)) : 'window',
         handler, handlerText: handler ? sourceOf(script, handler) : sourceOf(script, handlerArg),
         options: parseListenerOptions(node.arguments[2] ?? null), topLevel: info.topLevel,
@@ -329,7 +470,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       const handler = resolveFunctionIn(script, node.arguments[0]);
       if (handler) {
         pushListener({
-          script, node, ancestors, via: 'jquery', event: 'domcontentloaded', target: 'document', targetText: 'document',
+          script, node, get ancestors() { return ancestorsOf(chain); }, via: 'jquery', event: 'domcontentloaded', target: 'document', targetText: 'document',
           handler, handlerText: sourceOf(script, handler), options: parseListenerOptions(null), topLevel: info.topLevel,
         });
       }
@@ -341,7 +482,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       if (obj?.type !== 'CallExpression' || unwrapChain(obj.callee)?.type !== 'Identifier' || !JQUERY_NAMES.has(unwrapChain(obj.callee).name)) return;
       const name = calleeNode.property.name;
       const targetArg = obj.arguments[0] ?? null;
-      const target = classifyJqueryTarget(targetArg, ancestors);
+      const target = classifyJqueryTarget(targetArg, inFunction);
       const targetText = collapse(sourceOf(script, obj));
       let events = [];
       let handlerArg = null;
@@ -361,7 +502,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       if (name !== 'ready' && JQUERY_SHORTHANDS.has(name) && !handler && handlerArg?.type !== 'Identifier') return;
       for (const event of events) {
         pushListener({
-          script, node, ancestors, via: 'jquery', event, target: name === 'ready' ? 'document' : target, targetText,
+          script, node, get ancestors() { return ancestorsOf(chain); }, via: 'jquery', event, target: name === 'ready' ? 'document' : target, targetText,
           handler, handlerText: handler ? sourceOf(script, handler) : sourceOf(script, handlerArg),
           options: parseListenerOptions(null), topLevel: info.topLevel,
         });
@@ -369,7 +510,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
     }
   }
 
-  function collectListenerFromAssignment(script, node, info) {
+  function collectListenerFromAssignment(script, node, chain, topLevel, inFunction) {
     if (node.operator !== '=') return;
     const left = node.left;
     let receiver = null;
@@ -381,15 +522,19 @@ export function buildJsModel(scripts, { complete = true } = {}) {
       prop = left.name;
     }
     if (!prop || !/^on[a-z]+$/.test(prop)) return;
-    const right = node.right;
-    if ((right.type === 'Literal' && right.value === null) || (right.type === 'Identifier' && right.name === 'undefined')) return;
+    // a.onx = b.ony = value assigns the last value to both.
+    let right = node.right;
+    while (right.type === 'AssignmentExpression' && right.operator === '=') right = right.right;
+    // null, undefined and void 0 (the minified undefined) clear the handler.
+    if ((right.type === 'Literal' && right.value === null) || (right.type === 'Identifier' && right.name === 'undefined')
+      || (right.type === 'UnaryExpression' && right.operator === 'void')) return;
     const handler = resolveFunctionIn(script, right);
     pushListener({
-      script, node, ancestors: info.ancestors, via: 'property', event: prop.slice(2),
-      target: receiver ? classifyTarget(receiver, info.ancestors) : 'window',
+      script, node, get ancestors() { return ancestorsOf(chain); }, via: 'property', event: prop.slice(2),
+      target: receiver ? classifyTarget(receiver, inFunction) : 'window',
       targetText: receiver ? collapse(sourceOf(script, receiver)) : 'window',
       handler, handlerText: handler ? sourceOf(script, handler) : sourceOf(script, right),
-      options: parseListenerOptions(null), topLevel: computeTopLevel(info.ancestors),
+      options: parseListenerOptions(null), topLevel,
     });
   }
 
@@ -408,6 +553,10 @@ export function buildJsModel(scripts, { complete = true } = {}) {
     const bodyRoots = fnNode.type === 'Program' ? fnNode.body : [fnNode.body];
     for (const rootNode of bodyRoots) {
       traverse(rootNode, (node, live) => {
+        // Each visit gets a copy of its path, so the walk stops where the
+        // model does. Nodes past this point are not in the model either,
+        // and complete is already false.
+        if (live.length >= MAX_JS_DEPTH) return false;
         const ancestorsInFn = Object.freeze([fnNode, ...live]);
         const res = visit(node, ancestorsInFn);
         if (res === false) return false;
@@ -417,7 +566,8 @@ export function buildJsModel(scripts, { complete = true } = {}) {
     }
   };
 
-  const enclosingFunctions = (ancestors) => ancestors.filter((a) => FUNCTION_TYPES.has(a.type)).reverse();
+  /** Functions around a node, innermost first. For code in an event attribute the last one is the attribute's Program. */
+  const enclosingFunctions = (ancestors) => ancestors.filter((a) => FUNCTION_TYPES.has(a.type) || (a.type === 'Program' && handlerPrograms.has(a))).reverse();
 
   const isConditional = (arg, stopAt, nodeArg) => {
     const ancestors = Array.isArray(arg) ? arg : arg?.ancestors ?? [];
@@ -526,7 +676,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
   };
 
   return Object.freeze({
-    complete: Boolean(complete),
+    complete: Boolean(complete) && !truncated,
     scripts: Object.freeze(scripts),
     calls: Object.freeze(calls),
     listeners: Object.freeze(listeners),
@@ -539,6 +689,7 @@ export function buildJsModel(scripts, { complete = true } = {}) {
     mentions: (re) => scripts.some((s) => { re.lastIndex = 0; return re.test(s.source ?? ''); }),
     sourceOf,
     walkFunction,
+    /** The function a handler expression is: a function node, f.bind(...), or a name looked up in the scopes around the node. */
     resolveFunction: (script, node) => resolveFunctionIn(script, node),
     /** Same-script initializer of a name: the var/let/const init node, or the FunctionDeclaration. First wins. */
     initializerOf: (script, name) => initIndex.get(script)?.get(String(name)) ?? null,

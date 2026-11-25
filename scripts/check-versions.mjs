@@ -11,6 +11,9 @@
  *   - CHANGELOG.md has a section for the version
  *   - root devDependencies that mirror plugin dependencies (for tests) use
  *     the exact same pins
+ *   - docs/getting-started.md pins no other release (`atelier X doctor`,
+ *     `--branch vX`, `atelier@vX`; the floating `@v1` tag is fine) and
+ *     CLAUDE.md names the current major.minor
  *   - with --tag vX.Y.Z, the tag matches too
  *
  * Usage: node scripts/check-versions.mjs [--tag v1.0.0]
@@ -48,6 +51,20 @@ for (const [name, pin] of Object.entries(rootPkg.devDependencies ?? {})) {
   const pluginPin = pluginPkg.dependencies?.[name];
   if (pluginPin && pluginPin !== pin) problems.push(`${name}: root pins ${pin}, plugin pins ${pluginPin}`);
 }
+
+// Exact release pins in the install docs. The floating `@v1` tag has no
+// full semver, so it never matches.
+const SEMVER = '(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.]+)?)';
+const gettingStarted = read('docs/getting-started.md');
+for (const src of [`atelier ${SEMVER} doctor`, `For atelier ${SEMVER} it is`, `--branch v${SEMVER}`, `atelier@v${SEMVER}`]) {
+  for (const m of gettingStarted.matchAll(new RegExp(src, 'g'))) {
+    if (m[1] !== version) problems.push(`docs/getting-started.md pins ${m[1]}, expected ${version}`);
+  }
+}
+const claudeVersion = read('CLAUDE.md').match(/version (\d+\.\d+)\b/);
+const minor = version.split('.').slice(0, 2).join('.');
+if (!claudeVersion) problems.push('CLAUDE.md has no "version X.Y" line');
+else if (claudeVersion[1] !== minor) problems.push(`CLAUDE.md says version ${claudeVersion[1]}, expected ${minor}`);
 
 const tagIdx = process.argv.indexOf('--tag');
 if (tagIdx !== -1) {

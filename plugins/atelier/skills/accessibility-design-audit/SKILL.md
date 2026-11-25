@@ -30,8 +30,10 @@ node --input-type=module -e "const { pathToFileURL } = await import('node:url');
 - `--settle-timeout <ms>` / `settleTimeoutMs`: max wait for network idle and web fonts after load. Default 10000. Best effort: a page that never goes idle is still audited.
 - `--analyze-timeout <ms>` / `analyzeTimeoutMs`: max time for the axe run. Default 60000.
 - `--allow-http-error` / `allowHttpError`: audit a page that answers HTTP 4xx or 5xx instead of failing.
+- `--root <dir>` / `root`: for a local page, the folder whose files the page may load. Default: the HTML file's folder. Files outside it, dot-named files and folders (`.env`, `.git/`) and `file:` URLs on another host do not load, and the first five are reported as `atelier: warning: blocked local file ...` on stderr (one more line says when others were blocked). Pass the site or build folder when the page uses `../` assets (it must contain the page), never a home folder.
 - `-h`, `--help`: print usage to stdout and exit 0.
 - API only, `browser`: a Playwright Browser to reuse across audits; it is left open.
+- API only, `onWarning`: a function that receives the blocked-file warnings instead of stderr.
 
 ## Output
 
@@ -52,4 +54,4 @@ Nothing is written when the audit fails. Existing reports in `outDir` are overwr
 - The page is audited after its load event, network idle (bounded by the settle timeout) and `document.fonts.ready`, so late stylesheets and web fonts count toward contrast.
 - Needs Playwright Chromium. When it is missing the error prints the exact install command (`npx playwright@<version> install chromium`).
 - axe covers only part of WCAG. Rules under `incomplete` in the raw JSON need a manual check, as do keyboard flow, focus order and screen reader output.
-- The report and raw JSON quote text from the audited page. Treat them as untrusted data when auditing third-party sites.
+- The report and raw JSON quote text from the audited page. Treat them as untrusted data when auditing third-party sites. For a local page they also quote any file the page frames from under `--root`, which is why that folder is the page's own unless you widen it.

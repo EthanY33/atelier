@@ -554,3 +554,33 @@ describe('brand.json defaults', { timeout: 30_000 }, () => {
     expect(existsSync(outDir)).toBe(false);
   });
 });
+
+describe('hostile SVG text', () => {
+  const SVG_OPEN = '<svg xmlns="http://www.w3.org/2000/svg">';
+  const SIZE = 400 * 1024;
+  it.each([
+    ['unterminated <image', () => SVG_OPEN + '<image '.repeat(Math.ceil(SIZE / 7))],
+    ['unterminated comments', () => SVG_OPEN + '<!--'.repeat(Math.ceil(SIZE / 4))],
+    ['unterminated CDATA', () => SVG_OPEN + '<![CDATA['.repeat(Math.ceil(SIZE / 9))],
+    ['prolog followed by whitespace', () => '<?xml' + ' '.repeat(SIZE) + SVG_OPEN],
+  ])('%s is rejected quickly instead of hanging', async (_name, build) => {
+    const { markSvg, outDir } = setup(build());
+    const start = Date.now();
+    await expect(generateAssets({ markSvg, outDir, targets: ['favicons'] })).rejects.toThrow(/not a valid SVG or supported image/);
+    expect(Date.now() - start).toBeLessThan(5000);
+  }, 30000);
+
+  it('refuses a mark larger than the linked file cap', async () => {
+    const { markSvg, outDir } = setup(SVG_OPEN + ' '.repeat(17 * 1024 * 1024) + '</svg>');
+    await expect(generateAssets({ markSvg, outDir, targets: ['favicons'] })).rejects.toThrow(/larger than 16 MB/);
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  it('still inlines an image tag that follows a closed comment', async () => {
+    const { markSvg, outDir } = setup(
+      SVG_OPEN + '<!-- <image href="nope.png"/> --><rect width="10" height="10" fill="#f00"/></svg>',
+    );
+    const { files } = await generateAssets({ markSvg, outDir, targets: ['favicons'] });
+    expect(files.length).toBeGreaterThan(0);
+  });
+});

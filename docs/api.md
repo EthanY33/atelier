@@ -56,13 +56,15 @@ Importing a skill never starts its CLI, including under `node -e`.
 
 `plugins/atelier/bin/atelier`. Claude Code puts the plugin's `bin/` on the Bash tool's PATH, so inside a session it runs as `atelier`. Anywhere else, run `node <plugin>/bin/atelier`.
 
+On Windows, cmd.exe and PowerShell start it through `bin/atelier.cmd`. From PowerShell an argument that contains `|`, `<` or `>` is still read by cmd.exe before atelier starts: the text after a `|` runs as a command and `>` writes a file. Pass such an argument, and any argument taken from a file or a web page, with `node <plugin>\bin\atelier ...` instead. A line written as `cmd /c ""<path>\atelier.cmd" ..."` hands everything after the file name to atelier unparsed; write `cmd /d /c` to keep cmd syntax.
+
 | Command | What it does | Exit codes |
 |---|---|---|
 | `atelier`, `atelier --help` | Print usage | 0 |
 | `atelier --version` | Print the plugin version | 0 |
 | `atelier doctor [--no-browser] [--json]` | Check Node, dependencies, sharp, Chromium, ffmpeg and `./.atelier/brand.json`, with a fix for each problem | 0 ready (warnings allowed), 1 a check failed, 2 usage error |
 | `atelier demo [-o, --out <dir>]` | Run every skill on the bundled fixtures into `<dir>` (default `./atelier-demo`) | 0, or 2 on a usage error or failure |
-| `atelier <alias> [args...]` | Run a skill's CLI | the skill's code; 2 for an unknown command |
+| `atelier <alias> [args...]` | Run a skill's CLI | the skill's code; 2 for an unknown command or when the skill process is ended by a signal (stderr names it). SIGTERM and SIGHUP sent to the wrapper are relayed to the skill process, and so is SIGINT when the wrapper has no terminal on stdin, stdout or stderr (with a terminal, Ctrl+C already reaches the skill and the wrapper waits for it to exit) |
 
 Aliases: `brand` (brand-memory), `tokens` (design-token-sync), `og` (og-card-generator), `images` (responsive-image-pipeline), `assets` (brand-asset-pipeline), `a11y` (accessibility-design-audit), `video` (html-to-video), `ux` (runtime-ux-audit). The full skill name works too: `atelier runtime-ux-audit ...`.
 
@@ -306,7 +308,7 @@ Exit codes: 0 assets written; 2 usage error or failure.
 
 ### Exports
 
-- `auditPage(opts): Promise<{ violations, reportPath, rawPath, url, tags }>`. Opens the page, waits for the load event, then up to `settleTimeoutMs` for network idle and web fonts, then `waitFor`; runs axe; writes the report and the raw JSON. Nothing is written when the audit fails. `violations` is `{ critical, serious, moderate, minor, all }`, each an array of axe violation objects. `url` is the audited URL (a file path becomes a `file://` URL).
+- `auditPage(opts): Promise<{ violations, reportPath, rawPath, url, tags }>`. Opens the page, waits for the load event, then up to `settleTimeoutMs` for network idle and web fonts, then `waitFor`; runs axe; writes the report and the raw JSON. Nothing is written when the audit fails. `violations` is `{ critical, serious, moderate, minor, all }`, each an array of axe violation objects. `url` is the audited URL (a file path becomes a `file://` URL). A page opened from disk only loads files under `root`; see [Local pages](#local-pages).
 
   | Option | Default | Meaning |
   |---|---|---|
@@ -318,9 +320,11 @@ Exit codes: 0 assets written; 2 usage error or failure.
   | `settleTimeoutMs` | `10000` | Maximum wait for network idle and fonts (best effort) |
   | `analyzeTimeoutMs` | `60000` | Maximum time for the axe run |
   | `allowHttpError` | `false` | Audit a page that answers HTTP 4xx or 5xx instead of throwing |
+  | `root` | the HTML file's folder | Local pages only: the folder whose files the page may load |
+  | `onWarning` | print to stderr | `(message: string) => void`; called once per blocked local file for the first five, then once more to say that others were blocked and are not listed |
   | `browser` | launch one | A Playwright `Browser` to reuse; it is left open |
 
-  Throws an `AuditError` with one of these codes: `INPUT_NOT_FOUND`, `INPUT_IS_DIRECTORY`, `INVALID_URL`, `UNSUPPORTED_SCHEME`, `INVALID_TAGS`, `UNKNOWN_TAG`, `NAVIGATION_FAILED`, `HTTP_ERROR`, `LOAD_TIMEOUT`, `WAIT_FOR_FAILED`, `ANALYZE_TIMEOUT`, `NO_RULES`. Throws `AXE_MISSING`, `PLAYWRIGHT_MISSING`, `CHROMIUM_MISSING` or `CHROMIUM_DEPS_MISSING` when a prerequisite is missing, and a `TypeError` for an invalid option.
+  Throws an `AuditError` with one of these codes: `INPUT_NOT_FOUND`, `INPUT_IS_DIRECTORY`, `OUTSIDE_ROOT`, `INVALID_URL`, `UNSUPPORTED_SCHEME`, `INVALID_TAGS`, `UNKNOWN_TAG`, `NAVIGATION_FAILED`, `HTTP_ERROR`, `LOAD_TIMEOUT`, `WAIT_FOR_FAILED`, `ANALYZE_TIMEOUT`, `NO_RULES`. Throws `AXE_MISSING`, `PLAYWRIGHT_MISSING`, `CHROMIUM_MISSING` or `CHROMIUM_DEPS_MISSING` when a prerequisite is missing, and a `TypeError` for an invalid option.
 - `AuditError`. `Error` subclass with `name: 'AuditError'` and `code`.
 - `DEFAULT_TAGS: readonly string[]`. `['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']`.
 - `groupByImpact(violations: object[]): { critical, serious, moderate, minor, all }`. Violations without a known impact appear only in `all`.
@@ -335,11 +339,15 @@ Exit codes: 0 assets written; 2 usage error or failure.
 atelier a11y <url|file> [outDir] [options]
 ```
 
-`[outDir]` or `-o, --out <dir>` (default `a11y-report`), `--tags <list>`, `--wait-for <selector>`, `--timeout <ms>`, `--settle-timeout <ms>`, `--analyze-timeout <ms>`, `--allow-http-error`. A bare host such as `example.com` is not guessed; pass `https://example.com`.
+`[outDir]` or `-o, --out <dir>` (default `a11y-report`), `--tags <list>`, `--wait-for <selector>`, `--timeout <ms>`, `--settle-timeout <ms>`, `--analyze-timeout <ms>`, `--allow-http-error`, `--root <dir>`. A bare host such as `example.com` is not guessed; pass `https://example.com`.
 
 Writes `<outDir>/a11y-report.md` (counts, then one section per impact with up to 5 selectors per rule) and `<outDir>/a11y-raw.json` (the full axe result). stdout: `Report written to: <path>`, then `Violations: critical N, serious N, moderate N, minor N`.
 
 Exit codes: 0 no critical or serious violations; 1 at least one; 2 usage error or the audit could not run.
+
+### Local pages
+
+This section applies to `accessibility-design-audit` and `html-to-video` alike. Chromium lets a page opened from disk frame, embed or link any file the user can read, and both skills copy what the page renders into their output. So a local page only loads regular files under one folder: the HTML file's own, or `root` (`--root <dir>`, relative to the working directory) when given, which must contain the page. Paths are compared after following links, the page's own included. Dot-named files and folders (`.env`, `.git/`) never load, except `.well-known/`, and neither does a `file:` URL on another host. The first five blocked files are each reported once as `atelier: warning: blocked local file <url>: ...` on stderr, or through `onWarning`, followed by one `more local files were blocked; they are not listed` message when there were more; a file that does not exist is not reported. `root` is ignored for http(s) and `data:` pages, which Chromium itself keeps away from `file:` URLs.
 
 ## html-to-video
 
@@ -361,10 +369,12 @@ Exit codes: 0 no critical or serious violations; 1 at least one; 2 usage error o
   | `audioSource` | none | `(wavPath: string) => void or Promise<void>`; must write a WAV at `wavPath` (48 kHz 16-bit PCM recommended). Audio is encoded to AAC (MP4) or Opus (WebM) and the output ends with the shorter stream. |
   | `timeoutMs` | `30000` | Navigation and load event timeout |
   | `allowHttpError` | `false` | Record a page that answers HTTP 4xx or 5xx |
+  | `root` | the HTML file's folder | Local pages only: the folder whose files the page may load; see [Local pages](#local-pages) |
+  | `onWarning` | print to stderr | `(message: string) => void`; called once per blocked local file for the first five, then once more to say that others were blocked and are not listed |
   | `browser` | launch one | A Playwright Chromium `Browser` to reuse; it is left open |
   | `signal` | none | `AbortSignal`; aborting stops the capture or encode, removes the temp files and rejects with the abort reason |
 
-  Throws a `TypeError` for an invalid option before any work starts. Throws `FFMPEG_MISSING` (checked before Chromium launches), `PLAYWRIGHT_MISSING`, `CHROMIUM_MISSING` or `CHROMIUM_DEPS_MISSING` for a missing prerequisite, and an `Error` for a page that answers HTTP 4xx or 5xx, cannot be opened or misses its load event, or an `audioSource` that writes an empty file.
+  Throws a `TypeError` for an invalid option before any work starts. Throws `FFMPEG_MISSING` (checked before Chromium launches), `PLAYWRIGHT_MISSING`, `CHROMIUM_MISSING` or `CHROMIUM_DEPS_MISSING` for a missing prerequisite, and an `Error` for a page that answers HTTP 4xx or 5xx, cannot be opened or misses its load event, a `root` that does not exist or does not contain the page, or an `audioSource` that writes an empty file.
 - `findOnPath`. Re-export of the shared [`findOnPath`](#preflightmjs), kept for 0.2 callers.
 - `runCli(argv?: string[], { stdout?, stderr? }?): Promise<number>`. `stdout` and `stderr` are objects with `write(s)`. The first Ctrl+C aborts the recording and cleans up.
 
@@ -374,7 +384,7 @@ Exit codes: 0 no critical or serious violations; 1 at least one; 2 usage error o
 atelier video <url|file.html> <out.mp4|out.webm> [seconds] [options]
 ```
 
-`-d, --duration <s>` (same as `[seconds]`; give one), `--fps <n>`, `--width <px>`, `--height <px>`, `-f, --format <mp4|webm>`, `--poster`, `--audio <file>` (copied in as the audio track; any format ffmpeg reads), `--timeout <ms>`, `--allow-http-error`. stdout: `Video written to: <path>`, and `Poster written to: <path>` with `--poster`.
+`-d, --duration <s>` (same as `[seconds]`; give one), `--fps <n>`, `--width <px>`, `--height <px>`, `-f, --format <mp4|webm>`, `--poster`, `--audio <file>` (copied in as the audio track; any format ffmpeg reads), `--timeout <ms>`, `--allow-http-error`, `--root <dir>`. stdout: `Video written to: <path>`, and `Poster written to: <path>` with `--poster`.
 
 Exit codes: 0 video written; 2 usage or runtime error.
 
@@ -446,7 +456,7 @@ Exit codes: 0 no critical or serious findings; 1 critical or serious findings; 2
 - `findOnPath(name: string, { env?, platform? }?): string | null`. Resolves an executable on PATH the way a shell would, without a shell. On Windows only `.exe` and `.com` match; elsewhere the file must be executable. A name with a path separator is checked directly, and the current directory is never searched implicitly.
 - `checkBinary(cmd: string, args = ['--version'], { env?, timeoutMs = 15000 }?): Promise<{ ok, path?, version?, error? }>`. Runs the binary without a shell and reports the first line of its output.
 - `checkNodeModule(name: string): Promise<{ ok, error? }>`. Whether a module resolves from the plugin's `node_modules`.
-- `runPreflight(checks): Promise<object[]>`. Runs `{ kind: 'bin', cmd, args?, install? }` and `{ kind: 'module', name, install? }` checks and throws one `PreflightError` with code `PREFLIGHT_FAILED` listing every failure.
+- `runPreflight(checks): Promise<object[]>`. Runs `{ kind: 'bin', cmd, args?, install? }` and `{ kind: 'module', name, install? }` checks and throws one `PreflightError` with code `PREFLIGHT_FAILED` listing every failure. An absent binary reads `Missing binary: <cmd>` with its install hint; a binary that is found but fails reads `<cmd> (<path>) does not run: <error>`.
 - `playwrightVersion(): string | null`. The installed Playwright version.
 - `launchChromium(launchOptions?): Promise<Browser>`. Launches Playwright's Chromium. Throws `PLAYWRIGHT_MISSING`, `CHROMIUM_MISSING` (with `fix` = `npx playwright@<version> install chromium`) or `CHROMIUM_DEPS_MISSING` (with the matching `install-deps` command).
 - `ensureFfmpeg({ env?, platform? }?): string`. Absolute path to ffmpeg, or throws `FFMPEG_MISSING` with a per-OS install hint.
@@ -529,8 +539,9 @@ Versioning: every atelier 1.x release writes `schemaVersion` `"1.0"` until the f
 | `CHROMIUM_DEPS_MISSING` | same (not runtime-ux-audit) | Linux system libraries for Chromium are missing |
 | `FFMPEG_MISSING` | lib, html-to-video | ffmpeg is not on PATH |
 | `PREFLIGHT_FAILED` | lib `runPreflight` | One or more checks failed |
-| `INPUT_NOT_FOUND` | accessibility-design-audit, runtime-ux-audit | The file does not exist |
+| `INPUT_NOT_FOUND` | accessibility-design-audit, runtime-ux-audit | The file, or the `root` directory, does not exist |
 | `INPUT_IS_DIRECTORY` | accessibility-design-audit | A directory was given instead of an HTML file |
+| `OUTSIDE_ROOT` | accessibility-design-audit | The local page is not inside `root`, or is a link that leads out of it or to a dot-named file |
 | `INVALID_URL`, `UNSUPPORTED_SCHEME` | accessibility-design-audit | Not a URL, or not http, https, file or data |
 | `INVALID_TAGS`, `UNKNOWN_TAG`, `NO_RULES` | accessibility-design-audit | The tag list is empty, names an unknown tag, or runs no rule |
 | `NAVIGATION_FAILED`, `HTTP_ERROR`, `LOAD_TIMEOUT`, `WAIT_FOR_FAILED`, `ANALYZE_TIMEOUT` | accessibility-design-audit | The page could not be opened, answered 4xx or 5xx, missed its load event, never showed the `waitFor` selector, or axe timed out |

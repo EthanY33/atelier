@@ -86,6 +86,29 @@ describe('no-unload-handler', () => {
     expect(res.status).toBe('passed');
   });
 
+  it('ignores handlers cleared through a chained assignment or void 0', async () => {
+    const res = await check('no-unload-handler', page(script([
+      'function cleanup() { window.onunload = window.onbeforeunload = null; }',
+      'function reset() { window.onunload = void 0; }',
+      'window.onunload = self.onunload = undefined;',
+    ].join('\n'))));
+    expect(res.status).toBe('passed');
+  });
+
+  it('still flags a handler assigned through a chain, with the handler it ends in', async () => {
+    const html = page(script([
+      'window.onunload = window.onpagehide = save;',
+      'window.onunload = handlers.last ||= null;',
+      'function save() {}',
+    ].join('\n')));
+    const res = await check('no-unload-handler', html);
+    expect(snippets(res)).toEqual(['window.onunload = window.onpagehide = save', 'window.onunload = handlers.last ||= null']);
+    const { js } = await contextFor({ 'index.html': html });
+    const [unload] = js.listenersByEvent('unload');
+    expect(unload.handler?.id.name).toBe('save');
+    expect(js.listenersByEvent('pagehide')[0].handler).toBe(unload.handler);
+  });
+
   it('honors atelier-ignore comments', async () => {
     const res = await check('no-unload-handler', page(script("// atelier-ignore no-unload-handler -- legacy\nwindow.addEventListener('unload', a);")));
     expect(res).toMatchObject({ status: 'passed', suppressed: 1 });
@@ -126,6 +149,57 @@ describe('no-beforeunload-always-attached', () => {
       "try { x(); } catch (e) { addEventListener('beforeunload', warn); }",
     ].join('\n'))));
     expect(res.status).toBe('passed');
+  });
+
+  it('resolves a ready handler in its own scope when two modules share its name', async () => {
+    const other = "(function () { function init() { document.documentElement.classList.add('ready'); } document.addEventListener('DOMContentLoaded', init); })();";
+    const onEdit = "(function () { var armed = false; function init() { window.addEventListener('beforeunload', function (e) { e.preventDefault(); }); }"
+      + " document.getElementById('f').addEventListener('input', function () { if (!armed) { armed = true; init(); } }); })();";
+    const run = (js) => check('no-beforeunload-always-attached', page(`<form id="f"></form>${script(js)}`));
+    expect((await run(`${onEdit}\n${other}`)).status).toBe('passed');
+    // The same init registered as the ready handler of its own module, or declared in an outer scope, is still flagged.
+    const onReady = "(function () { function init() { window.addEventListener('beforeunload', warn); } document.addEventListener('DOMContentLoaded', init); })();";
+    expect((await run(`${onReady}\n${other}`)).nodes.map((n) => n.location)).toEqual(['index.html:2:34']);
+    const outer = "function init() { window.addEventListener('beforeunload', warn); }\n(function () { window.addEventListener('load', init); })();";
+    expect((await run(outer)).nodes.map((n) => n.location)).toEqual(['index.html:2:19']);
+  });
+
+  it('resolves a function declared in a block to its own block', async () => {
+    const run = (js) => check('no-beforeunload-always-attached', page(`<form id="f"></form>${script(js)}`));
+    const arm = "function init(){ window.addEventListener('beforeunload', w); }";
+    const idle = 'function init(){}';
+    // The armed init is only used on edit; the ready handler is another init in a sibling block.
+    const a = `{ ${arm} f.addEventListener('input', function(){ init(); }); }\n{ ${idle} document.addEventListener('DOMContentLoaded', init); }`;
+    expect((await run(a)).status).toBe('passed');
+    // The armed init is the ready handler of its own block.
+    const b = `{ ${idle} f.addEventListener('input', init); }\n{ ${arm} document.addEventListener('DOMContentLoaded', init); }`;
+    expect((await run(b)).nodes.map((n) => n.location)).toEqual(['index.html:3:20']);
+    // A block function next to an outer function of the same name.
+    const c = "'use strict'; function init(){ window.onbeforeunload = warn; }\n{ function init(){ ok(); } window.addEventListener('load', init); }";
+    expect((await run(c)).status).toBe('passed');
+    // A block function used after its block is still hoisted and still flagged.
+    const d = "{ function init(){ window.onbeforeunload = warn; } }\nwindow.addEventListener('load', init);";
+    expect((await run(d)).nodes.map((n) => n.location)).toEqual(['index.html:2:20']);
+  });
+
+  it('passes guards armed from an event attribute, and flags the ones armed on every load', async () => {
+    const onEdit = await check('no-beforeunload-always-attached', page(
+      '<textarea oninput="window.onbeforeunload = confirmLeave"></textarea>'
+      + '<button onclick="window.addEventListener(\'beforeunload\', warn)">Edit</button>',
+    ));
+    expect(onEdit.status).toBe('passed');
+    const body = (attrs) => `<!doctype html><html><head></head><body ${attrs}><p>x</p></body></html>`;
+    const onLoad = await check('no-beforeunload-always-attached', body('onload="window.onbeforeunload = warn" onpageshow="addEventListener(\'beforeunload\', warn)"'));
+    expect(onLoad.nodes.map((n) => [n.data.via, n.selector])).toEqual([['property', 'body[onload]'], ['addEventListener', 'body[onpageshow]']]);
+    const guarded = await check('no-beforeunload-always-attached', body('onload="if (editor.dirty) window.onbeforeunload = warn"'));
+    expect(guarded.status).toBe('passed');
+  });
+
+  it('reads chained assignments: a clear passes, a handler is flagged', async () => {
+    const cleared = await check('no-beforeunload-always-attached', page(script('window.onbeforeunload = window.onunload = null;\nwindow.onbeforeunload = void 0;')));
+    expect(cleared.status).toBe('passed');
+    const set = await check('no-beforeunload-always-attached', page(script('window.onbeforeunload = window.onpagehide = warn;')));
+    expect(snippets(set)).toEqual(['window.onbeforeunload = window.onpagehide = warn']);
   });
 });
 
@@ -616,6 +690,13 @@ describe('analytics-without-prerender-guard', () => {
       const res = await run(js);
       expect(res.status, js).toBe(want);
     }
+  });
+
+  it('does not read a page view sent from an event attribute as running at script start', async () => {
+    const res = await run("fbq('track', 'PageView');", '<button onclick="ga(\'send\', \'pageview\')">Next</button>');
+    expect(snippets(res)).toEqual(["fbq('track', 'PageView')"]);
+    const onlyAttr = await check('analytics-without-prerender-guard', page('<button onclick="analytics.page()">Next</button>'));
+    expect(onlyAttr.status).toBe('passed');
   });
 
   it('routes findings to incomplete when a script could not be read', async () => {
