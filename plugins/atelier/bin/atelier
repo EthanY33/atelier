@@ -9,14 +9,17 @@
  * Exit codes: 0 success, 1 doctor found a failing check (or a forwarded
  * skill's own code), 2 usage error or runtime failure (including a skill
  * process ended by a signal). SIGTERM and SIGHUP sent to the wrapper are
- * relayed to the skill process, and so is SIGINT when the wrapper is not
- * attached to a terminal (a terminal Ctrl+C already reaches the skill).
+ * relayed to the skill process, and so is SIGINT when the wrapper has no
+ * terminal on stdin, stdout or stderr. With a terminal, Ctrl+C already
+ * reaches the skill through the process group, so the wrapper ignores it and
+ * waits for the skill to finish its cleanup and report its exit code.
  */
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { hasTerminal, relaySignals } from '../lib/relay.mjs';
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { version } = JSON.parse(readFileSync(join(pluginRoot, 'package.json'), 'utf8'));
@@ -122,13 +125,20 @@ async function main() {
     // SIGINT is not relayed from a terminal: Ctrl+C goes to the whole
     // foreground process group, so the skill already got it, and a second
     // SIGINT would defeat its graceful first-press cleanup (html-to-video).
-    const signals = process.stdin.isTTY ? ['SIGTERM', 'SIGHUP'] : ['SIGINT', 'SIGTERM', 'SIGHUP'];
+    // The wrapper keeps a no-op SIGINT handler then, so it outlives the skill's
+    // cleanup instead of dying first; a second Ctrl+C still ends the skill.
+    const { signals, swallowSigint } = relaySignals(hasTerminal());
     const relays = signals.map((sig) => {
       const relay = () => { child.kill(sig); };
       process.on(sig, relay);
       return [sig, relay];
     });
-    const unrelay = () => { for (const [sig, relay] of relays) process.off(sig, relay); };
+    const keep = () => {};
+    if (swallowSigint) process.on('SIGINT', keep);
+    const unrelay = () => {
+      for (const [sig, relay] of relays) process.off(sig, relay);
+      if (swallowSigint) process.off('SIGINT', keep);
+    };
     child.on('error', (err) => { unrelay(); console.error(`atelier: ${err.message}`); resolve(2); });
     child.on('close', (code, signal) => {
       unrelay();

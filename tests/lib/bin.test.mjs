@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { hasTerminal, relaySignals } from '../../plugins/atelier/lib/relay.mjs';
 import { binPath, envWithPath, isWin, makeTmp, pluginRoot, runNode, touch } from './helpers.mjs';
 
 const pkg = JSON.parse(readFileSync(join(pluginRoot, 'package.json'), 'utf8'));
@@ -208,9 +209,8 @@ describe('atelier skill forwarding', () => {
   });
 
   // Without a terminal nothing else delivers SIGINT to the skill, so it is relayed.
-  // With a terminal it is not (Ctrl+C already reaches the skill through the
-  // process group); a pty test is not feasible here, so that gate is not covered.
-  it.skipIf(isWin)('relays SIGINT sent to the wrapper to the skill process when stdin is not a terminal', async () => {
+  // The terminal case is covered by the relaySignals unit tests below.
+  it.skipIf(isWin)('relays SIGINT sent to the wrapper to the skill process when there is no terminal', async () => {
     const { env } = spyEnv();
     const pidFile = join(tmp, 'skill-int.pid');
     const child = spawn(process.execPath, [binPath, 'tokens'], {
@@ -360,5 +360,24 @@ describe.skipIf(!isWin)('atelier.cmd shim', () => {
       expect(r.stderr).toContain('unknown command "nope&echo=INJECTED"');
       expect(r.stdout).toBe('');
     });
+  });
+});
+
+describe('relaySignals', () => {
+  it('relays SIGINT, SIGTERM and SIGHUP and keeps the default SIGINT handling without a terminal', () => {
+    expect(relaySignals(false)).toEqual({ signals: ['SIGINT', 'SIGTERM', 'SIGHUP'], swallowSigint: false });
+  });
+
+  it('does not relay SIGINT with a terminal and keeps the wrapper alive until the skill closes', () => {
+    expect(relaySignals(true)).toEqual({ signals: ['SIGTERM', 'SIGHUP'], swallowSigint: true });
+  });
+
+  it('counts a terminal on any of stdin, stdout or stderr', () => {
+    const proc = (i, o, e) => ({ stdin: { isTTY: i }, stdout: { isTTY: o }, stderr: { isTTY: e } });
+    expect(hasTerminal(proc(false, false, false))).toBe(false);
+    expect(hasTerminal(proc(undefined, undefined, undefined))).toBe(false);
+    expect(hasTerminal(proc(false, true, false))).toBe(true);
+    expect(hasTerminal(proc(false, false, true))).toBe(true);
+    expect(hasTerminal(proc(true, false, false))).toBe(true);
   });
 });
