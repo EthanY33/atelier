@@ -207,6 +207,34 @@ describe('atelier skill forwarding', () => {
     expect(alive).toBe(false);
   });
 
+  // Without a terminal nothing else delivers SIGINT to the skill, so it is relayed.
+  // With a terminal it is not (Ctrl+C already reaches the skill through the
+  // process group); a pty test is not feasible here, so that gate is not covered.
+  it.skipIf(isWin)('relays SIGINT sent to the wrapper to the skill process when stdin is not a terminal', async () => {
+    const { env } = spyEnv();
+    const pidFile = join(tmp, 'skill-int.pid');
+    const child = spawn(process.execPath, [binPath, 'tokens'], {
+      cwd: tmp,
+      env: { ...env, ATELIER_SPY_MODE: 'wait', ATELIER_SPY_PID: pidFile },
+      stdio: 'ignore',
+    });
+    const closed = new Promise((res) => child.on('close', (code, signal) => res({ code, signal })));
+    let skillPid;
+    for (let i = 0; i < 100 && !skillPid; i++) {
+      if (existsSync(pidFile)) skillPid = Number(readFileSync(pidFile, 'utf8'));
+      else await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(skillPid).toBeGreaterThan(0);
+    child.kill('SIGINT');
+    const end = await closed;
+    expect(end.code).toBe(2);
+    let alive = true;
+    for (let i = 0; i < 20 && alive; i++) {
+      try { process.kill(skillPid, 0); await new Promise((r) => setTimeout(r, 50)); } catch { alive = false; }
+    }
+    expect(alive).toBe(false);
+  });
+
   it('atelier tokens --help prints the skill usage, the same as running the skill directly', () => {
     const entry = join(pluginRoot, 'skills', 'design-token-sync', 'index.mjs');
     const direct = runNode([entry, '--help'], { cwd: tmp });
