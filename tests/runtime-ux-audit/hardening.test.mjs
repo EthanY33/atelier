@@ -347,6 +347,20 @@ describe('speculation href_matches patterns', () => {
     const batch = timed(() => links.map((l) => ok.test(l)));
     expect(batch.ms).toBeLessThan(10_000);
   });
+
+  it('costs little per link for a maximum-length pattern and bounds a huge href', () => {
+    const resolve = (h) => `https://a.example${h.startsWith('/') ? '' : '/'}${h}`;
+    const pattern = `/${'*a'.repeat(510)}*z`;
+    expect(pattern.length).toBeLessThanOrEqual(1024);
+    const re = compileHrefPattern(pattern, resolve);
+    expect(re).not.toBeNull();
+    const links = Array.from({ length: 2000 }, (_, i) => `https://a.example/${'a'.repeat(100)}${i}`);
+    const batch = timed(() => links.map((l) => re.test(l)));
+    expect(batch.ms).toBeLessThan(3000);
+    const huge = timed(() => re.test(`https://a.example/${'a'.repeat(100_000)}`));
+    expect(huge.ms).toBeLessThan(FAST_MS);
+    expect(huge.value).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -373,6 +387,25 @@ describe('vta-duplicate-names on broad repeated selectors', () => {
     expect(ms).toBeLessThan(60_000);
     expect(value.status).toBe('incomplete');
     expect(process.memoryUsage().heapUsed - before).toBeLessThan(600 * 1024 * 1024);
+  }, 90_000);
+
+  it('gives up in bounded time on 300 distinct selectors that each match every element', async () => {
+    const css = Array.from({ length: 300 }, (_, i) => `i:not(.c${i}){view-transition-name:a}`).join('');
+    const html = `<!doctype html><html><head><style>${css}</style></head><body>${'<i></i>'.repeat(20000)}</body></html>`;
+    const ctx = await contextFor({ 'index.html': html }, { areas: ['transitions'] });
+    const { ms, value } = await timedAsync(async () => runRule(vtaDuplicateNames, ctx));
+    expect(ms).toBeLessThan(60_000);
+    expect(value.status).toBe('incomplete');
+  }, 90_000);
+
+  it('gives up in bounded time on thousands of distinct media rules that each match one element', async () => {
+    const n = 5000;
+    const css = Array.from({ length: n }, (_, i) => `@media (min-width:${400 + i}px){#e${i}{view-transition-name:a}}`).join('');
+    const html = `<!doctype html><html><head><style>${css}</style></head><body>${Array.from({ length: n }, (_, i) => `<i id="e${i}"></i>`).join('')}</body></html>`;
+    const ctx = await contextFor({ 'index.html': html }, { areas: ['transitions'] });
+    const { ms, value } = await timedAsync(async () => runRule(vtaDuplicateNames, ctx));
+    expect(ms).toBeLessThan(60_000);
+    expect(value.status).toBe('incomplete');
   }, 90_000);
 });
 

@@ -247,6 +247,9 @@ const MAX_LISTED = 5;
 // Stored (condition set, element, pseudo) entries after which the duplicate
 // scan gives up, so many distinct conditions over many elements stay bounded.
 const MAX_SCAN_ENTRIES = 100_000;
+// Work units (considered matches plus winner-resolution steps) after which the
+// scan gives up. The entry cap bounds memory; this one bounds time.
+const MAX_SCAN_WORK = 2_000_000;
 const SCAN_BUDGET = Symbol('vta-scan-budget');
 const UA_ROOT_DECL = Object.freeze({ value: 'root' });
 
@@ -341,7 +344,10 @@ function scanDuplicates(ctx, decls) {
     return g;
   };
   let stored = 0;
+  let work = 0;
+  const spend = (n) => { if ((work += n) > MAX_SCAN_WORK) throw SCAN_BUDGET; };
   const consider = (g, el, pseudo, decl, rank) => {
+    spend(1);
     let byPseudo = g.best.get(el);
     if (!byPseudo) g.best.set(el, byPseudo = new Map());
     const cur = byPseudo.get(pseudo);
@@ -351,7 +357,10 @@ function scanDuplicates(ctx, decls) {
   const matchedCache = new Map();
   const matched = (sel) => {
     let list = matchedCache.get(sel);
-    if (!list) matchedCache.set(sel, list = html.querySelectorAll(sel));
+    if (!list) {
+      spend(html.elements.length); // one pass over every element per distinct selector
+      matchedCache.set(sel, list = html.querySelectorAll(sel));
+    }
     return list;
   };
   const hidden = new Map();
@@ -360,6 +369,9 @@ function scanDuplicates(ctx, decls) {
     if (h === undefined) hidden.set(el, h = isHidden(el));
     return !h;
   };
+  // Within one condition set a later or more specific declaration of the same
+  // selector beats an earlier one on every element, so keep only that one.
+  const bySelector = new Map(); // group -> Map(selector -> { d, rank })
   decls.forEach((d, order) => {
     const layered = d.context.layer.length > 0;
     const base = [d.important ? 1 : 0, d.important === layered ? 1 : 0];
@@ -367,14 +379,24 @@ function scanDuplicates(ctx, decls) {
     if (d.rule.fromStyleAttr) {
       if (visible(d.rule.fromStyleAttr)) consider(g, d.rule.fromStyleAttr, '', d, [...base, Infinity, 0, 0, order]);
     } else {
+      let sels = bySelector.get(g);
+      if (!sels) bySelector.set(g, sels = new Map());
       for (const sel of d.rule.selectors) {
         if (STATE_SEL_RE.test(sel) || VT_SELECTOR_RE.test(sel)) continue;
-        const pseudo = pseudoElementOf(sel);
         const rank = [...base, ...specificity(sel), order];
-        for (const el of matched(sel)) if (visible(el)) consider(g, el, pseudo, d, rank);
+        const cur = sels.get(sel);
+        if (!cur || cmpRank(rank, cur.rank) >= 0) sels.set(sel, { d, rank });
       }
     }
   });
+  for (const [g, sels] of bySelector) {
+    for (const [sel, { d, rank }] of sels) {
+      const pseudo = pseudoElementOf(sel);
+      const els = matched(sel);
+      spend(els.length);
+      for (const el of els) if (visible(el)) consider(g, el, pseudo, d, rank);
+    }
+  }
   // The UA stylesheet names the root element 'root' (:root { view-transition-name: root }).
   const rootEl = html.byTag('html')[0];
   if (rootEl && decls.some((d) => fixedName(d.value) === 'root')) {
@@ -397,6 +419,7 @@ function scanDuplicates(ctx, decls) {
     scenarios.push(conds);
   }
 
+  spend(scenarios.length * groups.size);
   const reported = new Set();
   const out = [];
   for (const scenario of scenarios) {
@@ -404,6 +427,7 @@ function scanDuplicates(ctx, decls) {
     const winners = new Map(); // el -> Map(pseudo -> entry)
     for (const g of groups.values()) {
       if (!g.conds.every((c) => active.has(c))) continue;
+      spend(g.best.size);
       for (const [el, byPseudo] of g.best) {
         if (!winners.has(el)) winners.set(el, new Map());
         const w = winners.get(el);

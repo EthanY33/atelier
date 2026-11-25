@@ -190,6 +190,7 @@ export function specificity(sel) {
 const TOKEN = 'zzatelier';
 // Longer patterns are skipped: matching costs pattern length times URL length per link.
 const MAX_PATTERN_LENGTH = 1024;
+const MAX_URL_LENGTH = 8192;
 
 /**
  * Compile the supported subset of a URL pattern string into a matcher over
@@ -235,31 +236,46 @@ export function compileHrefPattern(pattern, resolveHref) {
   return { test: (url) => matchItems(items, String(url)) };
 }
 
-/** Simulate the pattern as an NFA over the input, one state set per character. */
+/**
+ * Simulate the pattern as an NFA over the input, one state set per character.
+ * Each step costs the number of active states, not the pattern length, and an
+ * input longer than MAX_URL_LENGTH never matches.
+ */
 function matchItems(items, input) {
+  if (input.length > MAX_URL_LENGTH) return false;
   const m = items.length;
   const loops = (i) => items[i] === 'any' || items[i] === 'nsstar';
-  let cur = new Uint8Array(m + 1);
-  let next = new Uint8Array(m + 1);
-  const close = (set) => { for (let i = 0; i < m; i++) if (set[i] && loops(i)) set[i + 1] = 1; };
-  cur[0] = 1;
-  close(cur);
+  let cur = new Int32Array(m + 1);
+  let next = new Int32Array(m + 1);
+  let curN = 0;
+  let nextN = 0;
+  // stamp[i] === step marks state i as already in the set being built.
+  const stamp = new Int32Array(m + 2).fill(-1);
+  let step = 0;
+  const add = (i) => { if (stamp[i] !== step) { stamp[i] = step; next[nextN++] = i; } };
+  // Add the states and follow epsilon moves out of loop states.
+  const addClosed = (i) => { for (let j = i; ; j++) { add(j); if (j >= m || !loops(j)) break; } };
+  addClosed(0);
+  [cur, next] = [next, cur];
+  curN = nextN;
   for (const ch of input) {
-    next.fill(0);
-    let any = false;
-    for (let i = 0; i < m; i++) {
-      if (!cur[i]) continue;
+    step++;
+    nextN = 0;
+    for (let k = 0; k < curN; k++) {
+      const i = cur[k];
+      if (i >= m) continue;
       const it = items[i];
-      if (it === 'any') { next[i] = 1; any = true; }
-      else if (it === 'nsstar') { if (ch !== '/') { next[i] = 1; any = true; } }
-      else if (it === 'ns') { if (ch !== '/') { next[i + 1] = 1; any = true; } }
-      else if (it === ch) { next[i + 1] = 1; any = true; }
+      if (it === 'any') addClosed(i);
+      else if (it === 'nsstar') { if (ch !== '/') addClosed(i); }
+      else if (it === 'ns') { if (ch !== '/') addClosed(i + 1); }
+      else if (it === ch) addClosed(i + 1);
     }
-    if (!any) return false;
-    close(next);
+    if (nextN === 0) return false;
     [cur, next] = [next, cur];
+    curN = nextN;
   }
-  return cur[m] === 1;
+  for (let k = 0; k < curN; k++) if (cur[k] === m) return true;
+  return false;
 }
 
 /** Drop the query and fragment of a URL string. */
