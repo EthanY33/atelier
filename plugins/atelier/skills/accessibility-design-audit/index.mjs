@@ -38,21 +38,17 @@ export class AuditError extends Error {
 
 /**
  * Turn a URL or a local file path into the URL Chromium should open.
- * Existing files win over URL parsing, because `C:\x\page.html` also parses
- * as a URL with scheme `c:`.
+ * A string with a scheme of two or more characters is a URL and is never
+ * looked up on disk: `https://x` resolves to the path `<cwd>/https:/x`, which
+ * a repository can hold on POSIX. A Windows drive letter (`C:\x\page.html`)
+ * is one character, so it is a path. Anything else is a file path, resolved
+ * against the working directory.
  * @param {string} input
  * @returns {string}
  */
 function resolveTarget(input) {
   if (typeof input !== 'string' || input.trim() === '') {
     throw new TypeError('auditPage: url must be a non-empty string (a URL or a path to an HTML file)');
-  }
-  const abs = resolve(input);
-  if (existsSync(abs)) {
-    if (statSync(abs).isDirectory()) {
-      throw new AuditError(`${abs} is a directory; pass the HTML file inside it (for example ${join(input, 'index.html')})`, { code: 'INPUT_IS_DIRECTORY' });
-    }
-    return pathToFileURL(abs).href;
   }
   if (/^[a-z][a-z0-9+.-]+:/i.test(input)) {
     let parsed;
@@ -62,9 +58,17 @@ function resolveTarget(input) {
       throw new AuditError(`not a valid URL: ${input}`, { code: 'INVALID_URL' });
     }
     if (!URL_SCHEMES.has(parsed.protocol)) {
-      throw new AuditError(`unsupported URL scheme "${parsed.protocol}" in ${input}; use http, https, file or data`, { code: 'UNSUPPORTED_SCHEME' });
+      const fileHint = existsSync(resolve(input)) ? `. For the file with that name, pass ./${input}` : '';
+      throw new AuditError(`unsupported URL scheme "${parsed.protocol}" in ${input}; use http, https, file or data${fileHint}`, { code: 'UNSUPPORTED_SCHEME' });
     }
     return input;
+  }
+  const abs = resolve(input);
+  if (existsSync(abs)) {
+    if (statSync(abs).isDirectory()) {
+      throw new AuditError(`${abs} is a directory; pass the HTML file inside it (for example ${join(input, 'index.html')})`, { code: 'INPUT_IS_DIRECTORY' });
+    }
+    return pathToFileURL(abs).href;
   }
   const looksLikeHost = /^[\w-]+(\.[\w-]+)+(:\d+)?(\/.*)?$/.test(input) && !/\.html?$/i.test(input);
   const hint = looksLikeHost ? `. For a website, pass a full URL such as https://${input}` : '';

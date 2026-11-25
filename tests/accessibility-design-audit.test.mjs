@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   AuditError,
   DEFAULT_TAGS,
@@ -258,6 +258,35 @@ describe('auditPage input validation', () => {
       .rejects.toMatchObject({ code: 'UNSUPPORTED_SCHEME' });
     await expect(auditPage({ url: 'http://exa mple.com/', outDir: outDir('x') }))
       .rejects.toMatchObject({ code: 'INVALID_URL' });
+  });
+
+  // ':' is not allowed in Windows file names; tests/accessibility-design-audit-target.test.mjs
+  // covers the same cases there with a simulated file.
+  it.skipIf(process.platform === 'win32')('a URL is opened as a URL even when a same-named path exists under the working directory', async () => {
+    // path.resolve() turns "https://staging.example.com" into <cwd>/https:/staging.example.com.
+    const dir = mkdtempSync(join(tmp, 'shadow-'));
+    mkdirSync(join(dir, 'https:'));
+    writeFileSync(join(dir, 'https:', 'staging.example.com'), CLEAN_HTML, 'utf8');
+    mkdirSync(join(dir, 'http:', 'localhost:4173'), { recursive: true });
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    try {
+      for (const url of ['https://staging.example.com', 'http://localhost:4173']) {
+        const opened = [];
+        const page = {
+          setDefaultTimeout() {},
+          goto: async (target) => {
+            opened.push(target);
+            throw new Error('stub browser: navigation refused');
+          },
+        };
+        const context = { newPage: async () => page, route: async () => {}, close: async () => {} };
+        await expect(auditPage({ url, outDir: outDir('x'), browser: { newContext: async () => context } }))
+          .rejects.toMatchObject({ code: 'NAVIGATION_FAILED' });
+        expect(opened).toEqual([url]);
+      }
+    } finally {
+      cwd.mockRestore();
+    }
   });
 
   it('rejects bad options', async () => {
