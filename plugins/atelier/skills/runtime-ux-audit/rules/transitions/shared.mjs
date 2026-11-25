@@ -228,7 +228,9 @@ export function spendMatchBudget(budget, steps) {
  * in time linear in pattern length times URL length (no regex backtracking),
  * and every test() draws on a step budget, so hostile patterns and links
  * cannot stall the audit: once the budget is spent, test() throws
- * MATCH_BUDGET instead of answering.
+ * MATCH_BUDGET instead of answering. Compiling takes 512 steps plus the length
+ * of the resolved pattern from the budget, so it can throw MATCH_BUDGET too:
+ * call it where that is caught.
  * @param {unknown} pattern
  * @param {(href: string) => string|null} resolveHref
  * @param {ReturnType<typeof hrefMatchBudget>} [budget] - pass the same one
@@ -248,6 +250,7 @@ export function compileHrefPattern(pattern, resolveHref, budget = hrefMatchBudge
   const abs = resolveHref(withTokens);
   if (!abs) return null;
   const bare = stripQueryHash(abs);
+  spendMatchBudget(budget, 512 + bare.length);
   // Items: a literal char, 'any' (zero or more of anything) or 'ns' / 'nsstar'
   // (one, then zero or more, non-slash chars: a ':name' segment).
   const items = [];

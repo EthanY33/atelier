@@ -574,6 +574,53 @@ describe('speculation href_matches patterns', () => {
     expect(ms).toBeLessThan(FAST_MS);
   });
 
+  describe('with a long <base href>', () => {
+    const longBase = `<base href="https://a.example/${'d/'.repeat(50000)}">`;
+    const pagesWith = (base, json, body) => `<!doctype html><html><head>${base}${rulesTag(json)}</head><body>${body}</body></html>`;
+
+    it('reports 1000 relative patterns as incomplete', async () => {
+      const patterns = Array.from({ length: 1000 }, (_, i) => `p${i}*`);
+      const html = pagesWith(longBase, { prefetch: [{ where: { href_matches: patterns }, eagerness: 'immediate' }] }, anchors(10, (i) => `/x${i}`));
+      const { ms, value } = await runPage(html);
+      expectIncomplete(value, ms);
+    });
+
+    it('reports one pattern over 8000 relative links as incomplete', async () => {
+      const html = pagesWith(longBase, { prefetch: [{ where: { href_matches: 'p*' }, eagerness: 'immediate' }] }, anchors(8000, (i) => `p${i}`));
+      const { ms, value } = await runPage(html);
+      expectIncomplete(value, ms);
+    });
+
+    it('reports a list rule of 8000 relative urls as incomplete', async () => {
+      const urls = Array.from({ length: 8000 }, (_, i) => `p${i}`);
+      const { ms, value } = await runPage(pagesWith(longBase, { prefetch: [{ urls }] }, ''));
+      expectIncomplete(value, ms);
+    });
+
+    it('reports an immediate document rule without where as incomplete on a 17,000 character base', async () => {
+      const base = `<base href="https://a.example/${'d/'.repeat(8500)}">`;
+      const html = pagesWith(base, { prefetch: [{ source: 'document', eagerness: 'immediate' }] }, anchors(3000, (i) => `p${i}`));
+      const { ms, value } = await runPage(html);
+      expectIncomplete(value, ms);
+    });
+
+    it('still counts links on a short base', async () => {
+      const base = `<base href="https://a.example/${'d/'.repeat(1500)}">`;
+      const html = pagesWith(base, { prefetch: [{ source: 'document', eagerness: 'immediate' }] }, anchors(200, (i) => `p${i}`));
+      const { value } = await runPage(html);
+      expect(value.status).toBe('failed');
+      expect(value.nodes.map((n) => n.data)).toEqual([{ action: 'prefetch', candidates: 200, limit: 50, source: 'document' }]);
+      expect(value.incomplete).toEqual([]);
+    });
+  });
+
+  it('reports 380,000 patterns in one rule as incomplete', async () => {
+    const patterns = Array.from({ length: 380_000 }, () => '/a');
+    const html = `<!doctype html><html><head>${rulesTag({ prefetch: [{ where: { href_matches: patterns }, eagerness: 'immediate' }] })}</head><body>${anchors(1, () => '/b')}</body></html>`;
+    const { ms, value } = await runPage(html);
+    expectIncomplete(value, ms);
+  });
+
   it('leaves an ordinary page complete, with the same counts', async () => {
     const json = {
       prefetch: [

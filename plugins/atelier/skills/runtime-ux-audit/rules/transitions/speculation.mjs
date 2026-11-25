@@ -13,6 +13,14 @@ const MAX_PREDICATE_DEPTH = 32;
 // matching cost grows with its length and nesting.
 const MAX_SELECTOR_LENGTH = 1024;
 
+// ctx.page.resolve parses the <base href> again on every call, relative results
+// carry the whole base, and V8 stops hashing strings past 16383 characters, so
+// a Set of long URLs costs its size squared. Bases up to FREE_BASE_LENGTH cost
+// nothing. A longer one costs length / 8 steps per resolution, and one over
+// MAX_BASE_LENGTH makes every resolution throw MATCH_BUDGET (rule incomplete).
+const FREE_BASE_LENGTH = 1024;
+const MAX_BASE_LENGTH = 8192;
+
 // One match set per selector text and run, so a selector repeated across rules
 // is charged once. Keyed by the run's budget object.
 const selectorSets = new WeakMap();
@@ -49,13 +57,13 @@ function documentUrl(ctx) {
 }
 
 /** <a href> and <area href> links a document rule can match: { el, url, bare }. */
-function documentLinks(ctx, docUrl) {
+function documentLinks(ctx, docUrl, resolve) {
   const { html } = ctx;
   const out = [];
   for (const el of [...html.byTag('a'), ...html.byTag('area')]) {
     const href = html.attr(el, 'href');
     if (href === null) continue;
-    const url = ctx.page.resolve(href);
+    const url = resolve(href);
     if (!url || !LINK_SCHEME_RE.test(url) || url === docUrl) continue;
     out.push({ el, url, bare: stripQueryHash(url) });
   }
@@ -70,10 +78,11 @@ function documentLinks(ctx, docUrl) {
  * predicate node evaluated draws on the one budget (see hrefMatchBudget), and
  * the filter throws MATCH_BUDGET once it is spent. Compiling throws it too, for
  * a selector over MAX_SELECTOR_LENGTH or a parse that exceeds the budget, so
- * callers compile inside the same try as the matching. A selector's match set
+ * callers compile inside the same try as the matching. Relative patterns resolve
+ * through resolve, which the caller charges to the budget. A selector's match set
  * is built once per run, on first use, and shared by every rule that repeats it.
  */
-function compilePredicate(pred, ctx, budget, depth = 0) {
+function compilePredicate(pred, ctx, budget, resolve, depth = 0) {
   if (depth > MAX_PREDICATE_DEPTH || !pred || typeof pred !== 'object' || Array.isArray(pred)) return null;
   const keys = Object.keys(pred);
   const main = keys.filter((k) => k !== 'relative_to');
@@ -85,7 +94,7 @@ function compilePredicate(pred, ctx, budget, depth = 0) {
   switch (key) {
     case 'href_matches': {
       if (!list.length) return null;
-      const res = list.map((p) => compileHrefPattern(p, ctx.page.resolve, budget));
+      const res = list.map((p) => compileHrefPattern(p, resolve, budget));
       if (res.some((re) => re === null)) return null;
       return (link) => res.some((re) => re.test(link.bare));
     }
@@ -113,14 +122,14 @@ function compilePredicate(pred, ctx, budget, depth = 0) {
     case 'and':
     case 'or': {
       if (!Array.isArray(value)) return null;
-      const parts = value.map((p) => compilePredicate(p, ctx, budget, depth + 1));
+      const parts = value.map((p) => compilePredicate(p, ctx, budget, resolve, depth + 1));
       if (parts.some((p) => p === null)) return null;
       // One step per node evaluated, so a predicate of many empty nodes costs too.
       const part = (p, link) => { spendMatchBudget(budget, 1); return p(link); };
       return key === 'and' ? (link) => parts.every((p) => part(p, link)) : (link) => parts.some((p) => part(p, link));
     }
     case 'not': {
-      const inner = compilePredicate(value, ctx, budget, depth + 1);
+      const inner = compilePredicate(value, ctx, budget, resolve, depth + 1);
       return inner ? (link) => { spendMatchBudget(budget, 1); return !inner(link); } : null;
     }
     default:
@@ -134,10 +143,11 @@ function compilePredicate(pred, ctx, budget, depth = 0) {
  * immediate rules are reported, so the others are not matched and spend none
  * of the budget. The document branch also takes a fixed number of steps from
  * the budget per link visited. count is null when the budget ran out before
- * every link was matched, including while compiling the predicate.
+ * every link was matched, including while compiling the predicate or
+ * resolving URLs (resolve, see check()), in either branch.
  * @returns {{ count: number|null, source: 'list'|'document' }|null}
  */
-function candidatesOf(r, ctx, docUrl, links, budget) {
+function candidatesOf(r, ctx, docUrl, links, budget, resolve) {
   if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
   const hasUrls = r.urls !== undefined;
   const hasWhere = r.where !== undefined;
@@ -145,29 +155,27 @@ function candidatesOf(r, ctx, docUrl, links, budget) {
   const source = r.source ?? (hasUrls ? 'list' : hasWhere ? 'document' : null);
   const eagerness = typeof r.eagerness === 'string' ? r.eagerness : source === 'list' ? 'immediate' : 'conservative';
   if (eagerness !== 'immediate') return null;
-  if (source === 'list') {
-    if (!Array.isArray(r.urls)) return null;
-    const set = new Set();
-    for (const u of r.urls) {
-      if (typeof u !== 'string') continue;
-      const abs = ctx.page.resolve(u);
-      if (abs && abs !== docUrl) set.add(abs);
-    }
-    return { count: set.size, source };
-  }
-  if (source === 'document') {
-    if (hasUrls) return null;
-    try {
-      const pred = hasWhere ? compilePredicate(r.where, ctx, budget) : () => true;
-      if (!pred) return null;
-      const set = new Set(links().filter((l) => { spendMatchBudget(budget, 8); return pred(l); }).map((l) => l.url));
+  if (source !== 'list' && source !== 'document') return null;
+  if (source === 'list' && !Array.isArray(r.urls)) return null;
+  if (source === 'document' && hasUrls) return null;
+  try {
+    if (source === 'list') {
+      const set = new Set();
+      for (const u of r.urls) {
+        if (typeof u !== 'string') continue;
+        const abs = resolve(u);
+        if (abs && abs !== docUrl) set.add(abs);
+      }
       return { count: set.size, source };
-    } catch (e) {
-      if (e === MATCH_BUDGET) return { count: null, source };
-      throw e;
     }
+    const pred = hasWhere ? compilePredicate(r.where, ctx, budget, resolve) : () => true;
+    if (!pred) return null;
+    const set = new Set(links().filter((l) => { spendMatchBudget(budget, 8); return pred(l); }).map((l) => l.url));
+    return { count: set.size, source };
+  } catch (e) {
+    if (e === MATCH_BUDGET) return { count: null, source };
+    throw e;
   }
-  return null;
 }
 
 export const speculationRulesImmediateAbuse = {
@@ -184,17 +192,24 @@ export const speculationRulesImmediateAbuse = {
     if (!entries.length) return { notApplicable: 'no speculation rules' };
     const docUrl = documentUrl(ctx);
     let cachedLinks = null;
-    const links = () => (cachedLinks ??= documentLinks(ctx, docUrl));
     // One budget for the whole run: many rules, patterns, selectors or links
     // cannot multiply it.
     const budget = hrefMatchBudget();
+    const baseLength = (ctx.page.resolve('#') ?? '').length;
+    const resolveSteps = baseLength > FREE_BASE_LENGTH ? baseLength >> 3 : 0;
+    const resolve = (href) => {
+      if (baseLength > MAX_BASE_LENGTH) throw MATCH_BUDGET;
+      if (resolveSteps) spendMatchBudget(budget, resolveSteps);
+      return ctx.page.resolve(href);
+    };
+    const links = () => (cachedLinks ??= documentLinks(ctx, docUrl, resolve));
     const out = [];
     for (const entry of entries) {
       for (const action of Object.keys(LIMITS)) {
         const list = entry.json[action];
         if (!Array.isArray(list)) continue;
         for (const r of list) {
-          const c = candidatesOf(r, ctx, docUrl, links, budget);
+          const c = candidatesOf(r, ctx, docUrl, links, budget, resolve);
           if (!c) continue;
           if (c.count === null) {
             out.push({
