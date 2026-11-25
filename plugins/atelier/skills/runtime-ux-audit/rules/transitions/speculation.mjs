@@ -53,7 +53,9 @@ function selectorPassCost(html, selector) {
   const simple = selector.match(/[.#[:]/g)?.length ?? 0;
   const lists = selector.match(/[,(]/g)?.length ?? 0;
   const attrs = selector.match(/\[/g)?.length ?? 0;
-  return html.elements.length * (16 + 24 * combinators + 2 * simple + 16 * lists) + attrs * attrChars(html);
+  // selector.length >> 4: an attribute selector with the i flag lowercases its
+  // wanted value again for every element, however short the element's own value.
+  return html.elements.length * (16 + 24 * combinators + 2 * simple + 16 * lists + (selector.length >> 4)) + attrs * attrChars(html);
 }
 
 /** Absolute URL of the audited document (no hash), comparable with ctx.page.resolve() output. */

@@ -718,6 +718,12 @@ describe('speculation href_matches patterns', () => {
       incompleteFast(value, ms);
     });
 
+    it('charges case-insensitive attribute selectors for the length of their value', async () => {
+      const selectors = Array.from({ length: 60 }, (_, k) => `[a="${'ABCDEFGHIJKLMNOP'[k % 16].repeat(990)}${k}"i]`);
+      const body = `${'<p a=x>'.repeat(15000)}${anchors(1, () => '/p/0')}`;
+      const { ms, value } = await runPage(selectorPage(selectors, body));
+      incompleteFast(value, ms);
+    });
   });
 });
 
