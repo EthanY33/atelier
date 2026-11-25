@@ -3,7 +3,7 @@
  * that the page's Content-Security-Policy blocks.
  */
 import { createHash } from 'node:crypto';
-import { HELP, compileHrefPattern, stripQueryHash } from './shared.mjs';
+import { HELP, MATCH_BUDGET, compileHrefPattern, hrefMatchBudget, stripQueryHash } from './shared.mjs';
 
 // Chromium keeps at most this many immediate (and eager) speculations per action.
 const LIMITS = Object.freeze({ prerender: 10, prefetch: 50 });
@@ -38,8 +38,10 @@ function documentLinks(ctx, docUrl) {
  * Compile a document-rule predicate into a link filter. Supported:
  * href_matches (string or array, with optional relative_to),
  * selector_matches, and, or, not. Anything else: null (the rule is skipped).
+ * Every href_matches pattern draws on the one budget, and the filter throws
+ * MATCH_BUDGET once it is spent.
  */
-function compilePredicate(pred, ctx, depth = 0) {
+function compilePredicate(pred, ctx, budget, depth = 0) {
   if (depth > MAX_PREDICATE_DEPTH || !pred || typeof pred !== 'object' || Array.isArray(pred)) return null;
   const keys = Object.keys(pred);
   const main = keys.filter((k) => k !== 'relative_to');
@@ -51,7 +53,7 @@ function compilePredicate(pred, ctx, depth = 0) {
   switch (key) {
     case 'href_matches': {
       if (!list.length) return null;
-      const res = list.map((p) => compileHrefPattern(p, ctx.page.resolve));
+      const res = list.map((p) => compileHrefPattern(p, ctx.page.resolve, budget));
       if (res.some((re) => re === null)) return null;
       return (link) => res.some((re) => re.test(link.bare));
     }
@@ -64,12 +66,12 @@ function compilePredicate(pred, ctx, depth = 0) {
     case 'and':
     case 'or': {
       if (!Array.isArray(value)) return null;
-      const parts = value.map((p) => compilePredicate(p, ctx, depth + 1));
+      const parts = value.map((p) => compilePredicate(p, ctx, budget, depth + 1));
       if (parts.some((p) => p === null)) return null;
       return key === 'and' ? (link) => parts.every((p) => p(link)) : (link) => parts.some((p) => p(link));
     }
     case 'not': {
-      const inner = compilePredicate(value, ctx, depth + 1);
+      const inner = compilePredicate(value, ctx, budget, depth + 1);
       return inner ? (link) => !inner(link) : null;
     }
     default:
@@ -78,17 +80,21 @@ function compilePredicate(pred, ctx, depth = 0) {
 }
 
 /**
- * Unique candidate URLs of one speculation rule, or null when the rule is
- * malformed or uses unsupported predicates.
- * @returns {{ count: number, source: 'list'|'document', eagerness: string }|null}
+ * Unique candidate URLs of one immediate speculation rule, or null when the
+ * rule is malformed, uses unsupported predicates or is not immediate. Only
+ * immediate rules are reported, so the others are not matched and spend none
+ * of the budget. count is null when the budget ran out before every link was
+ * matched.
+ * @returns {{ count: number|null, source: 'list'|'document' }|null}
  */
-function candidatesOf(r, ctx, docUrl, links) {
+function candidatesOf(r, ctx, docUrl, links, budget) {
   if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
   const hasUrls = r.urls !== undefined;
   const hasWhere = r.where !== undefined;
   if (hasUrls && hasWhere) return null;
   const source = r.source ?? (hasUrls ? 'list' : hasWhere ? 'document' : null);
   const eagerness = typeof r.eagerness === 'string' ? r.eagerness : source === 'list' ? 'immediate' : 'conservative';
+  if (eagerness !== 'immediate') return null;
   if (source === 'list') {
     if (!Array.isArray(r.urls)) return null;
     const set = new Set();
@@ -97,14 +103,19 @@ function candidatesOf(r, ctx, docUrl, links) {
       const abs = ctx.page.resolve(u);
       if (abs && abs !== docUrl) set.add(abs);
     }
-    return { count: set.size, source, eagerness };
+    return { count: set.size, source };
   }
   if (source === 'document') {
     if (hasUrls) return null;
-    const pred = hasWhere ? compilePredicate(r.where, ctx) : () => true;
+    const pred = hasWhere ? compilePredicate(r.where, ctx, budget) : () => true;
     if (!pred) return null;
-    const set = new Set(links().filter(pred).map((l) => l.url));
-    return { count: set.size, source, eagerness };
+    try {
+      const set = new Set(links().filter(pred).map((l) => l.url));
+      return { count: set.size, source };
+    } catch (e) {
+      if (e === MATCH_BUDGET) return { count: null, source };
+      throw e;
+    }
   }
   return null;
 }
@@ -124,14 +135,25 @@ export const speculationRulesImmediateAbuse = {
     const docUrl = documentUrl(ctx);
     let cachedLinks = null;
     const links = () => (cachedLinks ??= documentLinks(ctx, docUrl));
+    // One budget for the whole run: many rules or patterns cannot multiply it.
+    const budget = hrefMatchBudget();
     const out = [];
     for (const entry of entries) {
       for (const action of Object.keys(LIMITS)) {
         const list = entry.json[action];
         if (!Array.isArray(list)) continue;
         for (const r of list) {
-          const c = candidatesOf(r, ctx, docUrl, links);
-          if (!c || c.eagerness !== 'immediate' || c.count <= LIMITS[action]) continue;
+          const c = candidatesOf(r, ctx, docUrl, links, budget);
+          if (!c) continue;
+          if (c.count === null) {
+            out.push({
+              node: ctx.ref.html(entry.el),
+              message: `Too many links and href_matches patterns to count the URLs this immediate ${action} rule matches statically.`,
+              incomplete: true,
+            });
+            continue;
+          }
+          if (c.count <= LIMITS[action]) continue;
           out.push({
             node: ctx.ref.html(entry.el),
             message: `This immediate ${action} rule matches ${c.count} URLs, above Chromium's limit of ${LIMITS[action]}; the extra requests waste bandwidth and memory. Use eagerness moderate or conservative.`,

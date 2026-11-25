@@ -191,6 +191,21 @@ const TOKEN = 'zzatelier';
 // Longer patterns are skipped: matching costs pattern length times URL length per link.
 const MAX_PATTERN_LENGTH = 1024;
 const MAX_URL_LENGTH = 8192;
+// The two bounds above cap one test() call. This one caps the steps of every
+// call that draws on the same budget, about a second of matching.
+const MAX_MATCH_STEPS = 20_000_000;
+
+/** Thrown by test() once the step budget of its matcher is spent. */
+export const MATCH_BUDGET = Symbol('href-match-budget');
+
+/**
+ * A step budget for compileHrefPattern, with the state arrays its matchers
+ * work in. Matchers that share one stop together, so many links times many
+ * patterns cannot multiply the bound.
+ */
+export function hrefMatchBudget() {
+  return { left: MAX_MATCH_STEPS, cur: [], next: [], stamp: [], step: 0 };
+}
 
 /**
  * Compile the supported subset of a URL pattern string into a matcher over
@@ -200,12 +215,16 @@ const MAX_URL_LENGTH = 8192;
  * escapes, search or hash parts and patterns over 1024 characters are
  * unsupported: null. The matcher runs
  * in time linear in pattern length times URL length (no regex backtracking),
- * so a hostile pattern cannot stall the audit.
+ * and every test() draws on a step budget, so hostile patterns and links
+ * cannot stall the audit: once the budget is spent, test() throws
+ * MATCH_BUDGET instead of answering.
  * @param {unknown} pattern
  * @param {(href: string) => string|null} resolveHref
+ * @param {ReturnType<typeof hrefMatchBudget>} [budget] - pass the same one
+ *   for every pattern of a run. Default: one per pattern.
  * @returns {{ test: (url: string) => boolean }|null}
  */
-export function compileHrefPattern(pattern, resolveHref) {
+export function compileHrefPattern(pattern, resolveHref, budget = hrefMatchBudget()) {
   if (typeof pattern !== 'string' || !pattern.trim()) return null;
   const p = pattern.trim();
   if (p.length > MAX_PATTERN_LENGTH) return null;
@@ -233,25 +252,31 @@ export function compileHrefPattern(pattern, resolveHref) {
     else pushLiteral(m[0]);
   }
   pushLiteral(bare.slice(last));
-  return { test: (url) => matchItems(items, String(url)) };
+  return { test: (url) => matchItems(items, String(url), budget) };
 }
 
 /**
  * Simulate the pattern as an NFA over the input, one state set per character.
- * Each step costs the number of active states, not the pattern length, and an
- * input longer than MAX_URL_LENGTH never matches.
+ * A call costs one step plus the number of active states per character, not
+ * the pattern length, and an input longer than MAX_URL_LENGTH never matches.
+ * The steps come out of the budget (MATCH_BUDGET once it is spent), and the
+ * state arrays are the budget's too: allocating them per call cost more than
+ * matching an ordinary link.
  */
-function matchItems(items, input) {
+function matchItems(items, input, budget) {
+  if (--budget.left < 0) throw MATCH_BUDGET;
   if (input.length > MAX_URL_LENGTH) return false;
   const m = items.length;
   const loops = (i) => items[i] === 'any' || items[i] === 'nsstar';
-  let cur = new Int32Array(m + 1);
-  let next = new Int32Array(m + 1);
+  let { cur, next } = budget;
   let curN = 0;
   let nextN = 0;
-  // stamp[i] === step marks state i as already in the set being built.
-  const stamp = new Int32Array(m + 2).fill(-1);
-  let step = 0;
+  // stamp[i] === step marks state i as already in the set being built. Each
+  // call takes its own run of step values, so stamps of earlier calls never match.
+  const { stamp } = budget;
+  while (stamp.length < m + 2) stamp.push(-1);
+  let step = budget.step;
+  budget.step += input.length + 1;
   const add = (i) => { if (stamp[i] !== step) { stamp[i] = step; next[nextN++] = i; } };
   // Add the states and follow epsilon moves out of loop states.
   const addClosed = (i) => { for (let j = i; ; j++) { add(j); if (j >= m || !loops(j)) break; } };
@@ -259,6 +284,7 @@ function matchItems(items, input) {
   [cur, next] = [next, cur];
   curN = nextN;
   for (const ch of input) {
+    if ((budget.left -= curN) < 0) throw MATCH_BUDGET;
     step++;
     nextN = 0;
     for (let k = 0; k < curN; k++) {

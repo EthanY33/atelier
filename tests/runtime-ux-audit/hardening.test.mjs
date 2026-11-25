@@ -24,7 +24,7 @@ import { clickHandlerForcedLayout } from '../../plugins/atelier/skills/runtime-u
 import { analyticsWithoutPrerenderGuard } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/analytics.mjs';
 import { noUnloadHandler } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/bfcache.mjs';
 import { speculationRulesCspGap, speculationRulesImmediateAbuse } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/speculation.mjs';
-import { compileHrefPattern } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/shared.mjs';
+import { MATCH_BUDGET, compileHrefPattern, hrefMatchBudget } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/shared.mjs';
 import { vtaDuplicateNames } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/view-transitions.mjs';
 
 /** Milliseconds fn takes, and its result. */
@@ -307,6 +307,22 @@ describe('speculation-rules-csp-gap on hostile hash sources', () => {
 
 describe('speculation href_matches patterns', () => {
   const resolve = (h) => (h.startsWith('/') ? `https://a.example${h}` : h);
+  // 1023 characters, the longest shape the matcher accepts: on a long run of
+  // "a" nearly every one of its states stays active.
+  const HOSTILE = `/${'*a'.repeat(510)}*z`;
+  const rulesTag = (json) => `<script type="speculationrules">${JSON.stringify(json)}</script>`;
+  const anchors = (n, href) => Array.from({ length: n }, (_, i) => `<a href="${href(i)}">a</a>`).join('');
+  const BUDGET_MESSAGE = (action) => `Too many links and href_matches patterns to count the URLs this immediate ${action} rule matches statically.`;
+
+  /** test() over every link: the answers, or MATCH_BUDGET when the step budget ran out first. */
+  const matchAll = (re, links) => {
+    try {
+      return links.map((l) => re.test(l));
+    } catch (e) {
+      if (e !== MATCH_BUDGET) throw e;
+      return MATCH_BUDGET;
+    }
+  };
 
   it('matches a pattern with many wildcards against a long link in linear time', () => {
     const re = compileHrefPattern(`/${'*a'.repeat(30)}*z`, resolve);
@@ -344,7 +360,7 @@ describe('speculation href_matches patterns', () => {
     const ok = compileHrefPattern(`/${'*a'.repeat(300)}*z`, resolve);
     expect(ok).not.toBeNull();
     const links = Array.from({ length: 2000 }, (_, i) => `https://a.example/${'a'.repeat(100)}${i}`);
-    const batch = timed(() => links.map((l) => ok.test(l)));
+    const batch = timed(() => matchAll(ok, links));
     expect(batch.ms).toBeLessThan(10_000);
   });
 
@@ -355,11 +371,111 @@ describe('speculation href_matches patterns', () => {
     const re = compileHrefPattern(pattern, resolve);
     expect(re).not.toBeNull();
     const links = Array.from({ length: 2000 }, (_, i) => `https://a.example/${'a'.repeat(100)}${i}`);
-    const batch = timed(() => links.map((l) => re.test(l)));
+    const batch = timed(() => matchAll(re, links));
     expect(batch.ms).toBeLessThan(3000);
-    const huge = timed(() => re.test(`https://a.example/${'a'.repeat(100_000)}`));
+    // A fresh matcher: the batch above may have spent the budget of re.
+    const huge = timed(() => compileHrefPattern(pattern, resolve).test(`https://a.example/${'a'.repeat(100_000)}`));
     expect(huge.ms).toBeLessThan(FAST_MS);
     expect(huge.value).toBe(false);
+  });
+
+  it('stops a maximum-length pattern over 200 links of 8000 characters at the step budget', () => {
+    expect(HOSTILE).toHaveLength(1023);
+    const links = Array.from({ length: 200 }, (_, i) => `https://a.example/${'a'.repeat(8000)}${i}`);
+    const re = compileHrefPattern(HOSTILE, resolve);
+    const { ms, value } = timed(() => matchAll(re, links));
+    expect(value).toBe(MATCH_BUDGET);
+    expect(ms).toBeLessThan(5000);
+    // A spent budget stays spent, also for a link that would cost nothing.
+    expect(matchAll(re, ['https://a.example/x'])).toBe(MATCH_BUDGET);
+  });
+
+  it('stops every matcher that shares a spent budget', () => {
+    const shared = hrefMatchBudget();
+    const hostile = compileHrefPattern(HOSTILE, resolve, shared);
+    const plain = compileHrefPattern('/x', resolve, shared);
+    expect(plain.test('https://a.example/x')).toBe(true);
+    expect(matchAll(hostile, Array.from({ length: 200 }, () => `https://a.example/${'a'.repeat(8000)}`))).toBe(MATCH_BUDGET);
+    expect(matchAll(plain, ['https://a.example/x'])).toBe(MATCH_BUDGET);
+    // A matcher with its own budget is not affected.
+    expect(compileHrefPattern('/x', resolve).test('https://a.example/x')).toBe(true);
+  });
+
+  it('gives the same answers when matchers share a budget and its state arrays', () => {
+    const urls = [
+      'https://a.example/a/x/b/1/c', 'https://a.example/a/b/1/c', `https://a.example/a/${'x/'.repeat(50)}b/7/zc`,
+      'https://a.example/a/x/b//c', 'https://a.example/', 'https://a.example/a/x/b/1/c/d', 'https://a.example/a/aaaa', 'https://b.example/a/x',
+    ];
+    // The answers of the matcher before it had a budget, one row per pattern.
+    const want = {
+      '/a/*/b/:id/*c': [true, false, true, false, false, false, false, false],
+      '/a/:x': [false, false, false, false, false, false, true, false],
+      '/*a*a*a*': [false, false, false, false, false, false, true, false],
+      '/*': [true, true, true, true, true, true, true, false],
+    };
+    const patterns = Object.keys(want);
+    for (const p of patterns) expect(urls.map((u) => compileHrefPattern(p, resolve).test(u)), p).toEqual(want[p]);
+    const shared = hrefMatchBudget();
+    const res = patterns.map((p) => compileHrefPattern(p, resolve, shared));
+    // Pattern by pattern, then link by link, so every matcher follows every other.
+    for (let round = 0; round < 2; round++) {
+      res.forEach((re, i) => expect(urls.map((u) => re.test(u)), `${patterns[i]}, round ${round}`).toEqual(want[patterns[i]]));
+      urls.forEach((u, j) => expect(res.map((re) => re.test(u)), `${u}, round ${round}`).toEqual(patterns.map((p) => want[p][j])));
+    }
+  });
+
+  it('reports the rule as incomplete instead of stalling on 1000 links of 2000 characters', async () => {
+    const html = `<!doctype html><html><head>${rulesTag({ prefetch: [{ where: { href_matches: HOSTILE }, eagerness: 'immediate' }] })}</head>`
+      + `<body>${anchors(1000, (i) => `/${'a'.repeat(2000)}${i}`)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(ms).toBeLessThan(10_000);
+    expect(value.status).toBe('incomplete');
+    expect(value.nodes).toEqual([]);
+    expect(value.incomplete).toEqual([expect.objectContaining({ selector: 'head > script', message: BUDGET_MESSAGE('prefetch') })]);
+    expect(value.errors).toEqual([]);
+  });
+
+  it('spends one budget on every rule and pattern of a page, and still counts list rules', async () => {
+    // 16 rules of 4 patterns each, and every rule alone has more work than one
+    // budget: a budget per rule or per pattern would allow 16 to 64 times the work.
+    const patterns = Array.from({ length: 4 }, (_, i) => `/${'*a'.repeat(500)}*z${i}`);
+    const hostileRules = Array.from({ length: 8 }, () => ({ where: { href_matches: patterns }, eagerness: 'immediate' }));
+    const urls = Array.from({ length: 51 }, (_, i) => `/u/${i}`);
+    const json = {
+      prerender: hostileRules,
+      prefetch: [...hostileRules, { urls }, { where: { href_matches: patterns }, eagerness: 'moderate' }],
+    };
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body>${anchors(20, (i) => `/${'a'.repeat(2000)}${i}`)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(ms).toBeLessThan(10_000);
+    // The list rule needs no matching, so it is still counted and reported.
+    expect(value.status).toBe('failed');
+    expect(value.nodes.map((n) => n.data)).toEqual([{ action: 'prefetch', candidates: 51, limit: 50, source: 'list' }]);
+    expect(value.incomplete.map((n) => n.message)).toEqual([BUDGET_MESSAGE('prefetch'), BUDGET_MESSAGE('prerender')]);
+  });
+
+  it('leaves an ordinary page complete, with the same counts', async () => {
+    const json = {
+      prefetch: [
+        { where: { and: [{ href_matches: ['/docs/*', '/blog/:slug'] }, { not: { href_matches: '/docs/item-3' } }] }, eagerness: 'immediate' },
+        { where: { href_matches: '/shop/*' }, eagerness: 'moderate' },
+      ],
+      prerender: [{ where: { href_matches: '/blog/*' }, eagerness: 'immediate' }, { where: { href_matches: '/none/*' }, eagerness: 'immediate' }],
+    };
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body>${anchors(300, (i) => `/${['docs', 'blog', 'shop'][i % 3]}/item-${i}`)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(value.status).toBe('failed');
+    expect(value.nodes.map((n) => n.data)).toEqual([
+      { action: 'prefetch', candidates: 199, limit: 50, source: 'document' },
+      { action: 'prerender', candidates: 100, limit: 10, source: 'document' },
+    ]);
+    expect(value.incomplete).toEqual([]);
+    expect(value.errors).toEqual([]);
+    expect(ms).toBeLessThan(FAST_MS);
+    // At the limits nothing is reported, as before.
+    const atLimit = { prerender: [{ where: { href_matches: '/blog/*' }, eagerness: 'immediate' }] };
+    const small = `<!doctype html><html><head>${rulesTag(atLimit)}</head><body>${anchors(30, (i) => `/${['docs', 'blog', 'shop'][i % 3]}/item-${i}`)}</body></html>`;
+    expect(runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': small }, { areas: ['transitions'] })).status).toBe('passed');
   });
 });
 
