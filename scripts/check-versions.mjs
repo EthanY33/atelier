@@ -66,7 +66,7 @@ const minor = version.split('.').slice(0, 2).join('.');
 if (!claudeVersion) problems.push('CLAUDE.md has no "version X.Y" line');
 else if (claudeVersion[1] !== minor) problems.push(`CLAUDE.md says version ${claudeVersion[1]}, expected ${minor}`);
 
-const tagIdx =process.argv.indexOf('--tag');
+const tagIdx = process.argv.indexOf('--tag');
 if (tagIdx !== -1) {
   const tag = process.argv[tagIdx + 1] ?? '';
   if (tag.replace(/^v/, '') !== version) problems.push(`tag ${tag} does not match version ${version}`);
