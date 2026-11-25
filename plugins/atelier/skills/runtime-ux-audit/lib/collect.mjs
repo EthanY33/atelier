@@ -471,6 +471,8 @@ export async function collect(input, opts = {}) {
   const styleAttrs = [];
   const eventAttrScripts = [];
 
+  // One lookup per script: a linear find made 50,000 speculation-rules scripts take minutes.
+  const specByEl = new Map(html.speculationRules.map((s) => [s.el, s]));
   for (const el of html.elements) {
     const tag = html.tag(el);
     if (tag === 'link') {
@@ -511,7 +513,7 @@ export async function collect(input, opts = {}) {
       const type = (html.attr(el, 'type') ?? '').trim().toLowerCase();
       if (type === 'speculationrules') {
         specCount++;
-        const entry = html.speculationRules.find((s) => s.el === el);
+        const entry = specByEl.get(el);
         addResource({ order: nextOrder++, kind: 'speculation-rules', displayPath: `script:speculationrules(${specCount})`, status: entry?.error ? 'parse-error' : 'parsed', reason: entry?.error ? 'invalid-json' : null });
       } else if (JS_TYPES.has(type) || type === 'module') {
         const scriptType = type === 'module' ? 'module' : 'classic';
