@@ -692,6 +692,20 @@ describe('speculation href_matches patterns', () => {
       failedWith(value, ms, 51);
     });
 
+    it('counts 254 links of 16 thousand characters once, not once per rule', async () => {
+      const links = anchors(254, (i) => `/x${' '.repeat(5470)}${String(i).padStart(4, '0')}`);
+      const prefetch = Array.from({ length: 1000 }, () => immediateDoc);
+      const { ms, value } = await runPage(`<!doctype html><html><head>${rulesTag({ prefetch })}</head><body>${links}</body></html>`);
+      failedWith(value, ms, 254);
+    });
+
+    it('counts the same long links for 1000 selector_matches rules', async () => {
+      const links = anchors(254, (i) => `/x${' '.repeat(5470)}${String(i).padStart(4, '0')}`);
+      const prefetch = Array.from({ length: 1000 }, () => ({ where: { selector_matches: 'a' }, eagerness: 'immediate' }));
+      const { ms, value } = await runPage(`<!doctype html><html><head>${rulesTag({ prefetch })}</head><body>${links}</body></html>`);
+      failedWith(value, ms, 254);
+    });
+
     it('reports one list rule of 400,000 unparsable urls as incomplete', async () => {
       const urls = Array.from({ length: 400_000 }, () => '//');
       const { ms, value } = await runPage(`<!doctype html><html><head>${rulesTag({ prefetch: [{ urls }] })}</head><body></body></html>`);

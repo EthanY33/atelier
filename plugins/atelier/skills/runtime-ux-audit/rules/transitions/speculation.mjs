@@ -66,16 +66,24 @@ function documentUrl(ctx) {
   return ctx.page.resolve(`/${ctx.page.displayUrl}`);
 }
 
-/** <a href> and <area href> links a document rule can match: { el, url, bare }. */
+/**
+ * <a href> and <area href> links a document rule can match: { el, url, bare, id }.
+ * id is a small integer, equal for equal URLs. Rules count unique ids, not URL
+ * strings: V8 does not hash strings past 16383 characters, so a Set of long
+ * URLs built once per rule costs the number of links squared every time.
+ */
 function documentLinks(ctx, docUrl, resolve) {
   const { html } = ctx;
   const out = [];
+  const ids = new Map();
   for (const el of [...html.byTag('a'), ...html.byTag('area')]) {
     const href = html.attr(el, 'href');
     if (href === null) continue;
     const url = resolve(href);
     if (!url || !LINK_SCHEME_RE.test(url) || url === docUrl) continue;
-    out.push({ el, url, bare: stripQueryHash(url) });
+    let id = ids.get(url);
+    if (id === undefined) ids.set(url, (id = ids.size));
+    out.push({ el, url, bare: stripQueryHash(url), id });
   }
   return out;
 }
@@ -181,7 +189,7 @@ function candidatesOf(r, ctx, docUrl, links, budget, resolve) {
     }
     const pred = hasWhere ? compilePredicate(r.where, ctx, budget, resolve) : () => true;
     if (!pred) return null;
-    const set = new Set(links().filter((l) => { spendMatchBudget(budget, 8); return pred(l); }).map((l) => l.url));
+    const set = new Set(links().filter((l) => { spendMatchBudget(budget, 8); return pred(l); }).map((l) => l.id));
     return { count: set.size, source };
   } catch (e) {
     if (e === MATCH_BUDGET) return { count: null, source };
