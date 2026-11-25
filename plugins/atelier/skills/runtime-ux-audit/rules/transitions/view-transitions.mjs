@@ -244,6 +244,10 @@ const STATE_SEL_RE = new RegExp(`(^|[^:]):(${STATE_PSEUDOS.join('|')})(?![\\w-])
 const LEGACY_PSEUDO_ELEMENTS = new Set(['before', 'after', 'first-line', 'first-letter']);
 const NOT_RENDERED = new Set(['head', 'script', 'style', 'template', 'title', 'meta', 'link', 'base', 'noscript']);
 const MAX_LISTED = 5;
+// Stored (condition set, element, pseudo) entries after which the duplicate
+// scan gives up, so many distinct conditions over many elements stay bounded.
+const MAX_SCAN_ENTRIES = 100_000;
+const SCAN_BUDGET = Symbol('vta-scan-budget');
 const UA_ROOT_DECL = Object.freeze({ value: 'root' });
 
 /** The name a declaration assigns, or null for keywords, var() and other non-idents. */
@@ -303,13 +307,24 @@ function conditionsOf(d) {
  * (importance, layers, inline style, specificity, order) for the base
  * conditions and for each distinct media/container condition set, then
  * group the fixed names.
- * @returns {Array<{ name: string, decl: object, labels: string[], count: number, conditions: string[] }>}
+ * @returns {{ dups: Array<{ name: string, decl: object, labels: string[], count: number, conditions: string[] }>, overBudget: object|null }}
+ *   overBudget is the first fixed declaration when the scan stopped early.
  */
 function staticDuplicates(ctx) {
-  const { css, html } = ctx;
-  const decls = css.declsByProp('view-transition-name')
+  const decls = ctx.css.declsByProp('view-transition-name')
     .filter((d) => d.rule && d.context.keyframes === null && !d.context.startingStyle);
-  if (!decls.some((d) => fixedName(d.value))) return [];
+  const firstFixed = decls.find((d) => fixedName(d.value));
+  if (!firstFixed) return { dups: [], overBudget: null };
+  try {
+    return { dups: scanDuplicates(ctx, decls), overBudget: null };
+  } catch (e) {
+    if (e === SCAN_BUDGET) return { dups: [], overBudget: firstFixed };
+    throw e;
+  }
+}
+
+function scanDuplicates(ctx, decls) {
+  const { html } = ctx;
 
   const isHidden = hiddenChecker(html);
   const cmpRank = (x, y) => {
@@ -325,10 +340,12 @@ function staticDuplicates(ctx) {
     if (!g) groups.set(key, g = { conds, best: new Map() });
     return g;
   };
+  let stored = 0;
   const consider = (g, el, pseudo, decl, rank) => {
     let byPseudo = g.best.get(el);
     if (!byPseudo) g.best.set(el, byPseudo = new Map());
     const cur = byPseudo.get(pseudo);
+    if (!cur && ++stored > MAX_SCAN_ENTRIES) throw SCAN_BUDGET;
     if (!cur || cmpRank(rank, cur.rank) >= 0) byPseudo.set(pseudo, { el, pseudo, decl, rank, conds: g.conds });
   };
   const matchedCache = new Map();
@@ -440,7 +457,15 @@ export const vtaDuplicateNames = {
     if (!hasDecls && !runtimeNames.size) return { notApplicable: 'no view-transition-name declarations' };
 
     const out = [];
-    for (const dup of staticDuplicates(ctx)) {
+    const { dups, overBudget } = staticDuplicates(ctx);
+    if (overBudget) {
+      out.push({
+        node: ctx.ref.css(overBudget),
+        message: 'Too many element and condition combinations to check for duplicate view-transition-name values statically.',
+        incomplete: true,
+      });
+    }
+    for (const dup of dups) {
       if (runtimeNames.has(dup.name)) continue;
       const data = { count: dup.count, elements: dup.labels, name: dup.name };
       if (dup.conditions.length) data.conditions = dup.conditions.join(' and ');

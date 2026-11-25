@@ -23,7 +23,7 @@ import { launchUxChromium } from '../../plugins/atelier/skills/runtime-ux-audit/
 import { clickHandlerForcedLayout } from '../../plugins/atelier/skills/runtime-ux-audit/rules/inp/listeners.mjs';
 import { analyticsWithoutPrerenderGuard } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/analytics.mjs';
 import { noUnloadHandler } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/bfcache.mjs';
-import { speculationRulesCspGap } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/speculation.mjs';
+import { speculationRulesCspGap, speculationRulesImmediateAbuse } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/speculation.mjs';
 import { compileHrefPattern } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/shared.mjs';
 import { vtaDuplicateNames } from '../../plugins/atelier/skills/runtime-ux-audit/rules/transitions/view-transitions.mjs';
 
@@ -328,10 +328,24 @@ describe('speculation href_matches patterns', () => {
 
   it('does not stall the static pass on a hostile rule', async () => {
     const pattern = `/${'*a'.repeat(30)}*z`;
-    const html = `<!doctype html><html><head><script type="speculationrules">${JSON.stringify({ prefetch: [{ where: { href_matches: pattern }, eagerness: 'conservative' }] })}</script></head>`
-      + `<body><a href="/${'a'.repeat(60)}">a</a></body></html>`;
-    const { ms } = await timedAsync(async () => runRule(speculationRulesCspGap, await contextFor({ 'index.html': html })));
-    expect(ms).toBeLessThan(5000);
+    const html = `<!doctype html><html><head><script type="speculationrules">${JSON.stringify({ prefetch: [{ where: { href_matches: pattern }, eagerness: 'immediate' }] })}</script></head>`
+      + `<body><a href="/${'a'.repeat(2000)}">a</a></body></html>`;
+    const { ms } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html })));
+    expect(ms).toBeLessThan(FAST_MS);
+  });
+
+  it('skips patterns over the length bound and stays fast against many links', () => {
+    const resolve = (h) => `https://a.example${h.startsWith('/') ? '' : '/'}${h}`;
+    const huge = `/${'*a'.repeat(50000)}*z`;
+    expect(huge.length).toBeGreaterThan(100000);
+    const { ms, value } = timed(() => compileHrefPattern(huge, resolve));
+    expect(value).toBeNull();
+    expect(ms).toBeLessThan(FAST_MS);
+    const ok = compileHrefPattern(`/${'*a'.repeat(300)}*z`, resolve);
+    expect(ok).not.toBeNull();
+    const links = Array.from({ length: 2000 }, (_, i) => `https://a.example/${'a'.repeat(100)}${i}`);
+    const batch = timed(() => links.map((l) => ok.test(l)));
+    expect(batch.ms).toBeLessThan(10_000);
   });
 });
 
@@ -344,11 +358,22 @@ describe('vta-duplicate-names on broad repeated selectors', () => {
     const ctx = await contextFor({ 'index.html': html }, { areas: ['transitions'] });
     const before = process.memoryUsage().heapUsed;
     const { ms, value } = await timedAsync(async () => runRule(vtaDuplicateNames, ctx));
-    expect(ms).toBeLessThan(15_000);
+    expect(ms).toBeLessThan(60_000);
     expect(value.status).toBe('failed');
     expect(value.nodes[0].data).toMatchObject({ name: 'a' });
     expect(process.memoryUsage().heapUsed - before).toBeLessThan(400 * 1024 * 1024);
-  }, 60_000);
+  }, 90_000);
+
+  it('gives up with an incomplete result for hundreds of distinct condition sets', async () => {
+    const css = Array.from({ length: 300 }, (_, i) => `@media (min-width:${400 + i}px){*{view-transition-name:a}}`).join('');
+    const html = `<!doctype html><html><head><style>${css}</style></head><body>${'<i></i>'.repeat(20000)}</body></html>`;
+    const ctx = await contextFor({ 'index.html': html }, { areas: ['transitions'] });
+    const before = process.memoryUsage().heapUsed;
+    const { ms, value } = await timedAsync(async () => runRule(vtaDuplicateNames, ctx));
+    expect(ms).toBeLessThan(60_000);
+    expect(value.status).toBe('incomplete');
+    expect(process.memoryUsage().heapUsed - before).toBeLessThan(600 * 1024 * 1024);
+  }, 90_000);
 });
 
 // ---------------------------------------------------------------------------

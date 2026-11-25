@@ -188,13 +188,16 @@ export function specificity(sel) {
 // ---------------------------------------------------------------------------
 
 const TOKEN = 'zzatelier';
+// Longer patterns are skipped: matching costs pattern length times URL length per link.
+const MAX_PATTERN_LENGTH = 1024;
 
 /**
  * Compile the supported subset of a URL pattern string into a matcher over
  * absolute URLs without query or hash. '*' matches anything and ':name' one
  * path segment. Relative patterns resolve like links (resolveHref, which
  * honors <base href> and the local root). Regex groups, braces, modifiers,
- * escapes and search or hash parts are unsupported: null. The matcher runs
+ * escapes, search or hash parts and patterns over 1024 characters are
+ * unsupported: null. The matcher runs
  * in time linear in pattern length times URL length (no regex backtracking),
  * so a hostile pattern cannot stall the audit.
  * @param {unknown} pattern
@@ -204,6 +207,7 @@ const TOKEN = 'zzatelier';
 export function compileHrefPattern(pattern, resolveHref) {
   if (typeof pattern !== 'string' || !pattern.trim()) return null;
   const p = pattern.trim();
+  if (p.length > MAX_PATTERN_LENGTH) return null;
   if (/[(){}\\?#+]/.test(p)) return null;
   const kinds = [];
   const withTokens = p.replace(/\*|:([A-Za-z_$][\w$]*)/g, (m) => {
