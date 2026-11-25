@@ -201,10 +201,21 @@ export const MATCH_BUDGET = Symbol('href-match-budget');
 /**
  * A step budget for compileHrefPattern, with the state arrays its matchers
  * work in. Matchers that share one stop together, so many links times many
- * patterns cannot multiply the bound.
+ * patterns cannot multiply the bound. The same budget also pays for link
+ * visits and selector passes (spendMatchBudget).
  */
 export function hrefMatchBudget() {
   return { left: MAX_MATCH_STEPS, cur: [], next: [], stamp: [], step: 0 };
+}
+
+/**
+ * Take steps from a budget made by hrefMatchBudget, for work done outside
+ * test() (link visits, selector passes). Throws MATCH_BUDGET once it is spent.
+ * @param {ReturnType<typeof hrefMatchBudget>} budget
+ * @param {number} steps
+ */
+export function spendMatchBudget(budget, steps) {
+  if ((budget.left -= steps) < 0) throw MATCH_BUDGET;
 }
 
 /**

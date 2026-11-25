@@ -312,7 +312,7 @@ describe('speculation href_matches patterns', () => {
   const HOSTILE = `/${'*a'.repeat(510)}*z`;
   const rulesTag = (json) => `<script type="speculationrules">${JSON.stringify(json)}</script>`;
   const anchors = (n, href) => Array.from({ length: n }, (_, i) => `<a href="${href(i)}">a</a>`).join('');
-  const BUDGET_MESSAGE = (action) => `Too many links and href_matches patterns to count the URLs this immediate ${action} rule matches statically.`;
+  const BUDGET_MESSAGE = (action) => `Too many links, selectors and patterns to count the URLs this immediate ${action} rule matches statically.`;
 
   /** test() over every link: the answers, or MATCH_BUDGET when the step budget ran out first. */
   const matchAll = (re, links) => {
@@ -452,6 +452,57 @@ describe('speculation href_matches patterns', () => {
     expect(value.status).toBe('failed');
     expect(value.nodes.map((n) => n.data)).toEqual([{ action: 'prefetch', candidates: 51, limit: 50, source: 'list' }]);
     expect(value.incomplete.map((n) => n.message)).toEqual([BUDGET_MESSAGE('prefetch'), BUDGET_MESSAGE('prerender')]);
+  });
+
+  it('bounds a deep compound selector_matches over many nested links', async () => {
+    const selector = `.none ${'div '.repeat(200)}a`;
+    const json = { prefetch: [{ where: { selector_matches: selector }, eagerness: 'immediate' }] };
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body>${'<div>'.repeat(200)}${anchors(2000, (i) => `/p/${i}`)}${'</div>'.repeat(200)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(ms).toBeLessThan(5000);
+    expect(value.status).toBe('passed');
+    expect(value.errors).toEqual([]);
+  });
+
+  it('reports incomplete for thousands of selectors over thousands of links', async () => {
+    const selectors = Array.from({ length: 4000 }, (_, i) => `.c${i}`);
+    const json = { prefetch: [{ where: { selector_matches: selectors }, eagerness: 'immediate' }] };
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body>${anchors(10000, (i) => `/p/${i}`)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(ms).toBeLessThan(10_000);
+    expect(value.status).toBe('incomplete');
+    expect(value.incomplete.map((n) => n.message)).toEqual([BUDGET_MESSAGE('prefetch')]);
+    expect(value.errors).toEqual([]);
+  });
+
+  it('bounds thousands of document rules without a where over thousands of links', async () => {
+    const json = { prefetch: Array.from({ length: 4000 }, () => ({ source: 'document', eagerness: 'immediate' })) };
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body>${anchors(14000, (i) => `/p/${i}`)}</body></html>`;
+    const { ms, value } = await timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+    expect(ms).toBeLessThan(10_000);
+    expect(value.status).toBe('failed');
+    expect(value.nodes.map((n) => n.data)).toEqual([{ action: 'prefetch', candidates: 14000, limit: 50, source: 'document' }]);
+    expect(value.incomplete).toHaveLength(1);
+    expect(value.errors).toEqual([]);
+  });
+
+  it('keeps counts for ordinary selector_matches rules', async () => {
+    const json = {
+      prefetch: [
+        { where: { selector_matches: ['.nav a', 'a.cta'] }, eagerness: 'immediate' },
+        { where: { and: [{ selector_matches: '.nav a' }, { not: { selector_matches: '.skip' } }] }, eagerness: 'immediate' },
+      ],
+    };
+    const links = Array.from({ length: 100 }, (_, i) => `<a href="/p/${i}"${i % 10 === 0 ? ' class="skip"' : ''}>a</a>`).join('');
+    const html = `<!doctype html><html><head>${rulesTag(json)}</head><body><nav class="nav">${links}</nav><a class="cta" href="/cta">c</a></body></html>`;
+    const value = runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] }));
+    expect(value.status).toBe('failed');
+    expect(value.nodes.map((n) => n.data)).toEqual([
+      { action: 'prefetch', candidates: 101, limit: 50, source: 'document' },
+      { action: 'prefetch', candidates: 90, limit: 50, source: 'document' },
+    ]);
+    expect(value.incomplete).toEqual([]);
+    expect(value.errors).toEqual([]);
   });
 
   it('leaves an ordinary page complete, with the same counts', async () => {

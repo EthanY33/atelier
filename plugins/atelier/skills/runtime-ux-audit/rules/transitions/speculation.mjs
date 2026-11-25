@@ -3,7 +3,7 @@
  * that the page's Content-Security-Policy blocks.
  */
 import { createHash } from 'node:crypto';
-import { HELP, MATCH_BUDGET, compileHrefPattern, hrefMatchBudget, stripQueryHash } from './shared.mjs';
+import { HELP, MATCH_BUDGET, compileHrefPattern, hrefMatchBudget, spendMatchBudget, stripQueryHash } from './shared.mjs';
 
 // Chromium keeps at most this many immediate (and eager) speculations per action.
 const LIMITS = Object.freeze({ prerender: 10, prefetch: 50 });
@@ -38,8 +38,9 @@ function documentLinks(ctx, docUrl) {
  * Compile a document-rule predicate into a link filter. Supported:
  * href_matches (string or array, with optional relative_to),
  * selector_matches, and, or, not. Anything else: null (the rule is skipped).
- * Every href_matches pattern draws on the one budget, and the filter throws
- * MATCH_BUDGET once it is spent.
+ * Every href_matches pattern and every selector_matches pass draws on the one
+ * budget (see hrefMatchBudget), and the filter throws MATCH_BUDGET once it is
+ * spent. A selector's match set is built once, on first use.
  */
 function compilePredicate(pred, ctx, budget, depth = 0) {
   if (depth > MAX_PREDICATE_DEPTH || !pred || typeof pred !== 'object' || Array.isArray(pred)) return null;
@@ -61,7 +62,17 @@ function compilePredicate(pred, ctx, budget, depth = 0) {
       if (!list.length || list.some((s) => typeof s !== 'string')) return null;
       const probe = ctx.html.elements[0];
       if (probe && list.some((s) => ctx.html.matches(probe, s) === null)) return null;
-      return (link) => list.some((s) => ctx.html.matches(link.el, s) === true);
+      const sets = [];
+      const setOf = (i) => {
+        if (!sets[i]) {
+          const selector = list[i];
+          const compounds = 1 + (selector.match(/[\s>+~,]/g)?.length ?? 0);
+          spendMatchBudget(budget, ctx.html.elements.length * (16 + 4 * compounds));
+          sets[i] = new Set(ctx.html.querySelectorAll(selector));
+        }
+        return sets[i];
+      };
+      return (link) => list.some((_, i) => setOf(i).has(link.el));
     }
     case 'and':
     case 'or': {
@@ -83,8 +94,9 @@ function compilePredicate(pred, ctx, budget, depth = 0) {
  * Unique candidate URLs of one immediate speculation rule, or null when the
  * rule is malformed, uses unsupported predicates or is not immediate. Only
  * immediate rules are reported, so the others are not matched and spend none
- * of the budget. count is null when the budget ran out before every link was
- * matched.
+ * of the budget. The document branch also takes a fixed number of steps from
+ * the budget per link visited. count is null when the budget ran out before
+ * every link was matched.
  * @returns {{ count: number|null, source: 'list'|'document' }|null}
  */
 function candidatesOf(r, ctx, docUrl, links, budget) {
@@ -110,7 +122,7 @@ function candidatesOf(r, ctx, docUrl, links, budget) {
     const pred = hasWhere ? compilePredicate(r.where, ctx, budget) : () => true;
     if (!pred) return null;
     try {
-      const set = new Set(links().filter(pred).map((l) => l.url));
+      const set = new Set(links().filter((l) => { spendMatchBudget(budget, 8); return pred(l); }).map((l) => l.url));
       return { count: set.size, source };
     } catch (e) {
       if (e === MATCH_BUDGET) return { count: null, source };
@@ -135,7 +147,8 @@ export const speculationRulesImmediateAbuse = {
     const docUrl = documentUrl(ctx);
     let cachedLinks = null;
     const links = () => (cachedLinks ??= documentLinks(ctx, docUrl));
-    // One budget for the whole run: many rules or patterns cannot multiply it.
+    // One budget for the whole run: many rules, patterns, selectors or links
+    // cannot multiply it.
     const budget = hrefMatchBudget();
     const out = [];
     for (const entry of entries) {
@@ -148,7 +161,7 @@ export const speculationRulesImmediateAbuse = {
           if (c.count === null) {
             out.push({
               node: ctx.ref.html(entry.el),
-              message: `Too many links and href_matches patterns to count the URLs this immediate ${action} rule matches statically.`,
+              message: `Too many links, selectors and patterns to count the URLs this immediate ${action} rule matches statically.`,
               incomplete: true,
             });
             continue;
