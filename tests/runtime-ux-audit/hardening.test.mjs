@@ -3,6 +3,7 @@
  * pass, forge report content or reach private addresses, and the fixes must
  * not change results on ordinary input.
  */
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { FIXED_TS, contextFor, runRule, tempDir, writeFiles } from './helpers.mjs';
@@ -355,6 +356,39 @@ describe('speculation-rules-csp-gap on hostile hash sources', () => {
     expect(value.status).toBe('failed');
     expect(value.nodes).toHaveLength(1);
     expect(ms).toBeLessThan(5000);
+  });
+
+  describe('many policies times many scripts', () => {
+    const meta = (content) => `<meta http-equiv="Content-Security-Policy" content="${content}">`;
+    const run = async (html) => timedAsync(async () => runRule(speculationRulesCspGap, await contextFor({ 'index.html': html })));
+
+    it('reads a policy of 200,000 sources once, not once per script', async () => {
+      const policy = meta(`script-src ${"'x' ".repeat(200_000)}'nonce-n'`);
+      const scripts = '<script type="speculationrules" nonce="n">{}</script>'.repeat(600);
+      const { ms, value } = await run(`<!doctype html><html><head>${policy}${scripts}</head><body></body></html>`);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('passed');
+    });
+
+    it('hashes a 1 MB script once per algorithm, not once per policy', async () => {
+      const policies = meta("script-src 'sha256-x' 'sha384-x' 'sha512-x' 'nonce-n'").repeat(2000);
+      const script = `<script type="speculationrules" nonce="n">${JSON.stringify({ prefetch: [{ urls: ['/a'], pad: 'x'.repeat(1_000_000) }] })}</script>`;
+      const { ms, value } = await run(`<!doctype html><html><head>${policies}${script}</head><body></body></html>`);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('passed');
+    });
+
+    it('still reports the first policy that blocks each script', async () => {
+      const text = '{"prefetch":[{"urls":["/a"]}]}';
+      const sha = createHash('sha256').update(text).digest('base64');
+      const policies = meta("script-src 'unsafe-inline'") + meta(`script-src 'sha256-${sha}'`) + meta("default-src 'nonce-n'");
+      const scripts = `<script type="speculationrules" nonce="n">${text}</script><script type="speculationrules" nonce="m">${text}</script><script type="speculationrules" nonce="n">{}</script>`;
+      const { value } = await run(`<!doctype html><html><head>${policies}${scripts}</head><body></body></html>`);
+      expect(value.status).toBe('failed');
+      expect(value.nodes.map((n) => n.data.directive)).toEqual(['default-src', 'script-src']);
+    });
   });
 });
 

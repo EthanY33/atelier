@@ -306,24 +306,38 @@ function digest(alg, text) {
   return createHash(alg).update(String(text), 'utf8').digest('base64');
 }
 
-/** True when a source list lets this inline speculation rules script run. */
-function allowsInline(tokens, nonce, text) {
+/**
+ * What the sources of one policy's effective directive allow, read once per
+ * run: a policy can list many sources, and every inline script is checked
+ * against every policy, so scanning the list per script cost sources times
+ * scripts (one meta policy of 200,000 sources and 600 scripts took 35 s).
+ */
+function compileSources(tokens) {
   const lowered = tokens.map((t) => t.toLowerCase());
-  if (lowered.includes("'inline-speculation-rules'")) return true;
   const hasNonceOrHash = tokens.some((t) => NONCE_OR_HASH_RE.test(t));
-  if (lowered.includes("'unsafe-inline'") && !hasNonceOrHash && !lowered.includes("'strict-dynamic'")) return true;
-  // One digest per algorithm, however many hash sources the policy lists.
-  const digests = new Map();
-  const digestOf = (alg) => {
-    if (!digests.has(alg)) digests.set(alg, normB64(digest(alg, text)));
-    return digests.get(alg);
-  };
+  const any = lowered.includes("'inline-speculation-rules'")
+    || (lowered.includes("'unsafe-inline'") && !hasNonceOrHash && !lowered.includes("'strict-dynamic'"));
+  const nonces = new Set();
+  // Algorithm -> normalized digests the policy lists.
+  const hashes = new Map();
   for (const t of tokens) {
     const n = /^'nonce-(.+)'$/i.exec(t);
-    if (n && nonce && n[1] === nonce) return true;
+    if (n) nonces.add(n[1]);
     const h = /^'(sha256|sha384|sha512)-(.+)'$/i.exec(t);
-    if (h && h[2].length <= MAX_HASH_SOURCE && normB64(h[2]) === digestOf(h[1].toLowerCase())) return true;
+    if (h && h[2].length <= MAX_HASH_SOURCE) {
+      const alg = h[1].toLowerCase();
+      if (!hashes.has(alg)) hashes.set(alg, new Set());
+      hashes.get(alg).add(normB64(h[2]));
+    }
   }
+  return { any, nonces, hashes };
+}
+
+/** True when compiled sources let an inline speculation rules script run. digestOf(alg) is the script's normalized digest. */
+function allowsInline(sources, nonce, digestOf) {
+  if (sources.any) return true;
+  if (nonce && sources.nonces.has(nonce)) return true;
+  for (const [alg, set] of sources.hashes) if (set.has(digestOf(alg))) return true;
   return false;
 }
 
@@ -341,12 +355,26 @@ export const speculationRulesCspGap = {
     const inline = html.speculationRules.filter((e) => !html.hasAttr(e.el, 'src'));
     if (!inline.length) return { notApplicable: 'no inline speculation rules' };
     if (!ctx.page.csp.length) return { notApplicable: 'no Content-Security-Policy' };
+    // Policies that allow every inline script are dropped once, and the rest
+    // are read once, not once per script.
+    const policies = [];
+    for (const policy of ctx.page.csp) {
+      const directive = EFFECTIVE_DIRECTIVES.find((d) => Object.hasOwn(policy.directives, d));
+      if (!directive) continue;
+      const sources = compileSources(policy.directives[directive]);
+      if (!sources.any) policies.push({ policy, directive, sources });
+    }
     const out = [];
     for (const entry of inline) {
       const nonce = html.attr(entry.el, 'nonce');
-      for (const policy of ctx.page.csp) {
-        const directive = EFFECTIVE_DIRECTIVES.find((d) => Object.hasOwn(policy.directives, d));
-        if (!directive || allowsInline(policy.directives[directive], nonce, entry.rawText)) continue;
+      // One digest per algorithm and script, however many policies list hashes.
+      const digests = new Map();
+      const digestOf = (alg) => {
+        if (!digests.has(alg)) digests.set(alg, normB64(digest(alg, entry.rawText)));
+        return digests.get(alg);
+      };
+      for (const { policy, directive, sources } of policies) {
+        if (allowsInline(sources, nonce, digestOf)) continue;
         out.push({
           node: ctx.ref.html(entry.el),
           message: `Blocked by the ${policy.source} CSP ${directive}: add 'inline-speculation-rules', a matching nonce or the sha256 hash to ${directive}.`,
