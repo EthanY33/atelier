@@ -243,8 +243,9 @@ async function restrictEgress(context, allowed) {
     return false;
   };
   await context.route('**/*', (route) => (permitted(route.request().url()) ? route.continue() : route.abort('blockedbyclient')).catch(() => {}));
-  // Routing skips redirect hops, prefetches and some worker requests. The
-  // proxy refuses those; the request event still names them.
+  // Routing skips redirect hops and some worker requests. The proxy refuses
+  // those; the request event names the ones Playwright reports. Speculation-rules
+  // prefetches and prerenders are refused by the proxy without being named.
   context.on('request', (request) => {
     permitted(request.url());
   });
@@ -469,6 +470,13 @@ export async function runDynamicPass(input = {}) {
       throw refusal() ?? new Error(`the page left the audited origin (it is on ${where}), so it was not probed`);
     };
 
+    /** As onTarget, and also throws while a refused navigation is still replacing the document with Chromium's error page. */
+    const onAuditedDocument = () => {
+      const refused = refusal();
+      if (refused) throw refused;
+      onTarget();
+    };
+
     const nav = await step('navigate', async (errs) => {
       let status = null;
       let headers = null;
@@ -487,7 +495,7 @@ export async function runDynamicPass(input = {}) {
       if (status !== null && status >= 400) throw new Error(`the page answered Chromium with HTTP ${status}, so it was not probed`);
       await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
       await doubleRaf(page).catch(() => {});
-      onTarget();
+      onAuditedDocument();
       const finalUrl = display(page.url());
       return headers ? { status, finalUrl, headers } : { status, finalUrl };
     });
@@ -515,8 +523,8 @@ export async function runDynamicPass(input = {}) {
       });
       if (sweep) facts.sweep = sweep.value;
       const interactions = await step('interactions', (errs) => {
-        onTarget();
-        return runInteractions(page, context, { targetUrl, limits, errors: errs, display, scrub });
+        onAuditedDocument();
+        return runInteractions(page, context, { targetUrl, limits, errors: errs, display, scrub, onTarget: onAuditedDocument });
       });
       if (interactions) facts.interactions = interactions.value;
       const dialogs = await step('dialogs', (errs) => probeDialogs(page, targetUrl, { limits, errors: errs, scrub }));

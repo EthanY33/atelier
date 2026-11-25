@@ -163,7 +163,8 @@ export async function doubleRaf(page) {
 
 /** Navigate to url, wait for load and two frames. */
 export async function freshLoad(page, url) {
-  await page.goto(url, { waitUntil: 'load' });
+  const res = await page.goto(url, { waitUntil: 'load' });
+  if (res && res.status() >= 400) throw new Error(`the page answered Chromium with HTTP ${res.status()}, so it was not probed`);
   await doubleRaf(page);
 }
 
@@ -228,7 +229,7 @@ async function resetAfterInteraction(page) {
  * @param {import('playwright').BrowserContext} context
  * @param {{ targetUrl: string, limits: object, errors: object[], display?: (u: string) => string, scrub?: (s: string) => string }} opts
  */
-export async function runInteractions(page, context, { targetUrl, limits, errors, display = (u) => u, scrub = (s) => s }) {
+export async function runInteractions(page, context, { targetUrl, limits, errors, display = (u) => u, scrub = (s) => s, onTarget = () => {} }) {
   const attempted = [];
   let snapshot = null;
   let cdp = null;
@@ -255,9 +256,13 @@ export async function runInteractions(page, context, { targetUrl, limits, errors
     // dominated by pending load work (measured 416 ms on a trivial page).
     await page.waitForTimeout(limits.settleMs);
     await doubleRaf(page);
-    await page.evaluate(() => {
+    onTarget();
+    const opened = await page.evaluate((origin) => {
+      if (location.origin !== origin) return false;
       window.__atelierUx.windowStart = performance.now();
-    });
+      return true;
+    }, new URL(targetUrl).origin);
+    if (!opened) throw new Error('the page left the audited origin before the interaction probe started, so it was not driven');
 
     let active = await activePath(page);
     for (let i = 0; i < limits.maxTabs; i++) {
@@ -267,10 +272,16 @@ export async function runInteractions(page, context, { targetUrl, limits, errors
       active = await activePath(page);
     }
 
-    const candidates = arr(await page.evaluate((max) => window.__atelierProbe.tapCandidates(max), limits.maxTaps))
-      .filter((t) => typeof t === 'string' && t !== '')
-      .slice(0, limits.maxTaps);
     let navigatedAway = false;
+    let candidates = [];
+    if (await sameDocument(page)) {
+      candidates = arr(await page.evaluate((max) => window.__atelierProbe.tapCandidates(max), limits.maxTaps))
+        .filter((t) => typeof t === 'string' && t !== '')
+        .slice(0, limits.maxTaps);
+    } else {
+      navigatedAway = true;
+      await leftPage('the Tab key');
+    }
     let last = null;
     for (const target of candidates) {
       snapshot = (await harvest(page)) ?? snapshot;

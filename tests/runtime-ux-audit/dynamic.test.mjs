@@ -881,6 +881,43 @@ describe.skipIf(!chromiumAvailable)('dynamic pass in Chromium', () => {
     }));
   }, 120_000);
 
+  it('does not drive the interaction probe when the page leaves the audited origin during the settle', async () => {
+    const hits = [];
+    await otherOrigin(hits, (other) => withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><meta name="viewport" content="width=device-width"><p>audited</p><button id="ok" type="button">OK</button>'
+        + `<script>setTimeout(() => { location.href = '${other}/during-settle'; }, 2000);</script>`);
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base, { settleMs: 3000, maxTabs: 1, maxTaps: 2, maxDialogTriggers: 1 }));
+      expect(hits).toEqual([]);
+      expect(out.interactions).toBeNull();
+      expect(JSON.stringify(out)).not.toContain('reload-button');
+      expect(out.errors.map((e) => e.message)).toContain(refusedFor(other));
+    }));
+  }, 120_000);
+
+  it('refuses an error page answered only on a later load of the audited page', async () => {
+    let documents = 0;
+    await withServer((req, res) => {
+      if (req.url !== '/') {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      documents += 1;
+      res.writeHead(documents > 1 ? 503 : 200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><meta name="viewport" content="width=device-width"><p>audited</p><button id="ok" type="button">OK</button>');
+    }, async (base) => {
+      const out = await runDynamicPass(httpInput(base));
+      expect(out.navigation.status).toBe(200);
+      expect(out.dialogs).toBeNull();
+      expect(out.bfcache).toBeNull();
+      const byProbe = Object.fromEntries(out.errors.map((e) => [e.probe, e.message]));
+      expect(byProbe.dialogs).toContain('HTTP 503');
+      expect(byProbe.bfcache).toContain('HTTP 503');
+    });
+  }, 120_000);
+
   it('reports an HTTP error answered to Chromium only as a probe error, with no finding about the error page', async () => {
     // The static fetch gets the page; Chromium gets a 503 (a bot check or a flaky origin).
     await withServer((req, res) => {
