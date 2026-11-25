@@ -12,7 +12,7 @@ import { buildCssModel, normalizePrelude, parseCss } from '../../plugins/atelier
 import {
   findUnitValues, normalizeSelector, parseAnimationList, parseLength, parseTimeMs, stripCssComments,
 } from '../../plugins/atelier/skills/runtime-ux-audit/lib/css-values.mjs';
-import { buildHtmlModel, MAX_HTML_DEPTH } from '../../plugins/atelier/skills/runtime-ux-audit/lib/html-model.mjs';
+import { buildHtmlModel, MAX_HTML_DEPTH, MAX_PATH_TEXT } from '../../plugins/atelier/skills/runtime-ux-audit/lib/html-model.mjs';
 import { MAX_JS_DEPTH, buildJsModel, parseJs, pathOf } from '../../plugins/atelier/skills/runtime-ux-audit/lib/js-model.mjs';
 import { compileSelector, matchesSelector, selectAll } from '../../plugins/atelier/skills/runtime-ux-audit/lib/selector-match.mjs';
 import { REF_META } from '../../plugins/atelier/skills/runtime-ux-audit/lib/context.mjs';
@@ -746,6 +746,18 @@ describe('speculation href_matches patterns', () => {
       const { ms, value } = await runPage(selectorPage(selectors, body));
       incompleteFast(value, ms);
     });
+
+    it('builds 2000 nodes for 2000 scripts under 500 long-class ancestors', async () => {
+      const open = `<div class="${'c'.repeat(1000)} ${'d'.repeat(1000)}">`.repeat(500);
+      const scripts = rulesTag({ prefetch: [immediateDoc] }).repeat(2000);
+      const { ms, value } = await runPage(`<!doctype html><html><head></head><body>${anchors(51, (i) => `/p/${i}`)}${open}${scripts}${'</div>'.repeat(500)}</body></html>`);
+      expect(ms).toBeLessThan(FIVE_S);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('failed');
+      expect(value.nodes).toHaveLength(50);
+      expect(value.nodesTruncated).toBe(1950);
+      expect(value.nodes.every((n) => n.selector.length <= MAX_PATH_TEXT + 512 * 22)).toBe(true);
+    });
   });
 });
 
@@ -941,6 +953,14 @@ describe('HTML nesting depth', () => {
     const m = buildHtmlModel('<!doctype html><table><tr><td>a<b>x<p>y</b>z</td></tr></table><p>1<p>2');
     expect(m.querySelectorAll('td p')).toHaveLength(1);
     expect(m.querySelectorAll('body > p')).toHaveLength(2);
+  });
+
+  it('bounds the text of a path under long class names and still selects only that element', () => {
+    const m = buildHtmlModel(`<!doctype html><body>${`<div class="${'c'.repeat(1000)} ${'d'.repeat(1000)}">`.repeat(500)}<p>a</p><p>b</p>`);
+    const target = m.byTag('p')[1];
+    const path = m.cssPath(target);
+    expect(path.length).toBeLessThanOrEqual(MAX_PATH_TEXT + 512 * 22);
+    expect(m.querySelectorAll(path)).toEqual([target]);
   });
 });
 
