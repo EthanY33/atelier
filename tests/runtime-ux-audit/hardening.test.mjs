@@ -380,6 +380,38 @@ describe('speculation-rules-csp-gap on hostile hash sources', () => {
       expect(value.status).toBe('passed');
     });
 
+    const EMPTY_SHA256 = "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU'";
+
+    it('checks copies of one script allowed by hash sources once, not once per copy', async () => {
+      const policies = meta(`script-src ${EMPTY_SHA256}`).repeat(13000);
+      const scripts = '<script type="speculationrules"></script>'.repeat(3000);
+      const { ms, value } = await run(`<!doctype html><html><head>${policies}${scripts}</head><body></body></html>`);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('passed');
+    });
+
+    it('checks one text under many nonces without walking every policy for each', async () => {
+      const policies = meta(`script-src ${EMPTY_SHA256}`).repeat(13000);
+      const scripts = Array.from({ length: 3000 }, (_, i) => `<script type="speculationrules" nonce="${i}"></script>`).join('');
+      const { ms, value } = await run(`<!doctype html><html><head>${policies}${scripts}</head><body></body></html>`);
+      expect(ms).toBeLessThan(5000);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('passed');
+    });
+
+    it('still finds a blocking policy past policies that allow by hash and by nonce in turn', async () => {
+      const text = '{}';
+      const sha = `'sha256-${createHash('sha256').update(text).digest('base64')}'`;
+      const policies = meta(`script-src ${sha}`) + meta("script-src 'nonce-n'") + meta(`script-src ${sha} 'nonce-n'`) + meta("default-src 'none'");
+      const scripts = `<script type="speculationrules" nonce="n">${text}</script>`.repeat(2)
+        + `<script type="speculationrules" nonce="m">${text}</script><script type="speculationrules" nonce="n">[]</script>`;
+      const { value } = await run(`<!doctype html><html><head>${policies}${scripts}</head><body></body></html>`);
+      expect(value.status).toBe('failed');
+      expect(value.nodes.map((n) => n.data.directive)).toEqual(['default-src', 'default-src', 'script-src', 'script-src']);
+      expect(value.nodes.map((n) => n.message.includes('meta CSP'))).toEqual([true, true, true, true]);
+    });
+
     it('still reports the first policy that blocks each script', async () => {
       const text = '{"prefetch":[{"urls":["/a"]}]}';
       const sha = createHash('sha256').update(text).digest('base64');

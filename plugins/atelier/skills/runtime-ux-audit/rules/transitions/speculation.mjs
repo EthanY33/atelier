@@ -312,33 +312,45 @@ function digest(alg, text) {
  * against every policy, so scanning the list per script cost sources times
  * scripts (one meta policy of 200,000 sources and 600 scripts took 35 s).
  */
-function compileSources(tokens) {
+function compileSources(tokens, idOf) {
   const lowered = tokens.map((t) => t.toLowerCase());
   const hasNonceOrHash = tokens.some((t) => NONCE_OR_HASH_RE.test(t));
   const any = lowered.includes("'inline-speculation-rules'")
     || (lowered.includes("'unsafe-inline'") && !hasNonceOrHash && !lowered.includes("'strict-dynamic'"));
+  // Nonces and 'alg-<normalized digest>' hashes as ids from idOf, shared by
+  // every policy of the run, and the algorithms the policy lists hashes in.
   const nonces = new Set();
-  // Algorithm -> normalized digests the policy lists.
-  const hashes = new Map();
+  const hashes = new Set();
+  const algs = [];
   for (const t of tokens) {
     const n = /^'nonce-(.+)'$/i.exec(t);
-    if (n) nonces.add(n[1]);
+    if (n) nonces.add(idOf(`nonce-${n[1]}`));
     const h = /^'(sha256|sha384|sha512)-(.+)'$/i.exec(t);
     if (h && h[2].length <= MAX_HASH_SOURCE) {
       const alg = h[1].toLowerCase();
-      if (!hashes.has(alg)) hashes.set(alg, new Set());
-      hashes.get(alg).add(normB64(h[2]));
+      if (!algs.includes(alg)) algs.push(alg);
+      hashes.add(idOf(`${alg}-${normB64(h[2])}`));
     }
   }
-  return { any, nonces, hashes };
+  return { any, nonces, algs, hashes };
 }
 
-/** True when compiled sources let an inline speculation rules script run. digestOf(alg) is the script's normalized digest. */
-function allowsInline(sources, nonce, digestOf) {
-  if (sources.any) return true;
-  if (nonce && sources.nonces.has(nonce)) return true;
-  for (const [alg, set] of sources.hashes) if (set.has(digestOf(alg))) return true;
-  return false;
+/**
+ * The first policy whose sources do not let an inline speculation rules
+ * script run, or null. nonceId is the id of the script's nonce, and hashIds
+ * the ids of its digests, among those some policy lists (see compileSources).
+ * It runs policies times distinct scripts, so each check is a few lookups of
+ * small integers.
+ */
+function firstBlocking(policies, nonceId, hashIds, start = 0) {
+  for (let i = start; i < policies.length; i++) {
+    const { nonces, hashes } = policies[i].sources;
+    if (nonceId !== undefined && nonces.has(nonceId)) continue;
+    let allowed = false;
+    for (let k = 0; k < hashIds.length && !allowed; k++) allowed = hashes.has(hashIds[k]);
+    if (!allowed) return policies[i];
+  }
+  return null;
 }
 
 export const speculationRulesCspGap = {
@@ -358,30 +370,70 @@ export const speculationRulesCspGap = {
     // Policies that allow every inline script are dropped once, and the rest
     // are read once, not once per script.
     const policies = [];
+    const ids = new Map();
+    const idOf = (key) => {
+      let id = ids.get(key);
+      if (id === undefined) ids.set(key, (id = ids.size));
+      return id;
+    };
     for (const policy of ctx.page.csp) {
       const directive = EFFECTIVE_DIRECTIVES.find((d) => Object.hasOwn(policy.directives, d));
       if (!directive) continue;
-      const sources = compileSources(policy.directives[directive]);
+      const sources = compileSources(policy.directives[directive], idOf);
       if (!sources.any) policies.push({ policy, directive, sources });
     }
     const out = [];
+    // Copies of one script (same nonce, same text) share one verdict: the
+    // first policy that blocks it, or null. Checked once, not once per copy:
+    // 9200 policies of one hash and 25,500 copies of an empty script took 72 s.
+    // nonce -> text -> verdict.
+    const verdicts = new Map();
+    // Algorithms some policy lists a hash in, and text -> the ids of the
+    // script's digests in them that some policy lists: one digest per
+    // algorithm and distinct text.
+    const algs = [...new Set(policies.flatMap((p) => p.sources.algs))];
+    const hashIdsOf = new Map();
+    // Every policy before the first one that does not list a script's nonce,
+    // or before the first one that lists none of its digests, allows it, so
+    // the check starts at the later of the two. Each is found once per
+    // distinct nonce or text, and each step to it passes a policy that lists
+    // that nonce or digest. nonce id -> index, text -> index.
+    const nonceStart = new Map();
+    const hashStart = new Map();
     for (const entry of inline) {
       const nonce = html.attr(entry.el, 'nonce');
-      // One digest per algorithm and script, however many policies list hashes.
-      const digests = new Map();
-      const digestOf = (alg) => {
-        if (!digests.has(alg)) digests.set(alg, normB64(digest(alg, entry.rawText)));
-        return digests.get(alg);
-      };
-      for (const { policy, directive, sources } of policies) {
-        if (allowsInline(sources, nonce, digestOf)) continue;
-        out.push({
-          node: ctx.ref.html(entry.el),
-          message: `Blocked by the ${policy.source} CSP ${directive}: add 'inline-speculation-rules', a matching nonce or the sha256 hash to ${directive}.`,
-          data: { directive, policy: policy.source, sha256: `'sha256-${digest('sha256', entry.rawText)}'` },
-        });
-        break;
+      let byText = verdicts.get(nonce);
+      if (!byText) verdicts.set(nonce, (byText = new Map()));
+      let blocked = byText.get(entry.rawText);
+      if (blocked === undefined) {
+        let hashIds = hashIdsOf.get(entry.rawText);
+        if (!hashIds) {
+          hashIds = algs.map((alg) => ids.get(`${alg}-${normB64(digest(alg, entry.rawText))}`)).filter((id) => id !== undefined);
+          hashIdsOf.set(entry.rawText, hashIds);
+          let i = 0;
+          while (i < policies.length && hashIds.some((id) => policies[i].sources.hashes.has(id))) i++;
+          hashStart.set(entry.rawText, i);
+        }
+        const nonceId = nonce ? ids.get(`nonce-${nonce}`) : undefined;
+        let fromNonce = 0;
+        if (nonceId !== undefined) {
+          fromNonce = nonceStart.get(nonceId);
+          if (fromNonce === undefined) {
+            fromNonce = 0;
+            while (fromNonce < policies.length && policies[fromNonce].sources.nonces.has(nonceId)) fromNonce++;
+            nonceStart.set(nonceId, fromNonce);
+          }
+        }
+        blocked = firstBlocking(policies, nonceId, hashIds, Math.max(fromNonce, hashStart.get(entry.rawText)));
+        byText.set(entry.rawText, blocked);
       }
+      if (!blocked) continue;
+      const { policy, directive } = blocked;
+      out.push({
+        node: ctx.ref.html(entry.el),
+        message: `Blocked by the ${policy.source} CSP ${directive}: add 'inline-speculation-rules', a matching nonce or the sha256 hash to ${directive}.`,
+        data: { directive, policy: policy.source, sha256: `'sha256-${digest('sha256', entry.rawText)}'` },
+      });
     }
     return out;
   },
