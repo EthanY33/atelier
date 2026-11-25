@@ -56,6 +56,8 @@ Importing a skill never starts its CLI, including under `node -e`.
 
 `plugins/atelier/bin/atelier`. Claude Code puts the plugin's `bin/` on the Bash tool's PATH, so inside a session it runs as `atelier`. Anywhere else, run `node <plugin>/bin/atelier`.
 
+On Windows, cmd.exe and PowerShell start it through `bin/atelier.cmd`. From PowerShell an argument that contains `|`, `<` or `>` is still read by cmd.exe before atelier starts: the text after a `|` runs as a command and `>` writes a file. Pass such an argument, and any argument taken from a file or a web page, with `node <plugin>inatelier ...` instead. A line written as `cmd /c ""<path>atelier.cmd" ..."` hands everything after the file name to atelier unparsed; write `cmd /d /c` to keep cmd syntax.
+
 | Command | What it does | Exit codes |
 |---|---|---|
 | `atelier`, `atelier --help` | Print usage | 0 |

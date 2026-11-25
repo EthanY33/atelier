@@ -114,7 +114,7 @@ Runs every skill on a bundled sample brand, logo and page and writes the results
 
 ## Use the CLI outside Claude Code
 
-Every skill is also a command-line tool, so the same work runs in scripts and CI. Inside a Claude Code session the plugin's `bin/` is on the PATH, so `atelier doctor` just works. Elsewhere, get a copy of the plugin and run it with Node 22 or newer:
+Every skill is also a command-line tool, so the same work runs in scripts and CI. Inside a Claude Code session the plugin's `bin/` is on the PATH, so `atelier doctor` just works. In Windows PowerShell, run `node <plugin>inatelier ...` for an argument that contains `|`, `<` or `>` (see docs/api.md). Elsewhere, get a copy of the plugin and run it with Node 22 or newer:
 
 ```bash
 git clone --depth 1 --branch v1.0.0 https://github.com/EthanY33/atelier
