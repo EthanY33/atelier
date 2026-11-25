@@ -538,8 +538,8 @@ async function captureFrames(page, { fps, totalFrames, signal }, frameDir, padWi
  * @param opts.allowHttpError - record the page even when it answers HTTP 4xx/5xx.
  * @param opts.root - local pages only: the folder whose files the page may load (default:
  *   the HTML file's folder). Files outside it, and dot-named files and folders, do not load.
- * @param opts.onWarning - receives one message per local file that was blocked (default:
- *   printed to stderr).
+ * @param opts.onWarning - receives one message per blocked local file, up to five, then one
+ *   saying that more were blocked (default: printed to stderr).
  * @returns {Promise<string>} resolves with outPath
  */
 export async function recordHtml(opts) {

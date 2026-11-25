@@ -321,7 +321,7 @@ Exit codes: 0 assets written; 2 usage error or failure.
   | `analyzeTimeoutMs` | `60000` | Maximum time for the axe run |
   | `allowHttpError` | `false` | Audit a page that answers HTTP 4xx or 5xx instead of throwing |
   | `root` | the HTML file's folder | Local pages only: the folder whose files the page may load |
-  | `onWarning` | print to stderr | `(message: string) => void`; called once per local file that was blocked |
+  | `onWarning` | print to stderr | `(message: string) => void`; called once per blocked local file for the first five, then once more to say that others were blocked and are not listed |
   | `browser` | launch one | A Playwright `Browser` to reuse; it is left open |
 
   Throws an `AuditError` with one of these codes: `INPUT_NOT_FOUND`, `INPUT_IS_DIRECTORY`, `OUTSIDE_ROOT`, `INVALID_URL`, `UNSUPPORTED_SCHEME`, `INVALID_TAGS`, `UNKNOWN_TAG`, `NAVIGATION_FAILED`, `HTTP_ERROR`, `LOAD_TIMEOUT`, `WAIT_FOR_FAILED`, `ANALYZE_TIMEOUT`, `NO_RULES`. Throws `AXE_MISSING`, `PLAYWRIGHT_MISSING`, `CHROMIUM_MISSING` or `CHROMIUM_DEPS_MISSING` when a prerequisite is missing, and a `TypeError` for an invalid option.
@@ -347,7 +347,7 @@ Exit codes: 0 no critical or serious violations; 1 at least one; 2 usage error o
 
 ### Local pages
 
-This section applies to `accessibility-design-audit` and `html-to-video` alike. Chromium lets a page opened from disk frame, embed or link any file the user can read, and both skills copy what the page renders into their output. So a local page only loads regular files under one folder: the HTML file's own, or `root` (`--root <dir>`, relative to the working directory) when given, which must contain the page. Paths are compared after following links, the page's own included. Dot-named files and folders (`.env`, `.git/`) never load, except `.well-known/`, and neither does a `file:` URL on another host. Each blocked file is reported once as `atelier: warning: blocked local file <url>: ...` on stderr, or through `onWarning`; a file that does not exist is not reported. `root` is ignored for http(s) and `data:` pages, which Chromium itself keeps away from `file:` URLs.
+This section applies to `accessibility-design-audit` and `html-to-video` alike. Chromium lets a page opened from disk frame, embed or link any file the user can read, and both skills copy what the page renders into their output. So a local page only loads regular files under one folder: the HTML file's own, or `root` (`--root <dir>`, relative to the working directory) when given, which must contain the page. Paths are compared after following links, the page's own included. Dot-named files and folders (`.env`, `.git/`) never load, except `.well-known/`, and neither does a `file:` URL on another host. The first five blocked files are each reported once as `atelier: warning: blocked local file <url>: ...` on stderr, or through `onWarning`, followed by one `more local files were blocked; they are not listed` message when there were more; a file that does not exist is not reported. `root` is ignored for http(s) and `data:` pages, which Chromium itself keeps away from `file:` URLs.
 
 ## html-to-video
 
@@ -370,7 +370,7 @@ This section applies to `accessibility-design-audit` and `html-to-video` alike. 
   | `timeoutMs` | `30000` | Navigation and load event timeout |
   | `allowHttpError` | `false` | Record a page that answers HTTP 4xx or 5xx |
   | `root` | the HTML file's folder | Local pages only: the folder whose files the page may load; see [Local pages](#local-pages) |
-  | `onWarning` | print to stderr | `(message: string) => void`; called once per local file that was blocked |
+  | `onWarning` | print to stderr | `(message: string) => void`; called once per blocked local file for the first five, then once more to say that others were blocked and are not listed |
   | `browser` | launch one | A Playwright Chromium `Browser` to reuse; it is left open |
   | `signal` | none | `AbortSignal`; aborting stops the capture or encode, removes the temp files and rejects with the abort reason |
 

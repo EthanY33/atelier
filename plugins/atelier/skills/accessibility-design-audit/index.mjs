@@ -358,8 +358,8 @@ export function buildMarkdownReport({ url, finalUrl, timestamp, violations, tags
  * @param {boolean} [opts.allowHttpError=false] - Audit 4xx/5xx responses instead of throwing.
  * @param {string} [opts.root] - Local pages only: the folder whose files the page may load
  *   (default: the HTML file's folder). Dot-named files and folders never load.
- * @param {(message: string) => void} [opts.onWarning] - Receives one message per local file
- *   that was blocked (default: printed to stderr).
+ * @param {(message: string) => void} [opts.onWarning] - Receives one message per blocked local
+ *   file, up to five, then one saying that more were blocked (default: printed to stderr).
  * @param {import('playwright').Browser} [opts.browser] - Browser to reuse; left open.
  * @returns {Promise<{ violations: { critical: Array, serious: Array, moderate: Array, minor: Array, all: Array },
  *   reportPath: string, rawPath: string, url: string, tags: string[] }>}

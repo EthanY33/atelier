@@ -30,7 +30,7 @@ node --input-type=module -e "const { pathToFileURL } = await import('node:url');
 - `--settle-timeout <ms>` / `settleTimeoutMs`: max wait for network idle and web fonts after load. Default 10000. Best effort: a page that never goes idle is still audited.
 - `--analyze-timeout <ms>` / `analyzeTimeoutMs`: max time for the axe run. Default 60000.
 - `--allow-http-error` / `allowHttpError`: audit a page that answers HTTP 4xx or 5xx instead of failing.
-- `--root <dir>` / `root`: for a local page, the folder whose files the page may load. Default: the HTML file's folder. Files outside it, dot-named files and folders (`.env`, `.git/`) and `file:` URLs on another host do not load, and each one is reported as `atelier: warning: blocked local file ...` on stderr. Pass the site or build folder when the page uses `../` assets (it must contain the page), never a home folder.
+- `--root <dir>` / `root`: for a local page, the folder whose files the page may load. Default: the HTML file's folder. Files outside it, dot-named files and folders (`.env`, `.git/`) and `file:` URLs on another host do not load, and the first five are reported as `atelier: warning: blocked local file ...` on stderr (one more line says when others were blocked). Pass the site or build folder when the page uses `../` assets (it must contain the page), never a home folder.
 - `-h`, `--help`: print usage to stdout and exit 0.
 - API only, `browser`: a Playwright Browser to reuse across audits; it is left open.
 - API only, `onWarning`: a function that receives the blocked-file warnings instead of stderr.
