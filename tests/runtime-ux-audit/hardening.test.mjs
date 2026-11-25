@@ -350,12 +350,12 @@ describe('speculation href_matches patterns', () => {
     expect(ms).toBeLessThan(FAST_MS);
   });
 
-  it('skips patterns over the length bound and stays fast against many links', () => {
+  it('throws MATCH_BUDGET for patterns over the length bound and stays fast against many links', () => {
     const resolve = (h) => `https://a.example${h.startsWith('/') ? '' : '/'}${h}`;
     const huge = `/${'*a'.repeat(50000)}*z`;
     expect(huge.length).toBeGreaterThan(100000);
-    const { ms, value } = timed(() => compileHrefPattern(huge, resolve));
-    expect(value).toBeNull();
+    const { ms, value } = timed(() => { try { return compileHrefPattern(huge, resolve); } catch (e) { return e; } });
+    expect(value).toBe(MATCH_BUDGET);
     expect(ms).toBeLessThan(FAST_MS);
     const ok = compileHrefPattern(`/${'*a'.repeat(300)}*z`, resolve);
     expect(ok).not.toBeNull();
@@ -364,7 +364,7 @@ describe('speculation href_matches patterns', () => {
     expect(batch.ms).toBeLessThan(10_000);
   });
 
-  it('costs little per link for a maximum-length pattern and bounds a huge href', () => {
+  it('costs little per link for a maximum-length pattern and refuses a huge href', () => {
     const resolve = (h) => `https://a.example${h.startsWith('/') ? '' : '/'}${h}`;
     const pattern = `/${'*a'.repeat(510)}*z`;
     expect(pattern.length).toBeLessThanOrEqual(1024);
@@ -374,9 +374,9 @@ describe('speculation href_matches patterns', () => {
     const batch = timed(() => matchAll(re, links));
     expect(batch.ms).toBeLessThan(3000);
     // A fresh matcher: the batch above may have spent the budget of re.
-    const huge = timed(() => compileHrefPattern(pattern, resolve).test(`https://a.example/${'a'.repeat(100_000)}`));
+    const huge = timed(() => matchAll(compileHrefPattern(pattern, resolve), [`https://a.example/${'a'.repeat(100_000)}`]));
     expect(huge.ms).toBeLessThan(FAST_MS);
-    expect(huge.value).toBe(false);
+    expect(huge.value).toBe(MATCH_BUDGET);
   });
 
   it('stops a maximum-length pattern over 200 links of 8000 characters at the step budget', () => {
@@ -619,6 +619,17 @@ describe('speculation href_matches patterns', () => {
     const html = `<!doctype html><html><head>${rulesTag({ prefetch: [{ where: { href_matches: patterns }, eagerness: 'immediate' }] })}</head><body>${anchors(1, () => '/b')}</body></html>`;
     const { ms, value } = await runPage(html);
     expectIncomplete(value, ms);
+  });
+
+  it('reports links over the URL length cap as incomplete instead of passing', async () => {
+    const json = { prefetch: [{ where: { href_matches: '/*' }, eagerness: 'immediate' }] };
+    const page = (len) => `<!doctype html><html><head>${rulesTag(json)}</head><body>${anchors(60, (i) => `/${'a'.repeat(len)}${i}`)}</body></html>`;
+    const long = await runPage(page(8300));
+    expectIncomplete(long.value, long.ms);
+    const ok = await runPage(page(8000));
+    expect(ok.value.status).toBe('failed');
+    expect(ok.value.nodes.map((n) => n.data)).toEqual([{ action: 'prefetch', candidates: 60, limit: 50, source: 'document' }]);
+    expect(ok.value.incomplete).toEqual([]);
   });
 
   it('leaves an ordinary page complete, with the same counts', async () => {

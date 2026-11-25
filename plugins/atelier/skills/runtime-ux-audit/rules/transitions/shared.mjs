@@ -188,7 +188,7 @@ export function specificity(sel) {
 // ---------------------------------------------------------------------------
 
 const TOKEN = 'zzatelier';
-// Longer patterns are skipped: matching costs pattern length times URL length per link.
+// A longer pattern or link makes the rule incomplete (MATCH_BUDGET): matching costs pattern length times URL length per link.
 const MAX_PATTERN_LENGTH = 1024;
 const MAX_URL_LENGTH = 8192;
 // The two bounds above cap one test() call. This one caps the steps of every
@@ -223,8 +223,9 @@ export function spendMatchBudget(budget, steps) {
  * absolute URLs without query or hash. '*' matches anything and ':name' one
  * path segment. Relative patterns resolve like links (resolveHref, which
  * honors <base href> and the local root). Regex groups, braces, modifiers,
- * escapes, search or hash parts and patterns over 1024 characters are
- * unsupported: null. The matcher runs
+ * escapes and search or hash parts are unsupported: null. A pattern over 1024
+ * characters throws MATCH_BUDGET, so the rule is reported incomplete rather
+ * than skipped as unsupported. The matcher runs
  * in time linear in pattern length times URL length (no regex backtracking),
  * and every test() draws on a step budget, so hostile patterns and links
  * cannot stall the audit: once the budget is spent, test() throws
@@ -240,7 +241,7 @@ export function spendMatchBudget(budget, steps) {
 export function compileHrefPattern(pattern, resolveHref, budget = hrefMatchBudget()) {
   if (typeof pattern !== 'string' || !pattern.trim()) return null;
   const p = pattern.trim();
-  if (p.length > MAX_PATTERN_LENGTH) return null;
+  if (p.length > MAX_PATTERN_LENGTH) throw MATCH_BUDGET;
   if (/[(){}\\?#+]/.test(p)) return null;
   const kinds = [];
   const withTokens = p.replace(/\*|:([A-Za-z_$][\w$]*)/g, (m) => {
@@ -272,14 +273,15 @@ export function compileHrefPattern(pattern, resolveHref, budget = hrefMatchBudge
 /**
  * Simulate the pattern as an NFA over the input, one state set per character.
  * A call costs one step plus the number of active states per character, not
- * the pattern length, and an input longer than MAX_URL_LENGTH never matches.
+ * the pattern length, and an input longer than MAX_URL_LENGTH throws
+ * MATCH_BUDGET: the link cannot be matched, and a clean answer would hide it.
  * The steps come out of the budget (MATCH_BUDGET once it is spent), and the
  * state arrays are the budget's too: allocating them per call cost more than
  * matching an ordinary link.
  */
 function matchItems(items, input, budget) {
   if (--budget.left < 0) throw MATCH_BUDGET;
-  if (input.length > MAX_URL_LENGTH) return false;
+  if (input.length > MAX_URL_LENGTH) throw MATCH_BUDGET;
   const m = items.length;
   const loops = (i) => items[i] === 'any' || items[i] === 'nsstar';
   let { cur, next } = budget;
