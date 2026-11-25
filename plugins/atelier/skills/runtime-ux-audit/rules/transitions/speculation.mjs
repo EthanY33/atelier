@@ -15,11 +15,21 @@ const MAX_SELECTOR_LENGTH = 1024;
 
 // ctx.page.resolve parses the <base href> again on every call, relative results
 // carry the whole base, and V8 stops hashing strings past 16383 characters, so
-// a Set of long URLs costs its size squared. Bases up to FREE_BASE_LENGTH cost
-// nothing. A longer one costs length / 8 steps per resolution, and one over
-// MAX_BASE_LENGTH makes every resolution throw MATCH_BUDGET (rule incomplete).
+// a Set of long URLs costs its size squared. Bases up to FREE_BASE_LENGTH add
+// no per-resolution cost of their own (see FREE_RESOLVES below). A longer one
+// costs length / 8 steps per resolution, and one over MAX_BASE_LENGTH makes
+// every resolution throw MATCH_BUDGET (rule incomplete).
 const FREE_BASE_LENGTH = 1024;
 const MAX_BASE_LENGTH = 8192;
+// Resolving is not free on a short base either: a relative URL on a file: page
+// is parsed twice (about 14 microseconds), and one that does not parse costs an
+// exception (about 40). The first FREE_RESOLVES of a run cost nothing, so an
+// ordinary page and its list rules are counted even after other rules spend the
+// budget. After that each resolution costs RESOLVE_STEPS, and
+// FAILED_RESOLVE_STEPS more when the URL does not parse.
+const FREE_RESOLVES = 20_000;
+const RESOLVE_STEPS = 256;
+const FAILED_RESOLVE_STEPS = 1024;
 
 // One match set per selector text and run, so a selector repeated across rules
 // is charged once. Keyed by the run's budget object.
@@ -144,7 +154,8 @@ function compilePredicate(pred, ctx, budget, resolve, depth = 0) {
  * of the budget. The document branch also takes a fixed number of steps from
  * the budget per link visited. count is null when the budget ran out before
  * every link was matched, including while compiling the predicate or
- * resolving URLs (resolve, see check()), in either branch.
+ * resolving URLs (resolve, see check(): the first FREE_RESOLVES of a run are
+ * free, each later one costs steps), in either branch.
  * @returns {{ count: number|null, source: 'list'|'document' }|null}
  */
 function candidatesOf(r, ctx, docUrl, links, budget, resolve) {
@@ -197,14 +208,30 @@ export const speculationRulesImmediateAbuse = {
     const budget = hrefMatchBudget();
     const baseLength = (ctx.page.resolve('#') ?? '').length;
     const resolveSteps = baseLength > FREE_BASE_LENGTH ? baseLength >> 3 : 0;
+    let freeResolves = FREE_RESOLVES;
     const resolve = (href) => {
       if (baseLength > MAX_BASE_LENGTH) throw MATCH_BUDGET;
+      const free = freeResolves > 0;
+      if (free) freeResolves--;
+      else spendMatchBudget(budget, RESOLVE_STEPS);
       if (resolveSteps) spendMatchBudget(budget, resolveSteps);
-      return ctx.page.resolve(href);
+      const abs = ctx.page.resolve(href);
+      if (abs === null && !free) spendMatchBudget(budget, FAILED_RESOLVE_STEPS);
+      return abs;
     };
     const links = () => (cachedLinks ??= documentLinks(ctx, docUrl, resolve));
     const out = [];
     for (const entry of entries) {
+      // One NodeRef per script element and one finding per message. The runner
+      // keeps one node per selector, location and message anyway, and building
+      // a NodeRef reads the whole start tag and the path of the element.
+      let node = null;
+      const seen = new Set();
+      const report = (finding) => {
+        if (seen.has(finding.message)) return;
+        seen.add(finding.message);
+        out.push({ node: (node ??= ctx.ref.html(entry.el)), ...finding });
+      };
       for (const action of Object.keys(LIMITS)) {
         const list = entry.json[action];
         if (!Array.isArray(list)) continue;
@@ -212,16 +239,14 @@ export const speculationRulesImmediateAbuse = {
           const c = candidatesOf(r, ctx, docUrl, links, budget, resolve);
           if (!c) continue;
           if (c.count === null) {
-            out.push({
-              node: ctx.ref.html(entry.el),
+            report({
               message: `Too many links, selectors and patterns to count the URLs this immediate ${action} rule matches statically.`,
               incomplete: true,
             });
             continue;
           }
           if (c.count <= LIMITS[action]) continue;
-          out.push({
-            node: ctx.ref.html(entry.el),
+          report({
             message: `This immediate ${action} rule matches ${c.count} URLs, above Chromium's limit of ${LIMITS[action]}; the extra requests waste bandwidth and memory. Use eagerness moderate or conservative.`,
             data: { action, candidates: c.count, limit: LIMITS[action], source: c.source },
           });

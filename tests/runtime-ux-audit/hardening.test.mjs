@@ -659,6 +659,52 @@ describe('speculation href_matches patterns', () => {
     const small = `<!doctype html><html><head>${rulesTag(atLimit)}</head><body>${anchors(30, (i) => `/${['docs', 'blog', 'shop'][i % 3]}/item-${i}`)}</body></html>`;
     expect(runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': small }, { areas: ['transitions'] })).status).toBe('passed');
   });
+
+  describe('rules times unbounded work', () => {
+    const FIVE_S = 5000;
+    const immediateDoc = { source: 'document', eagerness: 'immediate' };
+    const failedWith = (value, ms, candidates) => {
+      expect(ms).toBeLessThan(FIVE_S);
+      expect(value.errors).toEqual([]);
+      expect(value.status).toBe('failed');
+      expect(value.nodes.map((n) => n.data)).toEqual([{ action: 'prefetch', candidates, limit: 50, source: 'document' }]);
+      expect(value.incomplete).toEqual([]);
+    };
+    const incompleteFast = (value, ms) => {
+      expect(ms).toBeLessThan(FIVE_S);
+      expect(value.status).toBe('incomplete');
+      expect(value.errors).toEqual([]);
+      expect(value.incomplete.map((n) => n.message)).toEqual([BUDGET_MESSAGE('prefetch')]);
+    };
+
+    it('builds one node for 2000 findings on a script with a 1 MB start tag', async () => {
+      const prefetch = Array.from({ length: 2000 }, () => immediateDoc);
+      const html = `<!doctype html><html><head><script type="speculationrules" data-x="${'a '.repeat(500000)}">${JSON.stringify({ prefetch })}</script></head><body>${anchors(51, (i) => `/p/${i}`)}</body></html>`;
+      const { ms, value } = await runPage(html);
+      failedWith(value, ms, 51);
+    });
+
+    it('builds one node for 20000 findings on a script under 500 long-class ancestors', async () => {
+      const prefetch = Array.from({ length: 20000 }, () => immediateDoc);
+      const open = `<div class="${'c'.repeat(1000)} ${'d'.repeat(1000)}">`.repeat(500);
+      const html = `<!doctype html><html><head></head><body>${anchors(51, (i) => `/p/${i}`)}${open}<script type="speculationrules">${JSON.stringify({ prefetch })}</script>${'</div>'.repeat(500)}</body></html>`;
+      const { ms, value } = await runPage(html);
+      failedWith(value, ms, 51);
+    });
+
+    it('reports one list rule of 400,000 unparsable urls as incomplete', async () => {
+      const urls = Array.from({ length: 400_000 }, () => '//');
+      const { ms, value } = await runPage(`<!doctype html><html><head>${rulesTag({ prefetch: [{ urls }] })}</head><body></body></html>`);
+      incompleteFast(value, ms);
+    });
+
+    it('reports one list rule of 500,000 relative urls with no base as incomplete', async () => {
+      const urls = Array.from({ length: 500_000 }, () => 'a');
+      const { ms, value } = await runPage(`<!doctype html><html><head>${rulesTag({ prefetch: [{ urls }] })}</head><body></body></html>`);
+      incompleteFast(value, ms);
+    });
+
+  });
 });
 
 // ---------------------------------------------------------------------------
