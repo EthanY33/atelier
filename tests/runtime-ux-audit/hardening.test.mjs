@@ -600,6 +600,11 @@ describe('speculation href_matches patterns', () => {
 
   /** Run the immediate-abuse rule over a page and time it. */
   const runPage = async (html) => timedAsync(async () => runRule(speculationRulesImmediateAbuse, await contextFor({ 'index.html': html }, { areas: ['transitions'] })));
+  /** Same, but time only the rule: collecting a page near the 2 MiB cap takes most of a second on its own. */
+  const runRuleOnly = async (html) => {
+    const ctx = await contextFor({ 'index.html': html }, { areas: ['transitions'] });
+    return timed(() => runRule(speculationRulesImmediateAbuse, ctx));
+  };
   const expectIncomplete = (value, ms) => {
     expect(ms).toBeLessThan(BUDGET_BACKSTOP_MS);
     expect(value.status).toBe('incomplete');
@@ -797,13 +802,13 @@ describe('speculation href_matches patterns', () => {
 
     it('reports one list rule of 400,000 unparsable urls as incomplete', async () => {
       const urls = Array.from({ length: 400_000 }, () => '//');
-      const { ms, value } = await runPage(`<!doctype html><html><head>${rulesTag({ prefetch: [{ urls }] })}</head><body></body></html>`);
+      const { ms, value } = await runRuleOnly(`<!doctype html><html><head>${rulesTag({ prefetch: [{ urls }] })}</head><body></body></html>`);
       incompleteFast(value, ms);
     });
 
     it('reports one list rule of 500,000 relative urls with no base as incomplete', async () => {
       const urls = Array.from({ length: 500_000 }, () => 'a');
-      const { ms, value } = await runPage(`<!doctype html><html><head>${rulesTag({ prefetch: [{ urls }] })}</head><body></body></html>`);
+      const { ms, value } = await runRuleOnly(`<!doctype html><html><head>${rulesTag({ prefetch: [{ urls }] })}</head><body></body></html>`);
       incompleteFast(value, ms);
     });
 
